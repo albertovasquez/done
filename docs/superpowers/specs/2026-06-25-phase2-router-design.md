@@ -75,14 +75,17 @@ failure).
 ## 2. Architecture
 
 The Router is a standalone component that sits *in front of* the runner. **No
-changes to `runner.py`, `events.py`, or `tracing_agent.py`.**
+changes to `runner.py` or `tracing_agent.py`.** `events.py` gets ONE small,
+additive, behavior-preserving method (`Emitter.write_renumbered`) required by the
+seq-contiguity fix (below) — no existing `events.py` behavior changes; all
+existing events tests must still pass.
 
 ```
 trace/
-  router.py          # NEW — Router, Classification, build_router_model(), SKILL_CATALOG
+  router.py          # NEW — Router, Classification, complete(), SKILL_CATALOG
   chat_handler.py    # NEW — ChatHandler: one-shot answer with the USER's model
   runner.py          # unchanged (the worker path)
-  events.py          # unchanged (Event reused for task.classified)
+  events.py          # +Emitter.write_renumbered (additive, behavior-preserving)
   run_traced.py      # MODIFIED — orchestrates classify -> clarify? -> dispatch
 ```
 
