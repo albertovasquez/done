@@ -27,17 +27,39 @@ class Event:
         return {"seq": self.seq, "t": self.t, "type": self.type, "data": self.data}
 
 
-class Emitter:
-    def __init__(self, jsonl_path: str | Path, *, clock: Callable[[], float], console: bool = True):
+class _EventSource:
+    """Owns the monotonic seq counter and the run clock; builds Events.
+    Shared by Emitter (file/console) and QueueEmitter (runner)."""
+
+    def __init__(self, clock: Callable[[], float]):
         self._clock = clock
-        self._console = console
         self._seq = 0
+
+    def _next_event(self, type: str, **data: Any) -> Event:
+        event = Event(seq=self._seq, t=round(self._clock(), 3), type=type, data=data)
+        self._seq += 1
+        return event
+
+    def set_clock(self, clock: Callable[[], float]) -> None:
+        """Let the agent install its own run-relative clock at run start."""
+        self._clock = clock
+
+
+class Emitter(_EventSource):
+    def __init__(self, jsonl_path: str | Path, *, clock: Callable[[], float], console: bool = True):
+        super().__init__(clock)
+        self._console = console
         # Loud failure at startup if the JSONL artifact cannot be created.
         self._fh = open(jsonl_path, "w", encoding="utf-8")
 
     def emit(self, type: str, **data: Any) -> Event:
-        event = Event(seq=self._seq, t=round(self._clock(), 3), type=type, data=data)
-        self._seq += 1
+        event = self._next_event(type, **data)
+        self.write_event(event)
+        return event
+
+    def write_event(self, event: Event) -> None:
+        """Persist an already-built event WITHOUT reassigning its seq/t.
+        Used by emit() and by clients consuming events the runner already built."""
         # JSONL sink: best-effort per-line, but log on failure.
         try:
             self._fh.write(json.dumps(event.to_dict()) + "\n")
@@ -50,15 +72,10 @@ class Emitter:
                 self._print_console(event)
             except Exception:  # noqa: BLE001
                 logger.exception("failed to print event to console")
-        return event
 
     def _print_console(self, event: Event) -> None:
         parts = " ".join(f"{k}={v}" for k, v in event.data.items())
         print(f"[t={event.t:>5.1f}s] {event.type:<13} {parts}")
-
-    def set_clock(self, clock: Callable[[], float]) -> None:
-        """Let the agent install its own run-relative clock at run start."""
-        self._clock = clock
 
     def close(self) -> None:
         try:

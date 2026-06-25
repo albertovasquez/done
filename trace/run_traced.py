@@ -26,7 +26,7 @@ from minisweagent.environments.local import LocalEnvironment  # noqa: E402
 
 from trace.events import Emitter  # noqa: E402
 from trace.models_mock import build_mock_model  # noqa: E402
-from trace.tracing_agent import TracingAgent  # noqa: E402
+from trace.runner import MiniSweAgentRunner  # noqa: E402
 
 DEFAULT_TASK = "Fix the failing test in examples/sample-repo so that add(2, 3) == 5."
 
@@ -65,8 +65,6 @@ def main(argv: list[str] | None = None) -> int:
     run_dir = REPO_ROOT / "trace" / "runs" / _run_id()
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    emitter = Emitter(run_dir / "events.jsonl", clock=lambda: 0.0, console=True)
-
     if args.model == "mock":
         model = build_mock_model()
     else:
@@ -75,10 +73,13 @@ def main(argv: list[str] | None = None) -> int:
     env = LocalEnvironment(cwd=args.cwd)
     agent_cfg = _load_agent_config()
     agent_cfg["output_path"] = str(run_dir / "traj.json")
-    agent = TracingAgent(model, env, emitter=emitter, **agent_cfg)
+
+    emitter = Emitter(run_dir / "events.jsonl", clock=lambda: 0.0, console=True)
+    runner = MiniSweAgentRunner(model, env, agent_cfg=agent_cfg)
 
     try:
-        agent.run(args.task)
+        for event in runner.run(args.task):
+            emitter.write_event(event)   # persist+print WITHOUT reassigning seq/t
     except KeyboardInterrupt:
         print("\ninterrupted", file=sys.stderr)
     except Exception as e:  # noqa: BLE001
