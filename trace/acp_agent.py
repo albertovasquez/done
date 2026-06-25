@@ -144,9 +144,42 @@ class HarnessAgent(acp.Agent):
             resp = asyncio.run_coroutine_threadsafe(coro, loop).result()
             return isinstance(resp.outcome, AllowedOutcome)
 
+        client_terminal = None
+        if getattr(self._client_caps, "terminal", None):
+            def client_terminal(command: str) -> dict:
+                from acp.schema import TerminalExitStatus
+                # create → wait_for_exit → output → release  (all on worker thread)
+                create_resp = asyncio.run_coroutine_threadsafe(
+                    self._conn.create_terminal(command=command, session_id=session_id,
+                                               cwd=state.cwd),
+                    loop,
+                ).result()
+                tid = create_resp.terminal_id
+                asyncio.run_coroutine_threadsafe(
+                    self._conn.wait_for_terminal_exit(session_id=session_id,
+                                                      terminal_id=tid),
+                    loop,
+                ).result()
+                out_resp = asyncio.run_coroutine_threadsafe(
+                    self._conn.terminal_output(session_id=session_id, terminal_id=tid),
+                    loop,
+                ).result()
+                asyncio.run_coroutine_threadsafe(
+                    self._conn.release_terminal(session_id=session_id, terminal_id=tid),
+                    loop,
+                ).result()
+                exit_status: TerminalExitStatus | None = getattr(out_resp, "exit_status", None)
+                returncode = exit_status.exit_code if exit_status is not None else 0
+                return {
+                    "output": out_resp.output or "",
+                    "returncode": returncode,
+                    "exception_info": "",
+                }
+
         env = AcpEnvironment(cwd=state.cwd, on_command=on_command,
                              request_permission=request_permission,
-                             cancel_flag=state.cancel_flag)
+                             cancel_flag=state.cancel_flag,
+                             client_terminal=client_terminal)
 
         def run_engine() -> str:
             from trace.tracing_agent import TracingAgent

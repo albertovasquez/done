@@ -114,6 +114,44 @@ class _RejectingClient(_CollectingClient):
         return RequestPermissionResponse(outcome=DeniedOutcome(outcome="cancelled"))
 
 
+class _TerminalRecordingClient(_CollectingClient):
+    """Records create_terminal calls and executes commands locally (simulates client terminal)."""
+
+    def __init__(self):
+        super().__init__()
+        self.terminal_calls: list[str] = []  # commands passed to create_terminal
+        self._terminals: dict[str, Any] = {}  # terminal_id -> subprocess result
+        self._next_id = 0
+
+    async def create_terminal(self, command: str, session_id: str, **kwargs: Any) -> Any:
+        import subprocess
+        from acp.schema import CreateTerminalResponse
+        self.terminal_calls.append(command)
+        self._next_id += 1
+        tid = f"term-{self._next_id}"
+        # Run the command synchronously (test context, no concurrency concerns)
+        proc = subprocess.run(command, shell=True, text=True, capture_output=True)
+        self._terminals[tid] = proc
+        return CreateTerminalResponse(terminal_id=tid)
+
+    async def wait_for_terminal_exit(self, session_id: str, terminal_id: str, **kwargs: Any) -> Any:
+        from acp.schema import WaitForTerminalExitResponse
+        proc = self._terminals.get(terminal_id)
+        exit_code = proc.returncode if proc is not None else 0
+        return WaitForTerminalExitResponse(exit_code=exit_code, signal=None)
+
+    async def terminal_output(self, session_id: str, terminal_id: str, **kwargs: Any) -> Any:
+        from acp.schema import TerminalOutputResponse, TerminalExitStatus
+        proc = self._terminals.get(terminal_id)
+        output = (proc.stdout + proc.stderr) if proc is not None else ""
+        exit_code = proc.returncode if proc is not None else 0
+        exit_status = TerminalExitStatus(exit_code=exit_code, signal=None)
+        return TerminalOutputResponse(output=output, exit_status=exit_status, truncated=False)
+
+    async def release_terminal(self, session_id: str, terminal_id: str, **kwargs: Any) -> Any:
+        self._terminals.pop(terminal_id, None)
+
+
 # ---------------------------------------------------------------------------
 # Helper: spawn + drive
 # ---------------------------------------------------------------------------
@@ -313,4 +351,85 @@ def test_permission_reject_skips_command(tmp_path):
     ), (
         f"expected a 'failed' ToolCallProgress after rejection, got statuses: {failed_statuses!r}\n"
         f"All update types: {[type(u).__name__ for u in updates]!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test E: terminal delegation — client advertises terminal capability;
+# agent must delegate shell commands via client terminal/* methods.
+# ---------------------------------------------------------------------------
+
+@needs_vibeproxy
+def test_terminal_delegation_uses_client_terminal(tmp_path):
+    """When the client advertises terminal=True, commands must run via create_terminal.
+
+    Drives a code-fix prompt; asserts create_terminal was called (delegation
+    happened). Uses a tmp copy of examples/sample-repo.
+    """
+    repo = tmp_path / "sample-repo"
+    shutil.copytree(_SAMPLE_REPO, repo)
+    assert "return a - b" in (repo / "calculator.py").read_text(), "fixture sanity"
+
+    async def go():
+        client = _TerminalRecordingClient()
+        async with acp.spawn_agent_process(client, AGENT_CMD[0], *AGENT_CMD[1:]) as (conn, _proc):
+            await conn.initialize(
+                protocol_version=acp.PROTOCOL_VERSION,
+                client_capabilities=ClientCapabilities(terminal=True),
+            )
+            new = await conn.new_session(cwd=str(repo), mcp_servers=[])
+            await conn.prompt(
+                prompt=[acp.text_block(
+                    "Fix the bug in calculator.py: the add function returns a - b, "
+                    "it should return a + b."
+                )],
+                session_id=new.session_id,
+            )
+        return client
+
+    client = asyncio.run(go())
+
+    assert client.terminal_calls, (
+        "expected create_terminal to be called at least once (terminal delegation), "
+        f"but terminal_calls is empty.\nUpdates: {[type(u).__name__ for u in client.updates]!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test F: terminal fallback — client WITHOUT terminal capability must run
+# commands via LocalEnvironment (file actually changes).
+# ---------------------------------------------------------------------------
+
+@needs_vibeproxy
+def test_terminal_fallback_uses_local_environment(tmp_path):
+    """When the client does NOT advertise terminal capability, LocalEnvironment runs the command.
+
+    The bug fix must actually be applied (file changes on disk).
+    Uses a tmp copy of examples/sample-repo — never mutates the real fixture.
+    """
+    repo = tmp_path / "sample-repo"
+    shutil.copytree(_SAMPLE_REPO, repo)
+    target = repo / "calculator.py"
+    assert "return a - b" in target.read_text(), "fixture sanity"
+
+    async def go():
+        client = _CollectingClient()
+        async with acp.spawn_agent_process(client, AGENT_CMD[0], *AGENT_CMD[1:]) as (conn, _proc):
+            # No terminal capability advertised → LocalEnvironment fallback
+            await conn.initialize(protocol_version=acp.PROTOCOL_VERSION)
+            new = await conn.new_session(cwd=str(repo), mcp_servers=[])
+            await conn.prompt(
+                prompt=[acp.text_block(
+                    "Fix the bug in calculator.py: the add function returns a - b, "
+                    "it should return a + b."
+                )],
+                session_id=new.session_id,
+            )
+        return client
+
+    asyncio.run(go())
+
+    # File should have been modified via LocalEnvironment (returncode from real shell)
+    assert "return a + b" in target.read_text(), (
+        "calculator.py was NOT fixed — LocalEnvironment fallback did not execute the command"
     )

@@ -17,11 +17,13 @@ class AcpEnvironment(LocalEnvironment):
                  on_command: Callable[[str, str, dict | None], None],
                  request_permission: Callable[[str], bool] | None = None,
                  cancel_flag: threading.Event | None = None,
+                 client_terminal: Callable[[str], dict] | None = None,
                  **kwargs: Any):
         super().__init__(**kwargs)
         self._on_command = on_command
         self._request_permission = request_permission
         self._cancel_flag = cancel_flag
+        self._client_terminal = client_terminal
 
     def execute(self, action: dict, cwd: str = "", *, timeout: int | None = None) -> dict[str, Any]:
         if self._cancel_flag is not None and self._cancel_flag.is_set():
@@ -31,6 +33,10 @@ class AcpEnvironment(LocalEnvironment):
         if self._request_permission is not None and not self._request_permission(command):
             self._on_command("rejected", command, None)
             return {"output": "", "returncode": -1, "exception_info": "permission denied"}
-        out = super().execute(action, cwd, timeout=timeout)   # REAL run; FULL output; may raise Submitted
+        if self._client_terminal is not None:
+            out = self._client_terminal(command)   # client runs it; returns {output, returncode, exception_info}
+            self._check_finished(out)              # raises Submitted if submit sentinel present
+        else:
+            out = super().execute(action, cwd, timeout=timeout)   # REAL run; FULL output; may raise Submitted
         self._on_command("done", command, out)
         return out
