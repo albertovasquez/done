@@ -50,3 +50,16 @@ def test_console_write_failure_does_not_crash(tmp_path, monkeypatch):
     em.emit("action", command="ls")
     em.close()
     assert len(p.read_text().strip().splitlines()) == 1
+
+
+def test_write_event_persists_given_event_without_reassigning(tmp_path):
+    p = tmp_path / "events.jsonl"
+    em = Emitter(p, clock=lambda: 9.9, console=False)
+    # An event built elsewhere (e.g. by a QueueEmitter) with its own seq/t:
+    pre_built = Event(seq=42, t=1.23, type="action", data={"command": "ls"})
+    em.write_event(pre_built)
+    em.close()
+    rec = json.loads(p.read_text().strip())
+    assert rec["seq"] == 42      # NOT reassigned to the emitter's 0
+    assert rec["t"] == 1.23      # NOT replaced by clock() == 9.9
+    assert rec["type"] == "action"
