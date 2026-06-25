@@ -10,6 +10,13 @@ import asyncio
 from pathlib import Path
 
 import acp
+from acp.schema import (
+    AllowedOutcome,
+    DeniedOutcome,
+    PermissionOption,
+    RequestPermissionRequest,
+    ToolCallUpdate,
+)
 
 from trace import skills
 from trace.acp_emit import tool_call_start, tool_call_done, message_chunk, with_meta
@@ -119,8 +126,24 @@ class HarnessAgent(acp.Agent):
                 self._conn.session_update(session_id, upd), loop)
             fut.result()
 
+        def request_permission(command: str) -> bool:
+            # No client caps → standalone path; auto-allow.
+            if self._client_caps is None:
+                return True
+            tc_id = getattr(state, "_last_tc_id", "tc0")
+            options = [
+                PermissionOption(kind="allow_once", name="Allow once", option_id="allow_once"),
+                PermissionOption(kind="reject_once", name="Reject", option_id="reject_once"),
+            ]
+            tool_call = ToolCallUpdate(tool_call_id=tc_id)
+            coro = self._conn.request_permission(
+                options=options, session_id=session_id, tool_call=tool_call
+            )
+            resp = asyncio.run_coroutine_threadsafe(coro, loop).result()
+            return isinstance(resp.outcome, AllowedOutcome)
+
         env = AcpEnvironment(cwd=state.cwd, on_command=on_command,
-                             request_permission=None,            # Layer 2 wires this
+                             request_permission=request_permission,
                              cancel_flag=state.cancel_flag)
 
         def run_engine() -> str:

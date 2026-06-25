@@ -14,12 +14,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
 import acp
+from acp.schema import (
+    DeniedOutcome,
+    RequestPermissionResponse,
+)
 
 REPO = Path(__file__).resolve().parent.parent
 AGENT_CMD = [
@@ -94,6 +99,17 @@ class _CollectingClient:
 
     def on_connect(self, conn: Any) -> None:
         pass
+
+
+# ---------------------------------------------------------------------------
+# Rejecting client — rejects every permission request
+# ---------------------------------------------------------------------------
+
+class _RejectingClient(_CollectingClient):
+    """Like _CollectingClient but rejects all permission requests."""
+
+    async def request_permission(self, options: Any, session_id: str, tool_call: Any, **kwargs: Any) -> Any:
+        return RequestPermissionResponse(outcome=DeniedOutcome(outcome="cancelled"))
 
 
 # ---------------------------------------------------------------------------
@@ -224,3 +240,71 @@ def test_stdout_purity(tmp_path):
         pytest.fail(
             f"Non-JSON line on agent stdout (wire pollution): {first_line!r}\nError: {exc}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Test D: permission reject — a client that rejects every permission request
+# must prevent the command from running; file must be unchanged.
+# ---------------------------------------------------------------------------
+
+_SAMPLE_REPO = Path(__file__).resolve().parent.parent / "examples" / "sample-repo"
+
+
+@needs_vibeproxy
+def test_permission_reject_skips_command(tmp_path):
+    """A rejecting client must prevent shell commands from running.
+
+    Drives a code-fix prompt against a temp copy of examples/sample-repo.
+    The mock model will attempt to run a sed/patch command (tool call). Because
+    the client rejects every permission request, the command must be skipped
+    and the file must remain unchanged (still contains 'return a - b').
+    """
+    # Copy sample-repo to tmp_path to avoid mutating the fixture
+    repo = tmp_path / "sample-repo"
+    shutil.copytree(_SAMPLE_REPO, repo)
+    target = repo / "calculator.py"
+    original = target.read_text()
+    assert "return a - b" in original, "fixture sanity: calculator.py must have the bug"
+
+    async def go():
+        client = _RejectingClient()
+        async with acp.spawn_agent_process(client, AGENT_CMD[0], *AGENT_CMD[1:]) as (conn, _proc):
+            await conn.initialize(protocol_version=acp.PROTOCOL_VERSION)
+            new = await conn.new_session(cwd=str(repo), mcp_servers=[])
+            resp = await conn.prompt(
+                prompt=[acp.text_block(
+                    "Fix the bug in calculator.py: the add function returns a - b, "
+                    "it should return a + b."
+                )],
+                session_id=new.session_id,
+            )
+            return client.updates, resp
+
+    updates, resp = asyncio.run(go())
+
+    # The file must NOT have been modified (permission was rejected)
+    assert target.read_text() == original, (
+        "calculator.py was modified despite permission rejection"
+    )
+
+    # A ToolCallStart must have appeared (agent tried to run a command)
+    tool_call_starts = [u for u in updates if type(u).__name__ == "ToolCallStart"]
+    assert tool_call_starts, (
+        "expected at least one ToolCallStart update, got none — "
+        "agent may not have attempted a command"
+    )
+
+    # At least one ToolCallProgress with status 'failed' must appear (rejected command)
+    # (acp.update_tool_call returns ToolCallProgress, not ToolCallUpdate)
+    tool_call_progresses = [u for u in updates if type(u).__name__ == "ToolCallProgress"]
+    failed_statuses = [
+        getattr(u, "status", None)
+        for u in tool_call_progresses
+        if getattr(u, "status", None) is not None
+    ]
+    assert any(
+        str(s) in ("failed", "ToolCallStatus.failed") for s in failed_statuses
+    ), (
+        f"expected a 'failed' ToolCallProgress after rejection, got statuses: {failed_statuses!r}\n"
+        f"All update types: {[type(u).__name__ for u in updates]!r}"
+    )
