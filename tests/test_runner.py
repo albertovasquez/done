@@ -158,7 +158,7 @@ def test_7_skill_block_accepted_by_runner(tmp_path):
     into agent.run(**kwargs). The byte-level system-message check is already
     covered by Task 2's tests; this test asserts the runner's contract only.
     """
-    from unittest.mock import patch, call
+    from unittest.mock import patch
     from trace.tracing_agent import TracingAgent
 
     model = _tc_model([("done", ["echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"])])
