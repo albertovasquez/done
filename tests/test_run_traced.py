@@ -26,7 +26,7 @@ class _FixedRouter:
 
 def _spy_agent():
     calls = []
-    def run_agent(prompt):
+    def run_agent(prompt, skill_block=""):
         calls.append(prompt)
     run_agent.calls = calls
     return run_agent
@@ -127,7 +127,7 @@ def test_8_eof_and_empty_clarification_fail_safe(tmp_path):
 def test_9_event_seq_contiguous_with_classified_first(tmp_path):
     from trace.events import Emitter, Event
     em = Emitter(tmp_path / "events.jsonl", clock=lambda: 0.0, console=False)
-    def run_agent(prompt):
+    def run_agent(prompt, skill_block=""):
         # simulate runner events arriving pre-built with their OWN seq 0,1
         for i, t in enumerate(["llm.call", "action"]):
             em.write_renumbered(Event(seq=i, t=0.0, type=t, data={}))
@@ -166,9 +166,10 @@ def test_4_thin_client_mock_red_green(tmp_path, monkeypatch):
     events_path = rt.REPO_ROOT / "trace" / "runs" / "pytest-thin-client" / "events.jsonl"
     rec = [json.loads(l) for l in events_path.read_text().splitlines()]
     assert [r["seq"] for r in rec] == list(range(len(rec)))
-    # task.classified is now first (seq 0); run.started follows; run.finished is last.
+    # task.classified first (seq 0); skill.load next; run.started follows; run.finished last.
     assert rec[0]["type"] == "task.classified"
-    assert rec[1]["type"] == "run.started" and rec[-1]["type"] == "run.finished"
+    assert rec[1]["type"] == "skill.load"
+    assert rec[2]["type"] == "run.started" and rec[-1]["type"] == "run.finished"
 
 
 def test_4b_client_uses_runner_not_agent_directly():
@@ -210,3 +211,27 @@ def test_10_reclassification_is_re_emitted(tmp_path):
     assert classified[0]["data"]["task_type"] == "ambiguous"
     assert classified[1]["data"]["task_type"] == "code_fix"   # reflects the dispatch
     assert spy.calls == ["the tests are red"]            # and the agent did run
+
+
+def test_11_skill_load_emitted_and_block_passed(tmp_path):
+    from trace.events import Emitter
+    from trace.skills import SkillLoad
+    import json as _j
+    em = Emitter(tmp_path / "events.jsonl", clock=lambda: 0.0, console=False)
+    received = {}
+    def run_agent(prompt, skill_block=""):
+        received["block"] = skill_block
+    out = []
+    route_and_dispatch(
+        "fix the rake bug",
+        router=_FixedRouter(_cls("code_fix", confidence=0.9, skills=["poker-domain-rules"])),
+        emitter=em, make_chat_handler=lambda: None,
+        run_agent=run_agent, ask_user=lambda q: "", echo=out.append,
+        worker_model_id="gpt-5.4",
+        load_skills=lambda names: SkillLoad(block="\n\nPOKER", injected=list(names), skipped=[]))
+    em.close()
+    rec = [_j.loads(l) for l in (tmp_path / "events.jsonl").read_text().splitlines()]
+    sl = [r for r in rec if r["type"] == "skill.load"]
+    assert len(sl) == 1 and sl[0]["data"]["injected"] == ["poker-domain-rules"]
+    assert received["block"] == "\n\nPOKER"                 # block reached run_agent
+    assert any("injected" in line for line in out)          # console showed it
