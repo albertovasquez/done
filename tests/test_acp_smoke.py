@@ -401,6 +401,56 @@ def test_terminal_delegation_uses_client_terminal(tmp_path):
 # ---------------------------------------------------------------------------
 
 @needs_vibeproxy
+def test_load_session_replays_history(tmp_path):
+    """load_session must replay recorded turns as session_update notifications.
+
+    Drive two chat prompts in one session (records 2 history turns), then call
+    load_session for the same session_id. The agent must emit one session_update
+    per recorded turn, each containing '[resumed]' in the message text.
+    """
+    async def go():
+        client = _CollectingClient()
+        async with acp.spawn_agent_process(client, AGENT_CMD[0], *AGENT_CMD[1:]) as (conn, _proc):
+            await conn.initialize(protocol_version=acp.PROTOCOL_VERSION)
+            new = await conn.new_session(cwd=str(tmp_path), mcp_servers=[])
+            sid = new.session_id
+
+            # Two chat prompts → records 2 turns in history
+            await conn.prompt(prompt=[acp.text_block("what is 1+1")], session_id=sid)
+            await conn.prompt(prompt=[acp.text_block("what is 2+2")], session_id=sid)
+
+            # Snapshot updates before load_session so we can isolate replay updates
+            updates_before = len(client.updates)
+
+            # Call load_session for the same session_id
+            load_resp = await conn.load_session(
+                cwd=str(tmp_path), session_id=sid, mcp_servers=[]
+            )
+            assert load_resp is not None, "load_session must return a LoadSessionResponse, got None"
+
+            # Collect session_update notifications emitted during load_session
+            replay_updates = client.updates[updates_before:]
+
+            # Each update that contains '[resumed]' counts as a replayed turn.
+            # AgentMessageChunk stores text in .content.text
+            def _chunk_text(u) -> str:
+                content = getattr(u, "content", None)
+                return getattr(content, "text", None) or ""
+
+            resumed_chunks = [
+                u for u in replay_updates
+                if "[resumed]" in _chunk_text(u)
+            ]
+            assert len(resumed_chunks) == 2, (
+                f"expected 2 '[resumed]' session_update chunks (one per history turn), "
+                f"got {len(resumed_chunks)}.\n"
+                f"Replay updates: {[(type(u).__name__, _chunk_text(u)) for u in replay_updates]!r}"
+            )
+
+    asyncio.run(go())
+
+
+@needs_vibeproxy
 def test_terminal_fallback_uses_local_environment(tmp_path):
     """When the client does NOT advertise terminal capability, LocalEnvironment runs the command.
 

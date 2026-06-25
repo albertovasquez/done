@@ -50,6 +50,20 @@ class HarnessAgent(acp.Agent):
     async def new_session(self, cwd, additional_directories=None, mcp_servers=None, **kw):
         return acp.NewSessionResponse(session_id=self._store.new(cwd=cwd))
 
+    async def load_session(self, cwd, session_id, additional_directories=None,
+                           mcp_servers=None, **kw):
+        try:
+            state = self._store.get(session_id)
+        except KeyError:
+            self._store.new(cwd=cwd)
+            return acp.LoadSessionResponse()
+        for turn in state.history:
+            await self._conn.session_update(
+                session_id,
+                message_chunk(f"[resumed] {turn.get('kind', 'turn')}: {turn.get('prompt', '')}"),
+            )
+        return acp.LoadSessionResponse()
+
     async def cancel(self, session_id, **kw) -> None:
         try:
             self._store.get(session_id).cancel_flag.set()
