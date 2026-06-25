@@ -18,7 +18,8 @@
 - **Explicit dotenv:** the runner must `load_dotenv()` on the repo-root `.env` itself; mini's own load targets the global config dir, not this repo. (spec §4)
 - **`run.finished` is emitted in a `finally`** and reports `ok`/`exception_type`/`exception_str`. (spec §2, §3)
 - **JSONL sink fails loudly at startup** if it can't open; console sink never crashes the run. (spec §5)
-- Run the upstream commands from the **repo root** `/Users/alberto/Work/Quiubo/harness`. The `minisweagent` package is imported from `upstream/src` via `PYTHONPATH` (set in Task 1).
+- Run the upstream commands from the **repo root** `/Users/alberto/Work/Quiubo/harness`.
+- **Python environment (added during execution — system `python3` is 3.9.6, too old; mini-swe-agent requires >=3.10):** a virtualenv exists at `.venv` (Python 3.11.12) with the vendored package installed editable (`pip install -e ./upstream`) plus `pytest`. **All `python3 -m pytest ...` and `python3 ...` commands in the tasks below MUST be run as `.venv/bin/python -m pytest ...` / `.venv/bin/python ...`.** Because the install is editable, the `minisweagent` package imports without `PYTHONPATH`; the `PYTHONPATH=upstream/src` prefix in plan commands is harmless and may be dropped when using the venv. `.venv/` is gitignored.
 
 ---
 
