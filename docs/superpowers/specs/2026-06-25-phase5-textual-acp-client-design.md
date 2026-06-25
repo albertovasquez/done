@@ -53,7 +53,11 @@ These are deliberate later-iteration candidates, not omissions.
   JSON-RPC (Toad did; we have no reason to). Client surface used:
   `acp.Client` (Protocol), `acp.spawn_agent_process`, `acp.text_block`,
   `acp.PROTOCOL_VERSION`, `acp.schema.*`.
-- **`PROTOCOL_VERSION == 1`** in the installed SDK.
+- **Version facts (pinned to avoid confusion):** pip package
+  `agent-client-protocol == 0.10.1`; runtime `acp.PROTOCOL_VERSION == 1`; the
+  generated `schema.py` carries an upstream schema ref `v0.12.2` in its header
+  (the schema generator's tag, *not* the package version) — harmless, just don't
+  mistake it for the installed version.
 - **Textual 8.2.7** is already installed — no new heavyweight dependency.
 - **Tests run as** `.venv/bin/python -m pytest tests/` — scoped to `tests/`,
   never bare `pytest` (it would walk `upstream/tests/`).
@@ -91,9 +95,13 @@ The concurrency story is a single triad, all on Textual's own asyncio loop:
 - **single loop** — the ACP connection lives inside Textual's loop; no worker
   thread (unlike the agent side, which needed a thread bridge because the engine
   is blocking/sync — the client is async all the way down);
-- **worker-for-prompt** — `conn.prompt` blocks until the turn ends, so it runs in
-  a Textual worker, leaving the loop free to drain `session/update` messages and
-  stream them live;
+- **worker-for-prompt** — `conn.prompt` is awaited inside an **async** Textual
+  worker (`run_worker(..., thread=False)`, the default — a thread worker would
+  spin up a *separate* event loop via `asyncio.run()` and break the single-loop
+  design). The worker exists to keep Textual's message handling responsive while
+  the long `prompt` coroutine is in flight, not because `prompt` blocks the
+  asyncio loop (it doesn't — the SDK's receive/dispatch run as background tasks
+  on the same loop and deliver `session/update`s concurrently);
 - **Future-for-permission** — `request_permission` posts a modal and `await`s a
   Future the modal's button resolves.
 
@@ -169,7 +177,11 @@ class TuiClient:                          # implements the acp.Client Protocol
         self._app.post_message(PermissionRequest(options, tool_call, fut))
         option_id = await fut                                  # suspends; loop stays live
         if option_id:
-            return RequestPermissionResponse(outcome=AllowedOutcome(option_id=option_id))
+            # AllowedOutcome REQUIRES the discriminator outcome="selected" — omitting it
+            # raises pydantic ValidationError (verified against schema.py). DeniedOutcome's
+            # discriminator is outcome="cancelled".
+            return RequestPermissionResponse(
+                outcome=AllowedOutcome(outcome="selected", option_id=option_id))
         return RequestPermissionResponse(outcome=DeniedOutcome(outcome="cancelled"))
 
     # Protocol completeness — benign defaults (no fs/terminal capability advertised in v1):
@@ -199,14 +211,19 @@ callbacks and the app.
   context manager kills the subprocess) and resolves any pending permission Future
   to reject.
 - **Input flow:** submit → write a "you:" line → disable Input →
-  `run_worker(self._send_prompt(text))`.
+  `run_worker(self._send_prompt(text), thread=False)` (async worker on the app loop).
 - **`_send_prompt`:** `await conn.prompt([text_block(text)], session_id)`; on
   return, render an end-of-turn marker if `stop_reason != "end_turn"`; re-enable
   Input. Wrapped in try/except (see Error Handling).
 - **`on_session_update`:** `for c in harness_chips(update.field_meta): log chip`;
-  then `item = render_update(update)`; `ToolCallStart` writes a line keyed by
-  `id`; `ToolCallProgress` updates that line's status/body (a dict
-  `tool_call_id -> line handle`).
+  then `item = render_update(update)`. **Tool-line correlation — corrected:**
+  `RichLog.write()` only appends; it returns the widget, **not** a line handle,
+  so there is no way to mutate an already-written line. So `ToolCallStart`
+  appends `"$ <cmd>  pending …"` and `ToolCallProgress` **appends a follow-up
+  line** `"  → completed ✓"` / `"  → failed ✗"` (correlated visually by adjacency,
+  and by `tool_call_id` in the text). This is the v1 choice: append, don't
+  update-in-place. (A keyed-row widget for true in-place status flips is a clean
+  later iteration; not worth a custom widget now.)
 - **`on_permission_request`:** `push_screen(PermissionModal(options, tool_call),
   callback=lambda chosen: fut.set_result(chosen))`.
 - **`PermissionModal(ModalScreen)`:** shows `$ <cmd>` + `[Allow once] [Reject]`;
@@ -263,14 +280,18 @@ focused.
 5. `prompt` returns `stop_reason` → end-of-turn marker if not `end_turn`; Input
    re-enabled.
 
-**Why the worker matters:** `conn.prompt` blocks but its updates arrive on the
-same loop; awaiting it directly in the input handler would defer all rendering
-until turn end. The worker lets the loop drain `SessionUpdate` messages live.
+**Why the worker matters:** `conn.prompt` is a long-lived coroutine (returns only
+at turn end). The SDK's receive/dispatch tasks run as background tasks on the
+*same* loop, so `session/update`s arrive concurrently regardless. The worker
+(`thread=False`) exists so the input handler returns immediately and Textual
+keeps processing posted messages (rendering, modal) while the turn streams —
+awaiting `prompt` inline in the handler would tie up that handler for the whole
+turn. (A `thread=True` worker would create a separate event loop and is wrong here.)
 
 **Permission round-trip:** agent calls `request_permission` → client creates a
 Future, posts `PermissionRequest`, `await`s (loop stays responsive) → app pushes
 modal → user clicks → `dismiss(option_id)` → callback `fut.set_result(...)` →
-client resumes, returns `AllowedOutcome(option_id=...)` or
+client resumes, returns `AllowedOutcome(outcome="selected", option_id=...)` or
 `DeniedOutcome(outcome="cancelled")` → Allow streams tool calls; Reject yields a
 `failed` (red) `ToolCallProgress` from the agent's `AcpEnvironment`.
 
@@ -328,10 +349,13 @@ Textual, fake in-process agent).**
 ### `tests/test_tui_pilot.py` — 1–2 tests via `App.run_test()`, fake in-process agent
 A ~15-line `acp.Agent` whose `prompt` emits one `AgentMessageChunk` carrying
 `field_meta={"harness": {"task_classified": {...}}}` then returns `end_turn`.
-No subprocess, no VibeProxy, no real model. Wired to the app's `TuiClient` over
-an in-memory stream pair; **fallback** (decided at implementation time, noted in
-the plan): if in-memory wiring is fiddly, `spawn_agent_process` against a tiny
-fake-agent script.
+No VibeProxy, no real model. **Primary plan: a tiny fake-agent *script* launched
+via `spawn_agent_process`** — the proven path (`stdio.py`, and
+`tests/test_acp_smoke.py:309`+). `ClientSideConnection` requires real
+`asyncio.StreamReader`/`StreamWriter`, so an in-memory stream pair would need a
+helper we don't have; we use a subprocess instead (the agent it launches is the
+fake, not `acp_main.py`, so it's still fast and deterministic). An in-memory
+stream-pair helper is an optional optimization, not the plan.
 - **Smoke 1 (required) — end-to-end render:** boot → pilot types a prompt +
   Enter → wait for turn → assert transcript contains the agent text **and** the
   harness chip ("classified: …"). Proves input → client → post_message → render
