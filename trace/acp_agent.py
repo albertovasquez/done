@@ -55,8 +55,9 @@ class HarnessAgent(acp.Agent):
         try:
             state = self._store.get(session_id)
         except KeyError:
-            self._store.new(cwd=cwd)
-            return acp.LoadSessionResponse()
+            # can't resume a session we never issued — reject, don't orphan a new one
+            # (consistent with prompt()'s unknown-session handling)
+            raise acp.RequestError.invalid_params()
         for turn in state.history:
             await self._conn.session_update(
                 session_id,

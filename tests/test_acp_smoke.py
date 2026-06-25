@@ -450,6 +450,20 @@ def test_load_session_replays_history(tmp_path):
     asyncio.run(go())
 
 
+def test_load_session_unknown_id_errors(tmp_path):
+    """Resuming a session the agent never issued must fail (not silently orphan a
+    new session). No VibeProxy needed — load_session never classifies."""
+    async def go():
+        client = _CollectingClient()
+        async with acp.spawn_agent_process(client, AGENT_CMD[0], *AGENT_CMD[1:]) as (conn, _proc):
+            await conn.initialize(protocol_version=acp.PROTOCOL_VERSION)
+            with pytest.raises(Exception):       # SDK surfaces the agent's invalid_params as an error
+                await conn.load_session(
+                    cwd=str(tmp_path), session_id="never-issued", mcp_servers=[])
+
+    asyncio.run(go())
+
+
 @needs_vibeproxy
 def test_terminal_fallback_uses_local_environment(tmp_path):
     """When the client does NOT advertise terminal capability, LocalEnvironment runs the command.
