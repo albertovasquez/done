@@ -23,10 +23,20 @@ from trace.events import Emitter
 
 
 class TracingAgent(DefaultAgent):
-    def __init__(self, model, env, *, emitter: Emitter, **kwargs):
+    def __init__(self, model, env, *, emitter: Emitter, skill_block: str = "", **kwargs):
         super().__init__(model, env, **kwargs)
         self._emitter = emitter
+        self._skill_block = skill_block
         self._run_start = time.time()  # tracer-local clock; parent's _start_time is set in __init__
+
+    def _render_template(self, template: str) -> str:
+        # Inject selected skills AFTER Jinja renders the base, so a skill body
+        # containing {{ }}/{% %} is literal text and cannot break StrictUndefined.
+        # Identity match: only the system template gets skills, never instance.
+        out = super()._render_template(template)
+        if self._skill_block and template is self.config.system_template:
+            out += self._skill_block
+        return out
 
     def _t(self) -> float:
         return time.time() - self._run_start
