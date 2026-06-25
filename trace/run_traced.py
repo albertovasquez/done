@@ -58,6 +58,11 @@ def _run_id() -> str:
 
 def route_and_dispatch(prompt, *, router, emitter, make_chat_handler, run_agent,
                        ask_user, echo, worker_model_id) -> int:
+    """Classify the prompt, clarify once if unclear, then dispatch.
+
+    The caller owns the emitter's lifecycle (open/close); this function only
+    emits through it. Returns an exit code (0 on a handled/declined request).
+    """
     cls = router.classify(prompt)
     emitter.emit("task.classified", task_type=cls.task_type, skills=cls.skills,
                  confidence=cls.confidence, suggested_model=cls.suggested_model)
@@ -70,6 +75,10 @@ def route_and_dispatch(prompt, *, router, emitter, make_chat_handler, run_agent,
             echo("no clarification provided — not running the agent.")
             return 0
         cls = router.classify(prompt + "\n\n[clarification]: " + answer)
+        # Re-emit so the trace reflects the decision the run ACTUALLY dispatched
+        # on (not the pre-clarification guess) — observability is the point here.
+        emitter.emit("task.classified", task_type=cls.task_type, skills=cls.skills,
+                     confidence=cls.confidence, suggested_model=cls.suggested_model)
     if cls.suggested_model and cls.suggested_model != worker_model_id:
         echo(f"(router suggests model '{cls.suggested_model}'; using your '{worker_model_id}')")
     if cls.task_type == "chat_question":

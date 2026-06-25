@@ -186,3 +186,27 @@ def test_4b_client_uses_runner_not_agent_directly():
     }
     assert "MiniSweAgentRunner" in imported, "thin client must import MiniSweAgentRunner"
     assert "TracingAgent" not in imported, "thin client must NOT import TracingAgent"
+
+
+def test_10_reclassification_is_re_emitted(tmp_path):
+    """After a clarification round, a second task.classified must be emitted so the
+    trace matches the dispatched decision (not the pre-clarification guess)."""
+    from trace.events import Emitter
+    import json as _j
+    em = Emitter(tmp_path / "events.jsonl", clock=lambda: 0.0, console=False)
+    spy = _spy_agent()
+    route_and_dispatch(
+        "the tests are red",
+        router=_FixedRouter(_cls("ambiguous", confidence=0.2, needs_clarification=True,
+                                 clarifying_question="which?"),
+                            _cls("code_fix", confidence=0.9)),
+        emitter=em, make_chat_handler=lambda: None,
+        run_agent=spy, ask_user=lambda q: "the pytest suite in examples/",
+        echo=lambda t: None, worker_model_id="gpt-5.4")
+    em.close()
+    rec = [_j.loads(l) for l in (tmp_path / "events.jsonl").read_text().splitlines()]
+    classified = [r for r in rec if r["type"] == "task.classified"]
+    assert len(classified) == 2                          # initial + re-emit
+    assert classified[0]["data"]["task_type"] == "ambiguous"
+    assert classified[1]["data"]["task_type"] == "code_fix"   # reflects the dispatch
+    assert spy.calls == ["the tests are red"]            # and the agent did run
