@@ -33,8 +33,20 @@ thread + a thread-safe queue.
 4. The event model is **unchanged** from Phase 0 (same `Event`, same 6 types).
 5. Tests prove: the runner yields the full event sequence ending in
    `run.finished`; `RunResult` reflects `exit_status`; the terminal `Submitted`
-   `action.done` survives the bridge; exceptions in the agent thread propagate to
-   the caller; the thin-client CLI still produces a genuine red→green mock run.
+   `action.done` survives the bridge; ordinary `Exception` AND `BaseException`
+   (e.g. `KeyboardInterrupt`) in the agent thread propagate to the caller without
+   hanging; early `gen.close()` joins the worker thread; and the thin-client CLI
+   still produces a genuine red→green mock run with contiguous `seq` in the JSONL
+   (proving events are persisted via `write_event`, not re-`emit`ted).
+
+> **Review note (2026-06-25):** This spec was revised after a Codex adversarial
+> review. Must-fix items addressed: generator-cleanup overclaim corrected (no
+> leak guarantee for *abandoned* generators; early close is blocking, no
+> cancellation); `RunResult.submission` provenance + error-path default pinned;
+> `Emitter.write_event` added so the thin client persists pre-built events
+> without reassigning seq/t; worker catches `BaseException`; Tests 5 & 6 added
+> for `BaseException` fidelity and early-close cleanup; thin-client preservation
+> enumerated as explicit acceptance criteria.
 
 ---
 
@@ -70,26 +82,50 @@ trace/
       submission: str = ""   # the agent's final submission text, if any
       error: str | None = None  # exception_str when ok is False
   ```
-  Assembled from `TracingAgent.run()`'s returned dict (which carries
-  `exit_status`/`submission`) plus the final `run.finished` event's data.
+  **Field provenance (verified against `default.py:122` + `tracing_agent.py:51`):**
+  `DefaultAgent.run()` returns `self.messages[-1].get("extra", {})`, a dict whose
+  top-level keys are `exit_status` and `submission`. So `RunResult.exit_status`
+  and `submission` come from that returned dict. `ok`, `n_calls`, `total_cost`,
+  and `error` come from the final `run.finished` event's data (they are NOT in
+  the returned dict). **Error path:** when `agent.run()` raises (e.g.
+  `AuthenticationError`), `super().run()` re-raises and returns NOTHING — so the
+  returned dict is unavailable. In that case `RunResult` is built entirely from
+  the `run.finished` event (always emitted in the agent's `finally` before the
+  raise), with `submission=""` (it cannot be recovered) and `exit_status` taken
+  from the event's `exit_status` field. `submission` is only populated on the
+  success path.
 
-- **`QueueEmitter`** — satisfies the exact Emitter contract used by
-  `TracingAgent`: `emit(type, **data) -> Event`, `set_clock(clock)`, `close()`.
-  Instead of writing to console/JSONL, it `put`s each `Event` onto a
-  `queue.Queue`. It reuses the seq counter + clock logic from the Phase-0
-  `Emitter`. To avoid duplicating that logic, factor the seq/clock/`Event`
-  construction in `events.py` into a small shared base (e.g. an
-  `_EventSource` mixin or a base class the file's `Emitter` and the new
-  `QueueEmitter` both use). This factor MUST be behavior-preserving for the
-  existing `Emitter`: all four Phase-0 `events.py` tests must still pass
-  unchanged. **Decision order for the implementer:** (1) FIRST try implementing
-  `QueueEmitter` as a subclass of the existing `Emitter` (or by composition)
-  with NO edit to `events.py` — if `Emitter`'s structure allows overriding the
-  write sinks while reusing `seq`/clock, do that and touch nothing. (2) ONLY if
-  that is not cleanly possible, do the minimal shared-base extraction in
-  `events.py`. Either way, `QueueEmitter` lives in `runner.py`, and `events.py`
-  changes (if any) are limited to the non-behavioral factor. This is the only
-  permitted change to a reviewed Phase-0 file.
+- **`QueueEmitter`** — satisfies the exact Emitter contract that `TracingAgent`
+  actually calls: it calls only `set_clock(clock)` and `emit(type, **data) ->
+  Event` (verified: `tracing_agent.py:37,51` — it never calls `close()`).
+  `QueueEmitter` also defines `close()` as a **no-op** (for interface symmetry;
+  the runner's cleanup must not call it concurrently with the worker thread).
+  Instead of writing to console/JSONL, `emit()` builds the `Event` (assigning its
+  own monotonic `seq` and `t` from the clock) and `put`s it on a `queue.Queue`.
+
+  **Subclassing `Emitter` is NOT clean** (verified `events.py:31`): `Emitter
+  .__init__(jsonl_path, ...)` opens a file unconditionally, so a `QueueEmitter`
+  subclass would either create an unwanted file sink (calling `super().__init__`)
+  or have to skip `super().__init__` and re-init `_seq`/`_clock` anyway.
+  **Therefore: do the minimal shared-base extraction.** Factor the
+  seq/clock/`Event`-construction logic in `events.py` into a small shared base
+  (e.g. `_EventSource` with `_next_event(type, **data) -> Event` that owns `_seq`
+  and `_clock` + `set_clock`). `Emitter` uses it for its sinks; `QueueEmitter`
+  (in `runner.py`) uses it to build then enqueue. This factor MUST be
+  behavior-preserving: all four Phase-0 `events.py` tests pass unchanged. This is
+  one of exactly two permitted, bounded changes to a reviewed Phase-0 file (the
+  other is `Emitter.write_event`, below).
+
+- **`Emitter.write_event(event: Event) -> None`** (NEW method on the Phase-0
+  `Emitter`) — the thin client consumes events the runner already built; it must
+  NOT re-`emit()` them, because `Emitter.emit()` constructs a *fresh* `Event`
+  with a new `seq` and a new `t` (verified `events.py:39-40`), which would corrupt
+  the JSONL's seq/timestamps. `write_event(event)` writes the *given* event's
+  `to_dict()` to the JSONL sink and prints it to console, WITHOUT reassigning
+  `seq`/`t`. `emit()` is refactored to `event = self._next_event(...);
+  self.write_event(event); return event` so the two share one write path
+  (DRY, behavior-preserving — the four existing tests still pass). This is the
+  second bounded change to `events.py`.
 
 - **`AgentRunner` (ABC)** — the interface:
   ```python
@@ -109,11 +145,16 @@ trace/
   generator:
   1. creates a `QueueEmitter` over a `queue.Queue`,
   2. builds `TracingAgent(model, env, emitter=queue_emitter, **cfg)`,
-  3. starts a background thread running `agent.run(task)`, capturing the returned
-     dict OR any raised `BaseException`,
-  4. yields events pulled from the queue until a `_DONE` sentinel,
-  5. joins the thread; if it raised, re-raises on the caller's side; otherwise
-     sets `self.result` from the captured dict + final event.
+  3. starts a background thread running `agent.run(task)`, in a wrapper that
+     catches **`BaseException`** (not just `Exception`) and, in a `finally`, puts
+     a `_DONE` sentinel carrying the returned dict (success) or the captured
+     exception (failure),
+  4. yields events pulled from the queue until the `_DONE` sentinel,
+  5. on `_DONE`: joins the thread; if an exception was captured, sets
+     `self.result` from the final `run.finished` event (with `submission=""`) and
+     re-raises; otherwise sets `self.result` from the captured dict + final event.
+     The generator also has a `finally` that drains-to-`_DONE` and joins on early
+     close (blocking — see §3 cleanup semantics).
 
 ### Data flow
 
@@ -141,20 +182,48 @@ TracingAgent.run(task)                 MiniSweAgentRunner.run(task) [generator]
   `TracingAgent.run()`'s `finally` *before* the function returns/raises, so the
   caller sees it as the last yielded event; `RunResult` is then assembled from
   it + the returned dict.
+- **Single producer + synchronous enqueue (the ordering guarantee depends on
+  this).** Exactly ONE thread (the agent thread) ever calls `QueueEmitter.emit`,
+  and `emit` does a synchronous `queue.put(event)` (no async buffering). The same
+  thread puts `_DONE` from `agent.run()`'s wrapper `finally`, which runs only
+  AFTER `TracingAgent.run()`'s own `finally` (where `run.finished` is emitted).
+  Because a single producer writes both `run.finished` and then `_DONE` to one
+  FIFO queue, the generator is guaranteed to dequeue `run.finished` before
+  `_DONE`. This guarantee breaks if `_DONE` is ever put from a different thread or
+  if `emit` buffers asynchronously — neither is permitted. `seq` and the clock
+  are touched only on this one producer thread, so they need no locking.
 
 ---
 
 ## 3. Error handling
 
-- **Exception fidelity (critical).** The thread captures any `BaseException`
-  from `agent.run()`; the generator re-raises it on the caller's thread after
-  the queue drains. `run.finished` with `ok=False` flows through first, so the
-  caller sees the terminal event and then the exception — matching Phase 0
-  semantics (e.g. the VibeProxy `AuthenticationError` run).
-- **No deadlocks / no leaked threads.** The `queue.Queue` is unbounded, so
-  `put` never blocks the agent thread. The generator has a `finally` that joins
-  the thread (and drains any remaining items) even if the caller `break`s out of
-  iteration early — an abandoned iteration cannot leak the thread.
+- **Exception fidelity (critical).** The worker wrapper catches **`BaseException`**
+  (NOT just `Exception`) from `agent.run()` — `TracingAgent` itself catches
+  `BaseException` (`tracing_agent.py:46`), so the wrapper must too, or a
+  worker-side `KeyboardInterrupt` would skip the `_DONE` put and the generator
+  would block forever on `queue.get()`. The captured exception travels on the
+  `_DONE` payload; the generator re-raises it on the caller's thread after the
+  queue drains. `run.finished` with `ok=False` flows through first (it is emitted
+  in the agent's `finally` before the raise), so the caller sees the terminal
+  event and then the exception — matching Phase 0 (e.g. the VibeProxy
+  `AuthenticationError` run).
+- **Generator cleanup — precise semantics (no overclaim).** The generator has a
+  `finally` that, on `gen.close()` or an exception during iteration (including a
+  `for`-loop `break`, which calls `close()`), drains the queue to `_DONE` and
+  joins the worker thread. **This cleanup is BLOCKING:** if the worker is mid-`agent.run()`
+  (e.g. blocked in model/env I/O), close/`break` waits until the agent finishes
+  and emits `_DONE` — there is NO cooperative cancellation in Phase 0. **Caveat
+  the spec does NOT overclaim:** a generator that is merely *abandoned* (created,
+  partially iterated, never closed and never garbage-collected) does not run its
+  `finally` deterministically, so its worker thread can outlive the iteration.
+  **Caller contract:** consumers MUST either exhaust the generator or call
+  `gen.close()` (a `for` loop that completes or `break`s does this automatically;
+  a `with closing(runner.run(task)) as gen:` is the safe pattern for partial
+  consumption). Cooperative cancellation/timeout is explicitly deferred to a
+  later phase.
+- **No producer deadlock.** The `queue.Queue` is unbounded, so `put` never blocks
+  the agent thread (unbounded queue prevents *producer* deadlock; it does not
+  bound *worker lifetime* — see cleanup semantics above).
 - **No new limits.** Phase-0 cost/step/time limits already terminate the agent;
   the runner adds none.
 - **Sink failures stay client-side.** The runner only yields events. Console
@@ -176,14 +245,42 @@ All tests use the deterministic mock (no network; real regression guards).
   assert the final `action.done` is yielded AND `run.finished` follows — proving
   the `Submitted` path crosses the queue intact (Phase-0 Test B, re-proven
   through the runner).
-- **Test 3 — exception propagation.** A mock whose action raises (the test
-  models support a `raise` action); assert iterating `run()` re-raises that
-  exception on the caller side, and that `run.finished` with `ok=False` was
-  yielded before the raise.
+- **Test 3 — `Exception` propagation.** A mock whose action raises an ordinary
+  `Exception` (`{"raise": RuntimeError(...)}`, supported at `test_models.py:78`);
+  assert iterating `run()` re-raises that exception type on the caller side, and
+  that `run.finished` with `ok=False` was yielded before the raise.
+- **Test 5 — `BaseException` fidelity (the concurrency regression guard).** A
+  mock whose action raises a `KeyboardInterrupt` (or a custom `BaseException`
+  subclass). Assert: (a) `run.finished ok=False` IS yielded, (b) the same
+  `BaseException` type re-raises on the caller, and critically (c) the call
+  returns/raises within a short timeout — i.e. it does NOT hang. This is the test
+  that fails if the worker wrapper catches only `Exception`: a `KeyboardInterrupt`
+  would then skip `_DONE`, and `queue.get()` would block forever. Use a hard
+  timeout (e.g. run the iteration under a watchdog) so a hang is a test FAILURE,
+  not a hung test run.
+- **Test 6 — early-close cleanup.** Iterate one event (`run.started`) then call
+  `gen.close()`. Assert the worker thread terminates (`thread.join(timeout=...)`
+  succeeds, `thread.is_alive()` is False afterward) — proving the generator's
+  `finally` joins on early close. (Uses the mock, which finishes fast, so the
+  documented blocking-until-agent-finishes behavior completes promptly.)
 - **Test 4 — thin-client integration.** Invoke the rewired `run_traced.py
   main()` with `--model mock` against a temp cwd; assert it exits cleanly,
-  writes a parseable `events.jsonl`, and the genuine red→green still happens
-  (Phase-0 deliverable preserved through the new architecture).
+  writes a parseable `events.jsonl` whose `seq` values are contiguous from 0 (this
+  catches the `write_event` regression — if the client re-`emit()`ed instead of
+  `write_event`ing, seq/t would be wrong), and the genuine red→green still
+  happens (Phase-0 deliverable preserved through the new architecture).
+
+**Thin-client preservation — explicit acceptance criteria (not just "behaves
+identically").** The rewired `run_traced.py` MUST preserve every current
+behavior (verified against `run_traced.py`): (1) `load_dotenv(REPO_ROOT/.env)`
+before reading env (`:63`); (2) set `agent_cfg["output_path"]` so `traj.json` is
+written per run (`:77`); (3) the `except KeyboardInterrupt` branch around runner
+iteration (`:82`) — distinct from `Exception`; (4) the VibeProxy error hint on
+failure in vibeproxy mode (`:86`); (5) close the client's file `Emitter` in a
+`finally` (`:92`); (6) print the events/trajectory paths at the end (`:93-94`);
+(7) same `--model mock|vibeproxy`, `--task`, `--cwd` CLI and exit code 0 on
+success. The client builds the file/console `Emitter` and feeds each yielded
+`Event` to it via `Emitter.write_event(event)` (NOT `emit`).
 
 Existing Phase-0 tests (events, models_mock, tracing_agent) MUST continue to
 pass unchanged.
