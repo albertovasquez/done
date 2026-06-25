@@ -1,0 +1,227 @@
+"""Smoke/integration tests: launch the harness agent as a real subprocess and
+drive it over the ACP JSON-RPC protocol.
+
+Connection pattern (verified against SDK v0.10.1):
+    async with acp.spawn_agent_process(client, cmd, *args) as (conn, proc):
+        init = await conn.initialize(protocol_version=acp.PROTOCOL_VERSION)
+        ...
+
+`spawn_agent_process` is an @asynccontextmanager that yields (ClientSideConnection, Process).
+`acp.Client` is a Protocol; implement every method concretely.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+import pytest
+import acp
+
+REPO = Path(__file__).resolve().parent.parent
+AGENT_CMD = [
+    str(REPO / ".venv/bin/python"),
+    str(REPO / "trace/acp_main.py"),
+    "--model", "mock",
+]
+
+# ---------------------------------------------------------------------------
+# VibeProxy reachability guard
+# ---------------------------------------------------------------------------
+
+def _vibeproxy_up() -> bool:
+    try:
+        import urllib.request
+        with urllib.request.urlopen("http://localhost:8317/v1/models", timeout=2) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
+VIBEPROXY_UP = _vibeproxy_up()
+needs_vibeproxy = pytest.mark.skipif(
+    not VIBEPROXY_UP,
+    reason="VibeProxy not reachable at localhost:8317 — classification tests skipped",
+)
+
+# ---------------------------------------------------------------------------
+# Collecting client — implements the full acp.Client Protocol
+# ---------------------------------------------------------------------------
+
+class _CollectingClient:
+    """Concrete Client implementation that records all session_update calls."""
+
+    def __init__(self):
+        self.updates: list[Any] = []
+
+    # Required by the Protocol
+    async def session_update(self, session_id: str, update: Any, **kwargs: Any) -> None:
+        self.updates.append(update)
+
+    async def request_permission(self, options: Any, session_id: str, tool_call: Any, **kwargs: Any) -> Any:
+        # Layer 1 never calls this; raise to surface unexpected calls
+        raise NotImplementedError("request_permission called unexpectedly in Layer-1 test")
+
+    async def write_text_file(self, content: str, path: str, session_id: str, **kwargs: Any) -> Any:
+        return None
+
+    async def read_text_file(self, path: str, session_id: str, **kwargs: Any) -> Any:
+        return None
+
+    async def create_terminal(self, command: str, session_id: str, **kwargs: Any) -> Any:
+        return None
+
+    async def terminal_output(self, session_id: str, terminal_id: str, **kwargs: Any) -> Any:
+        return None
+
+    async def release_terminal(self, session_id: str, terminal_id: str, **kwargs: Any) -> Any:
+        return None
+
+    async def wait_for_terminal_exit(self, session_id: str, terminal_id: str, **kwargs: Any) -> Any:
+        return None
+
+    async def kill_terminal(self, session_id: str, terminal_id: str, **kwargs: Any) -> Any:
+        return None
+
+    async def ext_method(self, method: str, params: dict) -> dict:
+        return {}
+
+    async def ext_notification(self, method: str, params: dict) -> None:
+        pass
+
+    def on_connect(self, conn: Any) -> None:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Helper: spawn + drive
+# ---------------------------------------------------------------------------
+
+async def _drive(prompt_text: str, cwd: Path):
+    """Initialize, open a session, send a prompt; return (updates, response)."""
+    client = _CollectingClient()
+    async with acp.spawn_agent_process(client, AGENT_CMD[0], *AGENT_CMD[1:]) as (conn, _proc):
+        await conn.initialize(protocol_version=acp.PROTOCOL_VERSION)
+        new = await conn.new_session(cwd=str(cwd), mcp_servers=[])
+        resp = await conn.prompt(
+            prompt=[acp.text_block(prompt_text)], session_id=new.session_id
+        )
+        return client.updates, resp
+
+
+# ---------------------------------------------------------------------------
+# Test A: initialize → new_session returns session_id and correct protocol_version
+# ---------------------------------------------------------------------------
+
+def test_initialize_and_new_session(tmp_path):
+    """The handshake must succeed and echo back PROTOCOL_VERSION."""
+    async def go():
+        client = _CollectingClient()
+        async with acp.spawn_agent_process(client, AGENT_CMD[0], *AGENT_CMD[1:]) as (conn, _proc):
+            init = await conn.initialize(protocol_version=acp.PROTOCOL_VERSION)
+            assert init.protocol_version == acp.PROTOCOL_VERSION, (
+                f"expected {acp.PROTOCOL_VERSION}, got {init.protocol_version}"
+            )
+            new = await conn.new_session(cwd=str(tmp_path), mcp_servers=[])
+            assert new.session_id, "new_session must return a non-empty session_id"
+
+    asyncio.run(go())
+
+
+# ---------------------------------------------------------------------------
+# Test B: chat_question prompt → _meta task_type==chat_question, no ToolCall
+# ---------------------------------------------------------------------------
+
+@needs_vibeproxy
+def test_chat_question_no_tool_call(tmp_path):
+    """'what is 1+1' must classify as chat_question and NOT trigger any tool call."""
+    updates, resp = asyncio.run(_drive("what is 1+1", tmp_path))
+
+    assert resp.stop_reason == "end_turn", f"unexpected stop_reason: {resp.stop_reason}"
+
+    # Collect all field_meta dicts from updates
+    metas = [u.field_meta for u in updates if getattr(u, "field_meta", None) is not None]
+
+    # At least one update must carry harness task_classified metadata
+    classified_types = [
+        m.get("harness", {}).get("task_classified", {}).get("task_type")
+        for m in metas
+    ]
+    assert any(t == "chat_question" for t in classified_types), (
+        f"expected a 'chat_question' classification in _meta, got: {classified_types!r}\n"
+        f"All field_metas: {metas!r}"
+    )
+
+    # No ToolCall update should appear (Phase-2 guarantee: chat skips the agent engine)
+    tool_call_types = {type(u).__name__ for u in updates if "ToolCall" in type(u).__name__}
+    assert not tool_call_types, (
+        f"chat_question must not produce ToolCall updates, got: {tool_call_types}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test C: stdout purity — every non-empty byte emitted by the subprocess on
+# stdout must be valid JSON-RPC (i.e., valid JSON). A banner or log line would
+# break the protocol wire.
+# ---------------------------------------------------------------------------
+
+def test_stdout_purity(tmp_path):
+    """The agent subprocess must emit only valid JSON on stdout; no banners or logs.
+
+    Primary proof: the SDK's newline-delimited JSON parser would raise on any
+    non-JSON byte, so a successful initialize() proves wire purity.
+
+    Secondary proof: launch a raw subprocess, send a hand-crafted newline-
+    delimited JSON-RPC initialize request, read exactly one response line, and
+    assert it parses as JSON.
+    """
+    # Primary: SDK-level proof
+    async def go():
+        client = _CollectingClient()
+        async with acp.spawn_agent_process(client, AGENT_CMD[0], *AGENT_CMD[1:]) as (conn, _proc):
+            init = await conn.initialize(protocol_version=acp.PROTOCOL_VERSION)
+            assert init.protocol_version == acp.PROTOCOL_VERSION
+        return True
+
+    assert asyncio.run(go()), "SDK-level handshake failed"
+
+    # Secondary: raw line-by-line proof via a dedicated async reader
+    # Send a hand-crafted newline-delimited JSON-RPC initialize request and
+    # read the first response line — every byte the agent writes to stdout
+    # must parse as JSON.
+    async def raw_check():
+        import asyncio.subprocess as aio_sp
+        proc = await asyncio.create_subprocess_exec(
+            *AGENT_CMD,
+            stdin=aio_sp.PIPE,
+            stdout=aio_sp.PIPE,
+            stderr=aio_sp.DEVNULL,
+        )
+        req = json.dumps({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {"protocolVersion": acp.PROTOCOL_VERSION},
+        }).encode() + b"\n"
+        try:
+            proc.stdin.write(req)
+            await proc.stdin.drain()
+            # Read one response line with a generous timeout
+            first_line = await asyncio.wait_for(proc.stdout.readline(), timeout=10.0)
+        finally:
+            proc.kill()
+            await proc.wait()
+        return first_line.strip()
+
+    first_line = asyncio.run(raw_check())
+    assert first_line, "agent produced no output on stdout after initialize request"
+    try:
+        json.loads(first_line)
+    except json.JSONDecodeError as exc:
+        pytest.fail(
+            f"Non-JSON line on agent stdout (wire pollution): {first_line!r}\nError: {exc}"
+        )
