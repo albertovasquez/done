@@ -8,6 +8,12 @@ live event tracer, to understand the core agent loop's three seams.
 
 The project uses a Python 3.11 virtualenv at `.venv` with the vendored package installed editable (`python3.11 -m venv .venv && .venv/bin/pip install -e ./upstream pytest`); `./run.sh` auto-prefers it.
 
+For the ACP agent (Phase 4), also install the ACP SDK:
+
+```bash
+.venv/bin/pip install agent-client-protocol
+```
+
 ## Run the mock demo (zero cost)
 
 ```bash
@@ -26,9 +32,32 @@ Copy `.env.example` to `.env`, ensure VibeProxy is running on `:8317`, then:
 ./run.sh --model vibeproxy --task "Fix the failing test in examples/sample-repo."
 ```
 
+## ACP agent (Phase 4)
+
+The engine is now also an **ACP server** — the control inversion of earlier
+phases. Instead of a CLI driving the engine, an editor (e.g. Zed) or a smoke
+client drives the agent over JSON-RPC/stdio using the
+[Agent Client Protocol](https://github.com/i-am-bee/acp).
+
+Launch the agent server:
+
+```bash
+# mock LLM (zero cost, no VibeProxy needed)
+.venv/bin/python trace/acp_main.py --model mock
+
+# real LLM through VibeProxy
+.venv/bin/python trace/acp_main.py --model vibeproxy
+```
+
+The process speaks ACP over stdin/stdout. An editor or the bundled smoke client
+(`trace/acp_smoke_client.py`) connects to it and drives sessions — sending
+prompts, receiving streamed `message_chunk` events, issuing `cancel`, and
+resuming prior sessions by ID. All Phase-1–3 capabilities (tracing, skills,
+permissions, fs/terminal delegation) are available through the ACP interface.
+
 ## Layout
 - `upstream/` — vendored mini-swe-agent, never edited.
-- `trace/` — the tracer (events, agent overrides, mock model, runner).
+- `trace/` — the tracer (events, agent overrides, mock model, runner, ACP server).
 - `examples/sample-repo/` — tiny repo with one failing test.
 - `docs/` — spec, plan, and learning log.
 
