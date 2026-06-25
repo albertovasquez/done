@@ -110,6 +110,12 @@ def test_3_exception_propagation(tmp_path):
         for e in runner.run("t"):
             seen.append(e.type)
     assert "run.finished" in seen  # terminal event flowed through before the raise
+    # RunResult is populated on the error path (built from the run.finished event,
+    # since the returned dict is absent when agent.run() re-raises).
+    assert runner.result is not None
+    assert runner.result.ok is False
+    assert runner.result.error is not None
+    assert runner.result.submission == ""  # not recoverable on the error path
 
 
 def test_5_baseexception_does_not_hang(tmp_path):
