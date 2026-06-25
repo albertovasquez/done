@@ -19,14 +19,6 @@ import litellm
 TASK_TYPES = ["chat_question", "code_explain", "code_fix", "code_feature",
               "code_refactor", "ops_task", "ambiguous"]
 
-SKILL_CATALOG: list[tuple[str, str]] = [
-    ("laravel-migrations", "Write/run Laravel DB migrations and schema changes"),
-    ("react-native-release", "Cut and ship a React Native mobile release"),
-    ("poker-domain-rules", "Poker rake/rakeback math and PPPoker domain logic"),
-    ("python-testing", "Write and run pytest unit/integration tests"),
-    ("git-pr-flow", "Create branches, commits, and pull requests"),
-]
-
 ROUTER_MODEL = "openai/gpt-5.4-mini"
 
 
@@ -79,7 +71,7 @@ def _strip_fences(text: str) -> str:
 
 class Router:
     def __init__(self, complete_fn: Callable[[str, str], str], *,
-                 catalog: list[tuple[str, str]] = SKILL_CATALOG,
+                 catalog: list[tuple[str, str]],
                  confidence_threshold: float = 0.6):
         self._complete = complete_fn
         self._catalog = catalog

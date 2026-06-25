@@ -149,3 +149,33 @@ def test_6_early_close_joins_worker(tmp_path):
     time.sleep(0.2)
     alive = [t for t in threading.enumerate() if t.name.startswith("agentrunner-")]
     assert alive == [], f"worker thread leaked after gen.close(): {alive}"
+
+
+def test_7_skill_block_accepted_by_runner(tmp_path):
+    """runner.run(skill_block=...) must thread skill_block to TracingAgent ctor.
+
+    Verifies that skill_block is a named param consumed by run(), NOT forwarded
+    into agent.run(**kwargs). The byte-level system-message check is already
+    covered by Task 2's tests; this test asserts the runner's contract only.
+    """
+    from unittest.mock import patch
+    from trace.tracing_agent import TracingAgent
+
+    model = _tc_model([("done", ["echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"])])
+    runner = _runner(model, tmp_path)
+
+    captured_kwargs = {}
+    original_init = TracingAgent.__init__
+
+    def spy_init(self, *args, **kwargs):
+        captured_kwargs.update(kwargs)
+        return original_init(self, *args, **kwargs)
+
+    with patch.object(TracingAgent, "__init__", spy_init):
+        list(runner.run("noop task", skill_block="\n\nINJECTED_SKILL_MARKER"))
+
+    assert runner.result is not None
+    assert runner.result.ok is True
+    assert captured_kwargs.get("skill_block") == "\n\nINJECTED_SKILL_MARKER", (
+        "skill_block must be passed to TracingAgent ctor, not leaked into agent.run kwargs"
+    )

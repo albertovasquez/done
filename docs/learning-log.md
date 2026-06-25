@@ -104,3 +104,43 @@ created its own `reproduce_issue.py` + `edge_cases.py` to verify. The mock prove
 the loop *mechanics*; only a real model exercises the loop's *purpose* —
 observation-driven reasoning. Real cost tracking also works through the proxy
 ($0.0238 total), via litellm's pricing.
+
+# Phase 3 — Knowledge / Skills Layer
+
+## Three-way separation: select → load → inject
+
+The Router's job is classification — it returns skill *names*, not content.
+`trace/skills.py` owns all file I/O: `load_catalog(skills_dir)` reads every
+`SKILL.md`, parses its YAML front-matter, and returns `(name, body)` pairs;
+`compose(skills_dir, names)` calls it and assembles the final `SkillLoad`
+dataclass (`block`, `injected`, `skipped`). `TracingAgent` consumes the
+finished `block` string and injects it — it never touches the filesystem.
+Keeping selection, content-loading, and injection in separate owners makes
+each piece independently testable and swappable.
+
+## The post-render injection trick
+
+`TracingAgent._render_template` renders the Jinja system template first (with
+`StrictUndefined`), then appends the skill block to the rendered string by
+string concatenation — identified by object identity, not by a template
+variable. Because the skill body is appended *after* Jinja has already run,
+any `{{ }}` sequences inside a skill file are literal text, not template
+expressions. A skill author can write Jinja-flavored examples in their
+`SKILL.md` without ever triggering `UndefinedError`.
+
+## Skipped-and-shown failure model
+
+A malformed `SKILL.md` (bad YAML, missing `name`/`description` keys, filename
+mismatch, non-UTF-8 bytes) is *skipped* with a human-readable reason — loading
+never raises. The skip appears in two places: the console print at startup and
+the `skill.load` event's `skipped` list. This means a bad skill is visible but
+never fatal; the agent runs with whatever good skills remain.
+
+## `skill.load` as the Phase-4 pickup point
+
+A `skill.load` event is emitted on every agent run, even when no skill was
+selected (in which case `injected` is empty and `block` is `""`). The event
+carries the full `SkillLoad` payload — injected names, skipped entries with
+reasons — so the Phase-4 CLI can surface skill activity to the user without
+parsing the system prompt. It is the single authoritative record of what the
+knowledge layer actually delivered to a run.

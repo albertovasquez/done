@@ -27,7 +27,8 @@ from minisweagent.environments.local import LocalEnvironment  # noqa: E402
 from trace.events import Emitter  # noqa: E402
 from trace.models_mock import build_mock_model  # noqa: E402
 from trace.runner import MiniSweAgentRunner  # noqa: E402
-from trace.router import Router, complete, SKILL_CATALOG  # noqa: E402
+from trace.router import Router, complete  # noqa: E402
+from trace import skills  # noqa: E402
 from trace.chat_handler import ChatHandler  # noqa: E402
 
 DEFAULT_TASK = "Fix the failing test in examples/sample-repo so that add(2, 3) == 5."
@@ -57,7 +58,8 @@ def _run_id() -> str:
 
 
 def route_and_dispatch(prompt, *, router, emitter, make_chat_handler, run_agent,
-                       ask_user, echo, worker_model_id) -> int:
+                       ask_user, echo, worker_model_id,
+                       load_skills=lambda names: skills.SkillLoad()) -> int:
     """Classify the prompt, clarify once if unclear, then dispatch.
 
     The caller owns the emitter's lifecycle (open/close); this function only
@@ -87,7 +89,11 @@ def route_and_dispatch(prompt, *, router, emitter, make_chat_handler, run_agent,
     if cls.task_type == "ambiguous":
         echo("still unclear after clarification — not running the agent; please rephrase.")
         return 0
-    run_agent(prompt)
+    load = load_skills(cls.skills)
+    emitter.emit("skill.load", injected=load.injected, skipped=load.skipped)
+    if cls.skills:
+        echo(f"skills: injected {load.injected}, skipped {load.skipped}")
+    run_agent(prompt, skill_block=load.block)
     return 0
 
 
@@ -114,10 +120,10 @@ def main(argv: list[str] | None = None) -> int:
     agent_cfg["output_path"] = str(run_dir / "traj.json")
     emitter = Emitter(run_dir / "events.jsonl", clock=lambda: 0.0, console=True)
 
-    def run_agent(prompt):
+    def run_agent(prompt, skill_block=""):
         runner = MiniSweAgentRunner(model, env, agent_cfg=agent_cfg)
         try:
-            for event in runner.run(prompt):
+            for event in runner.run(prompt, skill_block=skill_block):
                 emitter.write_renumbered(event)
         except KeyboardInterrupt:
             print("\ninterrupted", file=sys.stderr)
@@ -129,13 +135,15 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 raise
 
-    router = Router(complete, catalog=SKILL_CATALOG)
+    skills_dir = REPO_ROOT / "skills"
+    router = Router(complete, catalog=skills.load_catalog(skills_dir))
     try:
         rc = route_and_dispatch(
             args.task, router=router, emitter=emitter,
             make_chat_handler=lambda: ChatHandler(worker_model_id),
             run_agent=run_agent, ask_user=input, echo=print,
-            worker_model_id=worker_model_id)
+            worker_model_id=worker_model_id,
+            load_skills=lambda names: skills.compose(skills_dir, names))
     except Exception as e:  # noqa: BLE001 — router model unreachable etc.
         print(f"\nRouter failed: {e}\n"
               f"Is VibeProxy running on {os.getenv('VIBEPROXY_BASE_URL', 'http://localhost:8317/v1')}? "
