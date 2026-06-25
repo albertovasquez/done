@@ -9,13 +9,12 @@ Why reimplement instead of pure-wrap:
               never emits action.done for the final action.
   - run():    parent re-raises on uncaught exceptions, so run.finished must be
               emitted in a finally.
-The duplicated lines are pinned to upstream v2.4.2 (see UPSTREAM_VERSION).
+The duplicated lines are pinned to upstream v2.4.2 — verify against upstream's default.py before upgrading.
 """
 
 from __future__ import annotations
 
 import time
-import traceback
 
 from minisweagent.agents.default import DefaultAgent
 from minisweagent.exceptions import LimitsExceeded, Submitted, TimeExceeded
@@ -44,7 +43,7 @@ class TracingAgent(DefaultAgent):
         try:
             result = super().run(task, **kwargs)
             return result
-        except Exception as e:  # noqa: BLE001 — record then re-raise
+        except BaseException as e:  # noqa: BLE001 — record then re-raise
             exc_type, exc_str = type(e).__name__, str(e)
             raise
         finally:
