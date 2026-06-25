@@ -15,7 +15,10 @@ _TURNS: list[tuple[str, list[str]]] = [
     ("Let me reproduce the failure first.",
      ["python3 -m pytest test_calculator.py -q || true"]),
     ("The add() function subtracts. I'll fix it.",
-     ["sed -i '' 's/return a - b/return a + b/' calculator.py"]),
+     # Python in-place edit instead of sed: portable across macOS (BSD sed needs
+     # `-i ''`) and Linux (GNU sed needs bare `-i`). The agent runs python3 anyway.
+     ["python3 -c \"import pathlib,re; p=pathlib.Path('calculator.py'); "
+      "p.write_text(p.read_text().replace('return a - b','return a + b'))\""]),
     ("Re-running the test to confirm the fix.",
      ["python3 -m pytest test_calculator.py -q"]),
     ("Test passes. Submitting.",
