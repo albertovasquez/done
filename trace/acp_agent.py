@@ -12,9 +12,7 @@ from pathlib import Path
 import acp
 from acp.schema import (
     AllowedOutcome,
-    DeniedOutcome,
     PermissionOption,
-    RequestPermissionRequest,
     ToolCallUpdate,
 )
 
@@ -127,8 +125,12 @@ class HarnessAgent(acp.Agent):
             fut.result()
 
         def request_permission(command: str) -> bool:
-            # No client caps → standalone path; auto-allow.
-            if self._client_caps is None:
+            # Auto-allow (standalone path) unless the client advertised it can
+            # handle permission prompts. ACP routes permission via elicitation;
+            # gate on that rather than a bare None-check so a client that sends
+            # capabilities without elicitation support isn't asked to answer a
+            # prompt it can't service.
+            if self._client_caps is None or getattr(self._client_caps, "elicitation", None) is None:
                 return True
             tc_id = getattr(state, "_last_tc_id", "tc0")
             options = [

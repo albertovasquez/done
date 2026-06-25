@@ -22,7 +22,9 @@ from typing import Any
 import pytest
 import acp
 from acp.schema import (
+    ClientCapabilities,
     DeniedOutcome,
+    ElicitationCapabilities,
     RequestPermissionResponse,
 )
 
@@ -269,7 +271,11 @@ def test_permission_reject_skips_command(tmp_path):
     async def go():
         client = _RejectingClient()
         async with acp.spawn_agent_process(client, AGENT_CMD[0], *AGENT_CMD[1:]) as (conn, _proc):
-            await conn.initialize(protocol_version=acp.PROTOCOL_VERSION)
+            # advertise elicitation so the agent gates shell commands on permission
+            await conn.initialize(
+                protocol_version=acp.PROTOCOL_VERSION,
+                client_capabilities=ClientCapabilities(elicitation=ElicitationCapabilities()),
+            )
             new = await conn.new_session(cwd=str(repo), mcp_servers=[])
             resp = await conn.prompt(
                 prompt=[acp.text_block(
