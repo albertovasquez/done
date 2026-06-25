@@ -22,7 +22,6 @@ from trace.acp_env import AcpEnvironment
 from trace.acp_session import SessionStore
 from trace.router import Router, Classification
 from trace.chat_handler import ChatHandler
-from minisweagent.agents.default import DefaultAgent  # for type only; we build via factory
 
 
 class HarnessAgent(acp.Agent):
@@ -220,7 +219,9 @@ class HarnessAgent(acp.Agent):
         # (the smoke test asserts a tool_call happened; final text is best-effort here)
         if state.cancel_flag.is_set():
             return "cancelled"
-        return "end_turn" if exit_status in ("Submitted", "end_turn") else "end_turn"
+        # run_engine returns "refusal" on engine failure (per the error contract);
+        # anything else (Submitted / normal completion) is a clean end_turn.
+        return "refusal" if exit_status == "refusal" else "end_turn"
 
 
 def build_harness_agent(*, model_factory, agent_cfg, skills_dir: Path,
