@@ -77,6 +77,14 @@ class Emitter(_EventSource):
         parts = " ".join(f"{k}={v}" for k, v in event.data.items())
         print(f"[t={event.t:>5.1f}s] {event.type:<13} {parts}")
 
+    def write_renumbered(self, event: Event) -> None:
+        """Write an externally-built event but reassign its seq to THIS emitter's
+        next value, so a single emitter keeps one contiguous seq stream across
+        events it built (emit) and events built elsewhere (e.g. the runner)."""
+        renum = Event(seq=self._seq, t=event.t, type=event.type, data=event.data)
+        self._seq += 1
+        self.write_event(renum)
+
     def close(self) -> None:
         try:
             self._fh.close()
