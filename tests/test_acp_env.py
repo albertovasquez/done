@@ -3,11 +3,26 @@ sys.path.insert(0, "upstream/src")
 sys.path.insert(0, ".")
 
 import threading
+
+import pytest
+from minisweagent.exceptions import Submitted
+
 from trace.acp_env import AcpEnvironment
 
 
 def _env(tmp_path, **kw):
     return AcpEnvironment(cwd=str(tmp_path), **kw)
+
+
+def test_submitted_propagates_and_skips_done(tmp_path):
+    # the submit command makes super().execute() raise Submitted; AcpEnvironment
+    # must NOT swallow it (the agent loop ends on it), and on_command("done")
+    # must be skipped for that command.
+    calls = []
+    env = _env(tmp_path, on_command=lambda phase, cmd, out: calls.append(phase))
+    with pytest.raises(Submitted):
+        env.execute({"command": "printf 'COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\\nresult'"})
+    assert "start" in calls and "done" not in calls
 
 
 def test_executes_and_returns_full_output(tmp_path):
