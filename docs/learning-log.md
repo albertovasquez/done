@@ -61,4 +61,46 @@ independent of the harness's own environment.
 
 ## VibeProxy run (bonus, manual)
 
-Not attempted in this pass.
+Attempted and **succeeded end-to-end** with a real model on 2026-06-25.
+
+Findings:
+
+- **Model names matter.** `.env.example`'s default `gpt-5.1-codex` (a guess from
+  VibeProxy's setup guide) does not exist on this VibeProxy instance — it returned
+  `unknown provider for model gpt-5.1-codex`. Query the live list with
+  `curl -s http://localhost:8317/v1/models`. This instance exposes 20 models
+  (Claude `opus-4-8`/`sonnet-4-6`/…, GPT `gpt-5.4`/`gpt-5.5`/`gpt-5.3-codex-spark`,
+  image models).
+- **Per-provider auth is independent.** Claude models failed with
+  `auth_unavailable: no auth available (providers=claude)` — the Claude OAuth
+  session in VibeProxy was not active. GPT models worked with `api_key=dummy-not-used`
+  (the ChatGPT/Codex subscription was authenticated). So the dummy key is fine;
+  what matters is which provider VibeProxy has a live session for.
+- **The tracer is model-agnostic.** Switching from the mock to `gpt-5.4` needed
+  only `VIBEPROXY_MODEL=gpt-5.4` — zero code change — and produced the identical
+  event schema.
+
+Successful run (`VIBEPROXY_MODEL=gpt-5.4 ./run.sh --model vibeproxy`):
+
+```
+run.started   model=openai/gpt-5.4
+llm.return n=1  $0.0043  "I'll start by locating the repository..."
+  action: pwd && ls -la && find ...                 rc=0
+llm.return n=2  $0.0064  "I found a very small repo..."
+  action: cat calculator.py test_calculator.py      rc=0
+  action: python3 reproduce_issue.py                rc=0
+llm.return n=3  $0.0081  "add is subtracting. I'll fix calculator.py"
+  action: cat <<'EOF' > calculator.py  (real edit)  rc=0
+llm.return n=4  $0.0050  "fix is in place ... both pass"
+  action: echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT rc=0
+run.finished  ok=True exit_status=Submitted n_calls=4 total_cost=$0.0238 elapsed=15.2s
+```
+
+**The key lesson — mock vs. real model.** The deterministic mock replays a fixed
+script and ignores observations. The real model *reasons about them*: it ran
+`find`/`cat` to discover the repo structure it had never seen, noticed an existing
+reproduce script, diagnosed the bug from the actual output, wrote the fix, and
+created its own `reproduce_issue.py` + `edge_cases.py` to verify. The mock proves
+the loop *mechanics*; only a real model exercises the loop's *purpose* —
+observation-driven reasoning. Real cost tracking also works through the proxy
+($0.0238 total), via litellm's pricing.
