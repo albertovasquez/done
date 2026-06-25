@@ -27,8 +27,11 @@ from minisweagent.environments.local import LocalEnvironment  # noqa: E402
 from trace.events import Emitter  # noqa: E402
 from trace.models_mock import build_mock_model  # noqa: E402
 from trace.runner import MiniSweAgentRunner  # noqa: E402
+from trace.router import Router, complete, SKILL_CATALOG  # noqa: E402
+from trace.chat_handler import ChatHandler  # noqa: E402
 
 DEFAULT_TASK = "Fix the failing test in examples/sample-repo so that add(2, 3) == 5."
+DEFAULT_VIBEPROXY_MODEL = "gpt-5.4"  # single source of truth; gpt-5.1-codex does not exist on this proxy
 
 
 def _load_agent_config() -> dict:
@@ -39,7 +42,7 @@ def _load_agent_config() -> dict:
 def _build_vibeproxy_model():
     from minisweagent.models.litellm_model import LitellmModel
     return LitellmModel(
-        model_name="openai/" + os.getenv("VIBEPROXY_MODEL", "gpt-5.1-codex"),
+        model_name="openai/" + os.getenv("VIBEPROXY_MODEL", DEFAULT_VIBEPROXY_MODEL),
         model_kwargs={
             "api_base": os.getenv("VIBEPROXY_BASE_URL", "http://localhost:8317/v1"),
             "api_key": os.getenv("VIBEPROXY_API_KEY", "dummy-not-used"),
@@ -51,6 +54,41 @@ def _build_vibeproxy_model():
 def _run_id() -> str:
     # No Date.now in scripts? This is a real process; time is fine here.
     return time.strftime("%Y%m%d-%H%M%S")
+
+
+def route_and_dispatch(prompt, *, router, emitter, make_chat_handler, run_agent,
+                       ask_user, echo, worker_model_id) -> int:
+    """Classify the prompt, clarify once if unclear, then dispatch.
+
+    The caller owns the emitter's lifecycle (open/close); this function only
+    emits through it. Returns an exit code (0 on a handled/declined request).
+    """
+    cls = router.classify(prompt)
+    emitter.emit("task.classified", task_type=cls.task_type, skills=cls.skills,
+                 confidence=cls.confidence, suggested_model=cls.suggested_model)
+    if cls.needs_clarification:
+        try:
+            answer = ask_user(cls.clarifying_question or "Please clarify:")
+        except (EOFError, KeyboardInterrupt):
+            answer = ""
+        if not answer.strip():
+            echo("no clarification provided — not running the agent.")
+            return 0
+        cls = router.classify(prompt + "\n\n[clarification]: " + answer)
+        # Re-emit so the trace reflects the decision the run ACTUALLY dispatched
+        # on (not the pre-clarification guess) — observability is the point here.
+        emitter.emit("task.classified", task_type=cls.task_type, skills=cls.skills,
+                     confidence=cls.confidence, suggested_model=cls.suggested_model)
+    if cls.suggested_model and cls.suggested_model != worker_model_id:
+        echo(f"(router suggests model '{cls.suggested_model}'; using your '{worker_model_id}')")
+    if cls.task_type == "chat_question":
+        echo(make_chat_handler().answer(prompt))
+        return 0
+    if cls.task_type == "ambiguous":
+        echo("still unclear after clarification — not running the agent; please rephrase.")
+        return 0
+    run_agent(prompt)
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -65,35 +103,49 @@ def main(argv: list[str] | None = None) -> int:
     run_dir = REPO_ROOT / "trace" / "runs" / _run_id()
     run_dir.mkdir(parents=True, exist_ok=True)
 
+    worker_model_id = None if args.model == "mock" else os.getenv("VIBEPROXY_MODEL", DEFAULT_VIBEPROXY_MODEL)
+
     if args.model == "mock":
         model = build_mock_model()
     else:
         model = _build_vibeproxy_model()
-
     env = LocalEnvironment(cwd=args.cwd)
     agent_cfg = _load_agent_config()
     agent_cfg["output_path"] = str(run_dir / "traj.json")
-
     emitter = Emitter(run_dir / "events.jsonl", clock=lambda: 0.0, console=True)
-    runner = MiniSweAgentRunner(model, env, agent_cfg=agent_cfg)
 
+    def run_agent(prompt):
+        runner = MiniSweAgentRunner(model, env, agent_cfg=agent_cfg)
+        try:
+            for event in runner.run(prompt):
+                emitter.write_renumbered(event)
+        except KeyboardInterrupt:
+            print("\ninterrupted", file=sys.stderr)
+        except Exception as e:  # noqa: BLE001
+            if args.model == "vibeproxy":
+                print(f"\nVibeProxy run failed: {e}\n"
+                      f"Is VibeProxy running on {os.getenv('VIBEPROXY_BASE_URL', 'http://localhost:8317/v1')}?",
+                      file=sys.stderr)
+            else:
+                raise
+
+    router = Router(complete, catalog=SKILL_CATALOG)
     try:
-        for event in runner.run(args.task):
-            emitter.write_event(event)   # persist+print WITHOUT reassigning seq/t
-    except KeyboardInterrupt:
-        print("\ninterrupted", file=sys.stderr)
-    except Exception as e:  # noqa: BLE001
-        if args.model == "vibeproxy":
-            print(f"\nVibeProxy run failed: {e}\n"
-                  f"Is VibeProxy running on {os.getenv('VIBEPROXY_BASE_URL', 'http://localhost:8317/v1')}?",
-                  file=sys.stderr)
-        else:
-            raise
+        rc = route_and_dispatch(
+            args.task, router=router, emitter=emitter,
+            make_chat_handler=lambda: ChatHandler(worker_model_id),
+            run_agent=run_agent, ask_user=input, echo=print,
+            worker_model_id=worker_model_id)
+    except Exception as e:  # noqa: BLE001 — router model unreachable etc.
+        print(f"\nRouter failed: {e}\n"
+              f"Is VibeProxy running on {os.getenv('VIBEPROXY_BASE_URL', 'http://localhost:8317/v1')}? "
+              f"(the router uses VibeProxy even when --model is mock)", file=sys.stderr)
+        rc = 1
     finally:
         emitter.close()
         print(f"\nevents:     {run_dir / 'events.jsonl'}")
         print(f"trajectory: {run_dir / 'traj.json'}")
-    return 0
+    return rc
 
 
 if __name__ == "__main__":
