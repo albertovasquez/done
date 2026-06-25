@@ -155,21 +155,25 @@ class HarnessAgent(acp.Agent):
                     loop,
                 ).result()
                 tid = create_resp.terminal_id
-                asyncio.run_coroutine_threadsafe(
-                    self._conn.wait_for_terminal_exit(session_id=session_id,
-                                                      terminal_id=tid),
-                    loop,
-                ).result()
-                out_resp = asyncio.run_coroutine_threadsafe(
-                    self._conn.terminal_output(session_id=session_id, terminal_id=tid),
-                    loop,
-                ).result()
-                asyncio.run_coroutine_threadsafe(
-                    self._conn.release_terminal(session_id=session_id, terminal_id=tid),
-                    loop,
-                ).result()
+                try:
+                    asyncio.run_coroutine_threadsafe(
+                        self._conn.wait_for_terminal_exit(session_id=session_id,
+                                                          terminal_id=tid),
+                        loop,
+                    ).result()
+                    out_resp = asyncio.run_coroutine_threadsafe(
+                        self._conn.terminal_output(session_id=session_id, terminal_id=tid),
+                        loop,
+                    ).result()
+                finally:
+                    # always release, even if wait/output raised — no terminal leak
+                    asyncio.run_coroutine_threadsafe(
+                        self._conn.release_terminal(session_id=session_id, terminal_id=tid),
+                        loop,
+                    ).result()
                 exit_status: TerminalExitStatus | None = getattr(out_resp, "exit_status", None)
-                returncode = exit_status.exit_code if exit_status is not None else 0
+                # unknown exit status → -1 (error), NOT 0 — never misreport a failure as success
+                returncode = exit_status.exit_code if exit_status is not None else -1
                 return {
                     "output": out_resp.output or "",
                     "returncode": returncode,
