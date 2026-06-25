@@ -31,6 +31,7 @@ from trace.router import Router, complete, SKILL_CATALOG  # noqa: E402
 from trace.chat_handler import ChatHandler  # noqa: E402
 
 DEFAULT_TASK = "Fix the failing test in examples/sample-repo so that add(2, 3) == 5."
+DEFAULT_VIBEPROXY_MODEL = "gpt-5.4"  # single source of truth; gpt-5.1-codex does not exist on this proxy
 
 
 def _load_agent_config() -> dict:
@@ -41,7 +42,7 @@ def _load_agent_config() -> dict:
 def _build_vibeproxy_model():
     from minisweagent.models.litellm_model import LitellmModel
     return LitellmModel(
-        model_name="openai/" + os.getenv("VIBEPROXY_MODEL", "gpt-5.1-codex"),
+        model_name="openai/" + os.getenv("VIBEPROXY_MODEL", DEFAULT_VIBEPROXY_MODEL),
         model_kwargs={
             "api_base": os.getenv("VIBEPROXY_BASE_URL", "http://localhost:8317/v1"),
             "api_key": os.getenv("VIBEPROXY_API_KEY", "dummy-not-used"),
@@ -93,7 +94,7 @@ def main(argv: list[str] | None = None) -> int:
     run_dir = REPO_ROOT / "trace" / "runs" / _run_id()
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    worker_model_id = None if args.model == "mock" else os.getenv("VIBEPROXY_MODEL", "gpt-5.4")
+    worker_model_id = None if args.model == "mock" else os.getenv("VIBEPROXY_MODEL", DEFAULT_VIBEPROXY_MODEL)
 
     if args.model == "mock":
         model = build_mock_model()
