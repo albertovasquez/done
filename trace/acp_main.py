@@ -40,13 +40,17 @@ def _model_factory(model_choice: str):
     if model_choice == "mock":
         from trace.models_mock import build_mock_model
         return build_mock_model
-    # vibeproxy path
+    # vibeproxy path — api_base/api_key live in model_kwargs (LitellmModelConfig has
+    # no top-level api_base/api_key fields); mirror run_traced.py's proven wiring.
     def make():
         from minisweagent.models.litellm_model import LitellmModel
         return LitellmModel(
             model_name="openai/" + os.getenv("VIBEPROXY_MODEL", "gpt-5.4"),
-            api_base=os.getenv("VIBEPROXY_BASE_URL", "http://localhost:8317/v1"),
-            api_key=os.getenv("VIBEPROXY_API_KEY", "dummy-not-used"),
+            model_kwargs={
+                "api_base": os.getenv("VIBEPROXY_BASE_URL", "http://localhost:8317/v1"),
+                "api_key": os.getenv("VIBEPROXY_API_KEY", "dummy-not-used"),
+            },
+            cost_tracking="ignore_errors",
         )
     return make
 
