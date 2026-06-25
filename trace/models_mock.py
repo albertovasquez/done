@@ -3,6 +3,12 @@
 The command sequence, run in examples/sample-repo, fixes the `add` bug then
 submits. Mirrors upstream tests/agents/test_default.py::make_tc_model so the
 tool-call/observation pairing is exactly the shape the real LitellmModel emits.
+
+Verification uses stdlib-only assertions (not pytest) because the agent's shell
+commands run through LocalEnvironment, which inherits the system python3 (3.9),
+NOT the runner's .venv where pytest is installed. The stdlib assert gives a
+genuine red->green: turn 1 raises AssertionError (rc!=0), turn 3 prints PASS
+(rc=0) after turn 2's in-place fix.
 """
 
 from __future__ import annotations
@@ -13,14 +19,14 @@ from minisweagent.models.test_models import DeterministicToolcallModel, make_too
 # Commands run with cwd=examples/sample-repo (set by the runner), so no cd prefix needed.
 _TURNS: list[tuple[str, list[str]]] = [
     ("Let me reproduce the failure first.",
-     ["python3 -m pytest test_calculator.py -q || true"]),
+     ["python3 -c \"from calculator import add; assert add(2, 3) == 5, 'BUG: add(2,3) != 5'; print('PASS')\""]),
     ("The add() function subtracts. I'll fix it.",
      # Python in-place edit instead of sed: portable across macOS (BSD sed needs
      # `-i ''`) and Linux (GNU sed needs bare `-i`). The agent runs python3 anyway.
      ["python3 -c \"import pathlib,re; p=pathlib.Path('calculator.py'); "
       "p.write_text(p.read_text().replace('return a - b','return a + b'))\""]),
-    ("Re-running the test to confirm the fix.",
-     ["python3 -m pytest test_calculator.py -q"]),
+    ("Re-running the check to confirm the fix.",
+     ["python3 -c \"from calculator import add; assert add(2, 3) == 5, 'BUG: add(2,3) != 5'; print('PASS')\""]),
     ("Test passes. Submitting.",
      ["echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"]),
 ]
