@@ -101,12 +101,14 @@ class Router:
         task_type = data.get("task_type", "ambiguous")
         if task_type not in TASK_TYPES:
             task_type = "ambiguous"
-        skills = [s for s in (data.get("skills") or []) if s in self._catalog_names]
+        raw_skills = data.get("skills")
+        raw_skills = raw_skills if isinstance(raw_skills, list) else []  # a scalar/str isn't a skill list
+        skills = [s for s in raw_skills if s in self._catalog_names]
         try:
             confidence = float(data.get("confidence", 0.0))
         except (TypeError, ValueError):
             confidence = 0.0
-        reasoning = str(data.get("reasoning", ""))
+        reasoning = str(data.get("reasoning") or "")  # `or ""` so a null reasoning isn't "None"
         suggested = data.get("suggested_model") or None
         needs = confidence < self._threshold or task_type == "ambiguous"
         question = None

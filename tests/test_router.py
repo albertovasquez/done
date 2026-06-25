@@ -54,3 +54,15 @@ def test_3_unparseable_and_fenced_json():
     c2 = Router(_stub(fenced)).classify("make a PR")
     assert c2.task_type == "ops_task"
     assert c2.needs_clarification is False
+
+
+def test_4_malformed_field_types_are_handled(tmp_path=None):
+    # skills as a scalar string -> treated as empty (not character-mangled)
+    c = Router(_stub(json.dumps({"task_type": "code_fix", "skills": "poker-domain-rules",
+                                 "confidence": 0.9, "reasoning": "x"}))).classify("fix")
+    assert c.skills == []
+    # reasoning null -> clarifying question must NOT contain the literal "None"
+    c2 = Router(_stub(json.dumps({"task_type": "ambiguous", "skills": [],
+                                  "confidence": 0.2, "reasoning": None}))).classify("huh")
+    assert c2.needs_clarification is True
+    assert "None" not in (c2.clarifying_question or "")
