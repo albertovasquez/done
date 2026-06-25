@@ -7,7 +7,6 @@ in the executor so the async loop stays responsive to session/cancel."""
 from __future__ import annotations
 
 import asyncio
-import functools
 from pathlib import Path
 
 import acp
@@ -91,7 +90,8 @@ class HarnessAgent(acp.Agent):
             return acp.PromptResponse(stop_reason="end_turn")
 
         # agent path
-        load = skills.compose(self._skills_dir, cls.skills)
+        # offload skills.compose: it does filesystem I/O; keep the event loop free
+        load = await loop.run_in_executor(None, skills.compose, self._skills_dir, cls.skills)
         await self._conn.session_update(session_id,
             with_meta(message_chunk(""),
                       {"skill_load": {"injected": load.injected, "skipped": load.skipped}}))
@@ -133,7 +133,7 @@ class HarnessAgent(acp.Agent):
             try:
                 result = agent.run(text)
                 return result.get("exit_status", "end_turn")
-            except BaseException:
+            except Exception:  # engine failure → turn resolves refusal, process survives
                 return "refusal"
 
         if state.cancel_flag.is_set():
