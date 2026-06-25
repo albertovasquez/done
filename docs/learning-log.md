@@ -144,3 +144,78 @@ carries the full `SkillLoad` payload — injected names, skipped entries with
 reasons — so the Phase-4 CLI can surface skill activity to the user without
 parsing the system prompt. It is the single authoritative record of what the
 knowledge layer actually delivered to a run.
+
+# Phase 4 — ACP Agent
+
+## The architectural inversion
+
+Every earlier phase had the CLI driving the engine. Phase 4 flips that: the
+engine becomes an **ACP server** and an editor (Zed, or our smoke client) drives
+it over JSON-RPC/stdio. The harness is no longer the top-level process — it is a
+dependency the client loads and talks to. This is a meaningful design shift:
+observability, cancellation, and session lifecycle are now the client's concern,
+not a script's.
+
+## The key lesson: adapting a lossy event stream is a trap
+
+The first design idea was to translate the existing event stream into ACP
+messages — emit `llm.return`, `action.done`, etc. as ACP events. Codex's review
+caught three fatal problems with that approach:
+
+1. **Events are lossy.** `llm.return` carries only a 120-character preview of
+   the model response; `action.done` carries only returncode and byte-count — not
+   the actual shell output. An ACP client built on those events would see
+   truncated data.
+2. **Emit-then-execute can't gate permission.** The event fires *after* the
+   decision is already made. A pre-execution permission hook needs to intercept
+   the call *before* `env.execute` runs, not be notified about it afterward.
+3. **Phase-1 has no cooperative cancel.** The event loop has no checkpoint where
+   a cancel flag can be tested between shell commands.
+
+The fix was to wrap the engine's **interface**, not its output. `AcpEnvironment`
+subclasses `LocalEnvironment` and overrides `execute`: it checks a cancel flag
+before each command, calls an async `request_permission` hook and awaits
+approval, then runs the command and returns the **full output** — not a preview.
+The lesson generalises: a clean-looking adapter over a lossy event stream is a
+trap; reach the real data at the interface.
+
+```python
+class AcpEnvironment(LocalEnvironment):
+    async def execute(self, action):
+        if self._cancel_flag.is_set():
+            raise AgentCancelled()
+        await self._request_permission(action)   # pre-exec hook
+        return await super().execute(action)      # full output
+```
+
+## The async↔sync bridge
+
+ACP is async and bidirectional; the engine is sync and blocking. The seam is
+`run_in_executor` (to offload blocking engine work off the event loop) and
+`run_coroutine_threadsafe` (to call back into the async layer — e.g. to request
+permission or stream a chunk — from the sync thread). Router, ChatHandler, and
+the agent runner are all offloaded this way so the event loop stays responsive to
+incoming `cancel` requests even while a shell command is executing.
+
+## `_meta` for harness-specific observability
+
+ACP has no native event type for `task.classified` or `skill.load`. Rather than
+invent custom event subtypes, both are forwarded as `message_chunk` with a
+`_meta` field carrying the structured payload. The client can ignore `_meta` or
+inspect it — the standard ACP stream is unaffected either way.
+
+## Best-effort cancel
+
+Cancel is honest about its limits: it sets a flag that `AcpEnvironment.execute`
+checks at command boundaries. A cancel issued during an LLM call will not
+interrupt the model mid-generation — it takes effect at the next
+`env.execute` checkpoint. This is a deliberate limitation, not an oversight, and
+it is documented in the agent's `cancel()` response.
+
+## Four layers, delivered incrementally
+
+The phase was built in four layers: (1) a minimal agent that streams text and
+handles a single turn; (2) the permission hook wired into `AcpEnvironment`;
+(3) filesystem and terminal delegation forwarded as ACP tool events; (4) session
+resume via `SessionStore`, so a client can reconnect to a prior run by ID. Each
+layer had its own test file; all 65 tests pass together.
