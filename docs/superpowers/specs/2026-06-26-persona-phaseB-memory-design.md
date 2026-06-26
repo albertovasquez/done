@@ -76,10 +76,9 @@ never selects the workspace.
 ```python
 @dataclass
 class MemoryLoad:
-    block: str = ""                                          # protocol preamble + composed files
+    block: str = ""                                          # protocol preamble + composed files (empty unless content)
     injected: list[str] = field(default_factory=list)        # memory filenames composed in
     skipped: list[tuple[str, str]] = field(default_factory=list)
-    has_workspace: bool = False                              # the workspace dir EXISTS (drives the protocol; see §5)
 
 MEMORY_FILE = "MEMORY.md"
 MEMORY_DIR = "memory"
@@ -90,23 +89,33 @@ def resolve_memory(workspace_dir: Path | None, *, today: date) -> MemoryLoad: ..
 
 - Reads `MEMORY.md` (durable) + `memory/<today>.md` + `memory/<yesterday>.md`.
   **`today` is passed in, not `date.today()`** — testability + the codebase's
-  no-ambient-clock discipline (`yesterday = today - timedelta(days=1)`).
+  no-ambient-clock discipline. The caller computes `today` ONCE per session at
+  session-start in **local time** and that date is fixed for the session's memory
+  (a long session crossing midnight keeps its session-start date; the next session
+  recomputes — consistent with first-turn-only caching, §4). `yesterday = today -
+  timedelta(days=1)`.
 - Reuses `persona._meaningful` and `persona._trim` (promote them to shared helpers
   or import — see §7). Blank/comment-only files skip; oversized files trim with the
   marker. **Same discipline as `compose_persona`** — a bad file never aborts a turn.
-- Block shape (labeled, parallel to `# Persona`):
+- **CONTENT-GATED composition (resolves the no-op boundary — see §5):** the block
+  (protocol preamble + files) is produced **only when at least one memory file has
+  real content** (`injected` non-empty). Otherwise `block == ""`, exactly like
+  `compose_persona` on empty input:
+  - no content (absent workspace, OR present workspace with all files
+    missing/blank/comment-only) ⇒ `MemoryLoad()` empty, `block == ""` — strict
+    no-op. The seeded-but-unused default persona is byte-identical (preserves the
+    Phase A guarantee + its existing test).
+  - ≥1 file with content ⇒ `block ==` protocol preamble + composed file sections.
+- Block shape when non-empty (labeled, parallel to `# Persona`):
   ```
   \n\n# Memory\n\n
-  You have persistent memory. Honor and extend it (see protocol).\n\n
+  <protocol preamble — §5>\n\n
   ## MEMORY.md\n<durable body>\n\n
   ## memory/<today>\n<today body>\n\n
   ## memory/<yesterday>\n<yesterday body>
   ```
-- **Block composition** depends on the workspace existing (§5's rule):
-  - workspace absent ⇒ `MemoryLoad()` empty, `has_workspace=False`, `block==""`;
-  - workspace present, all three files missing/blank ⇒ `has_workspace=True`,
-    `injected==[]`, `block ==` protocol preamble only;
-  - workspace present with content ⇒ `block ==` preamble + composed files.
+  Only the sections for files that HAVE content appear. The protocol preamble is
+  part of this block, so it is present iff the block is (content-gated).
 
 ### 3.1 Chokepoint integration
 
@@ -123,9 +132,19 @@ System-prompt order: **base → persona → memory → skills** (identity → wh
 learned → task skills). In `TracingAgent._render_template`, append `memory_block`
 between persona and skills (same `template is self.config.system_template` guard).
 
-Chat path (`ChatHandler`): the memory block is appended to the persona system
-message (one identity-level system message carrying persona + memory), so chat
-turns are also memory-aware.
+Chat path (`ChatHandler`) — **precise composition (#5):** `acp_agent` pre-concatenates
+`state.persona_block + state.memory_block` into ONE identity string and passes it as
+the existing `persona_block` param (no new ChatHandler param — keeps the change
+minimal). `ChatHandler` already emits a system message iff that string is non-empty
+(`chat_handler.py:81`), so:
+- persona only → system message = persona;
+- memory only (persona empty) → system message = memory (the concat is just the
+  memory block, still non-empty → one system message is created);
+- both → persona + memory in one system message;
+- neither → no system message (byte-identical no-op).
+
+So memory-only sessions DO get a system message. The concatenation happens in
+`acp_agent`, not `ChatHandler` — `ChatHandler`'s contract is unchanged.
 
 ---
 
@@ -147,10 +166,19 @@ selection will set.
   `memory_load_emitted` (mirrors the persona-cache + gated-emit trio from Phase A).
 
 **Scope guard:** NO `--persona` flag, NO `/persona` picker, NO `persona.toml`, NO
-multi-persona selection logic. B proves the plumbing is per-session (a test
-constructs two sessions with different workspace dirs and asserts their
-memory/persona are isolated); C adds the user-facing valve. This is the one part
+multi-persona selection logic. C adds the user-facing valve. This is the one part
 of B that is "more than memory," and it is deliberately minimal.
+
+**What the isolation test actually proves (#8 — honest about the layer):**
+`HarnessAgent.new_session` has no workspace parameter (`acp_agent.py:77`) and in B
+always records `self._workspace_dir` (the default), so the *public ACP flow* cannot
+yet select a second workspace. The isolation test therefore proves the **plumbing
+layer**, not a user flow: it constructs two `SessionState`s with different
+`workspace_dir` values (via `SessionStore.new(cwd, workspace_dir)` directly, or by
+setting `agent._workspace_dir` between `new_session` calls) and asserts their
+resolved memory/persona blocks are independent. That is the genuine Phase-B
+deliverable — the per-session pipe exists and is keyed correctly; Phase C wires a
+selector to it.
 
 ---
 
@@ -159,38 +187,51 @@ of B that is "more than memory," and it is deliberately minimal.
 The agent acts only through shell (`BASH_TOOL`). So the "memory-write tool" is a
 **prompt-injected protocol**, not a new mechanism.
 
-**Precise injection rule (resolves the no-op boundary):** the protocol preamble
-appears **iff the session's workspace directory EXISTS** — independent of whether
-any memory file has content yet. This way a brand-new (but real) persona learns it
-*can* record from turn one, even with empty memory; and the byte-identical no-op is
-scoped to an **absent** workspace (no `~/.config/harness/agents/<id>/` at all),
-exactly matching Phase A's no-op semantics (`resolve_persona(absent) == empty`).
+**Injection rule — CONTENT-GATED (#1, corrected after adversarial review):** the
+protocol preamble + memory block inject **iff `resolve_memory` produced content**
+(`injected` non-empty), exactly like persona/skills gate on theirs. This is the
+load-bearing fix: the default install seeds the workspace (`acp_main.py:79` →
+`seed_default_workspace`), so "inject when the workspace exists" would inject the
+protocol on **every default install** and break the Phase A byte-identical-no-op
+test (`test_acp_session_context.py:343`). Content-gating preserves it: a
+seeded-but-unused default persona has no memory content → no block → no protocol →
+byte-identical. A persona becomes memory-active once it *has* memory content. (How
+a brand-new persona first learns it can keep memory is a documentation concern, not
+engine injection — out of scope for B; the protocol appears as soon as any memory
+file has content.)
 
-Concretely: `resolve_memory` returns, alongside the (possibly empty) memory block,
-a `has_workspace: bool`. The injected memory section is:
-- workspace absent ⇒ `""` (strict no-op — no protocol, no block, no event);
-- workspace present, no memory content ⇒ protocol preamble only (the agent knows
-  it can record, but there's nothing to recall yet);
-- workspace present, with content ⇒ protocol preamble + the composed memory block.
+Protocol text (ported from OpenClaw's `AGENTS.default`), the memory block's preamble,
+with the session's **absolute, quoted** workspace paths interpolated (#3) and
+safe shell patterns (#2 dir-create, #3 missing-file read):
 
-The protocol is identity-level (D-B5), always present on agent turns for a real
-persona, not router-gated. It rides the chokepoint with the memory block.
+> You have a persistent memory in this workspace. Its files were given to you above
+> (when present). To record something worth remembering:
+> 1. Ensure the dir exists: `mkdir -p "<abs-workspace>/memory"`
+> 2. Read before writing: `test -f "<file>" && cat "<file>"`
+> 3. Append a concrete entry: `printf '%s\n' "..." >> "<file>"`
+>
+> Write only real updates — decisions, preferences, constraints, open loops.
+> **Never** write empty placeholders. Durable facts → `"<abs-workspace>/MEMORY.md"`;
+> today's working notes → `"<abs-workspace>/memory/<today>.md"`. You may re-read any
+> memory file at any time.
 
-Protocol text (ported from OpenClaw's `AGENTS.default`), injected as the memory
-block's preamble:
+All paths are interpolated as **absolute and double-quoted** (the workspace is under
+the XDG/home config dir — `paths.py` — and may contain spaces). The `mkdir -p` makes
+the first daily write safe even though seeding never creates `memory/` (#2). The
+`test -f && cat` makes "read before write" safe on a not-yet-existing file (#3).
 
-> You have a persistent memory at `<absolute workspace memory paths>`. On session
-> start you were given today's + yesterday's notes and `MEMORY.md` above. To
-> record something worth remembering: **read the file first** (`cat`), then
-> **append** a concrete entry (`>>`). Write only real updates — decisions,
-> preferences, constraints, open loops. **Never** write empty placeholders or
-> "TODO: remember things". Durable facts go in `MEMORY.md`; today's working notes
-> go in `memory/<today>.md`. You may re-read any memory file at any time.
+**Permission (#9):** in ACP, a write command goes through `request_permission` like
+any project mutation (`acp_env.py:31` → `acp_agent.py`). Phase B does **not**
+special-case memory paths — a memory append is a normal command the user may be
+prompted for (and may deny; the agent continues, the memory just isn't written).
+Auto-allowing writes under `~/.config/harness/agents/` is a deliberate
+non-goal for B (it would carve a permission exception, which the project routes to
+Codex review); revisit if the prompt-on-every-write UX proves annoying. Stated, not
+solved.
 
-The agent writes with ordinary shell (`cat path` to read, `echo "..." >> path`).
 No new binary, no engine interception. The protocol travels WITH the memory block
-through the chokepoint, so it reaches both the agent path (where shell writes
-happen) and — harmlessly — the chat path.
+through the chokepoint, so it reaches the agent path (where shell writes happen) and
+— harmlessly — the chat path.
 
 **Why prompt-driven, not a CLI helper or magic command:** matches the Phase-3
 decision that behavior emerges from injected text, not code branches (D3). The
@@ -207,14 +248,20 @@ trim rules), never aborting a turn.
   only when `memory_load.injected` is non-empty, **after** `task_classified`, only
   on personalized turns (chat/agent, not clarify/ambiguous), **once per session**
   (a `memory_load_emitted` flag on `SessionState`). The empty case emits nothing.
-- **The no-op guarantee (load-bearing, inherited from Phase A):** an **absent**
-  workspace (no `~/.config/harness/agents/<id>/` dir) is **byte-identical** to
-  today — no memory block, no protocol text, no `memory_load` event, no
-  system-message change. Locked by a test. (A *present* workspace with empty
-  memory deliberately injects the protocol preamble per §5 — that is intended new
-  behavior for a real persona, not a no-op violation. The `memory_load` _event_ is
-  still gated on `injected` being non-empty, so an empty-memory persona emits no
-  event even though it gets the protocol text.)
+- **#4 capability-chat caveat:** a `chat_question` that is a capability question
+  short-circuits in `ChatHandler` (`chat_handler.py:69`) BEFORE any model message
+  is built — so on that sub-path memory isn't actually injected into a model, yet
+  the gated emit (which fires in `acp_agent` before dispatch detail is known) would
+  still report `memory_load`. The existing `persona_load`/`skill_load` have the
+  same shape; `memory_load` is consistent with them. The event therefore means
+  "memory was RESOLVED for this turn," not "a model saw it." We accept this
+  (consistency with persona/skills telemetry) rather than special-casing
+  capability-chat; the no-op (no memory content → no event) is unaffected.
+- **The no-op guarantee (load-bearing, inherited from Phase A):** **no memory
+  content** (absent workspace, OR present-but-empty/inert memory — incl. the
+  seeded default) is **byte-identical** to today — no memory block, no protocol
+  text, no `memory_load` event, no system-message change. Locked by a test that
+  reuses the seeded-default scenario from `test_acp_session_context.py:323`.
 - The order in the gated-emit block: `task_classified` → `persona_load` →
   `memory_load` → `skill_load` (memory after persona, before skills — matching the
   injection order).
@@ -228,12 +275,13 @@ trim rules), never aborting a turn.
 | `harness/memory.py` | **new** — `MemoryLoad`, `resolve_memory(workspace_dir, *, today)`, the protocol-preamble constant |
 | `harness/persona.py` | promote `_meaningful` + `_trim` to importable helpers (memory reuses them); no behavior change |
 | `harness/acp_session.py` | `SessionState`: add `workspace_dir`, `memory_block`, `memory_load`, `memory_load_emitted`; `SessionStore.new(cwd, workspace_dir)` |
-| `harness/acp_agent.py` | resolve memory once per session (from `state.workspace_dir`); gated `memory_load` emit; thread `memory_block` through `compose_context` + `ChatHandler`; `new_session` records the workspace per session |
+| `harness/acp_agent.py` | resolve memory once per session (from `state.workspace_dir`, computing `today` at session start); gated `memory_load` emit; thread `memory_block` through `compose_context`; pre-concat `persona_block + memory_block` for the `ChatHandler` system message (#5); `new_session` records the workspace per session |
 | `harness/persona.py` `compose_context` / `TurnContext` | add `memory_block` param + field |
 | `harness/tracing_agent.py` | append `memory_block` to the system template (base → persona → memory → skills) |
-| `harness/chat_handler.py` | append `memory_block` to the persona system message |
-| `harness/run_traced.py` | resolve memory for the default workspace; thread through |
-| `tests/` | memory-compose unit tests; isolation (two sessions, different workspaces, isolated memory); injection-reach (both paths); gated-event; **no-op regression**; protocol-preamble presence |
+| `harness/chat_handler.py` | **NO signature change** (#5) — `acp_agent` pre-concatenates persona+memory into the existing `persona_block` param |
+| `harness/run_traced.py` | resolve memory for the default workspace; thread `memory_block` through `MiniSweAgentRunner.run` |
+| `harness/runner.py` (#6) | `MiniSweAgentRunner.run` gains `memory_block: str = ""`, forwarded to `TracingAgent` alongside `skill_block`/`persona_block` (else memory can't reach the non-ACP dev path) |
+| `tests/` | memory-compose unit tests (content-gating, today injected, trim/blank/inert); isolation (two `SessionState`s, different workspace_dir, isolated memory — via `SessionStore.new` directly, #8); injection-reach (both paths); gated-event; **no-op regression** (seeded default = byte-identical, reuses the Phase-A scenario); protocol-preamble presence when content exists |
 
 ---
 
