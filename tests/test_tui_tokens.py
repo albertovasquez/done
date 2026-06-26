@@ -21,3 +21,12 @@ def test_status_label_is_uppercase():
     # Verify all status labels in the dictionary are uppercase
     for key, label in STATUS_LABEL.items():
         assert label == label.upper(), f"{key} label not uppercase: {label}"
+
+
+def test_theme_has_product_status_tokens():
+    from harness.tui.theme import COLORS, STATUS_COLOR, HARNESS_THEME
+    # green/amber are sanctioned product-status tokens (spec §4.1)
+    assert COLORS["success"] == "#7ee787"
+    assert COLORS["scheduled"] == "#e3b341"
+    assert STATUS_COLOR["scheduled"] == "#e3b341"
+    assert HARNESS_THEME.variables["scheduled"] == "#e3b341"
