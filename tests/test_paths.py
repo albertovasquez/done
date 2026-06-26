@@ -45,3 +45,9 @@ def test_load_env_precedence(monkeypatch, tmp_path):
 def test_load_env_no_files_is_noop(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     paths.load_env(tmp_path)              # no .env anywhere -> no exception
+
+
+def test_mini_yaml_path_exists():
+    p = paths.mini_yaml_path()
+    assert p.name == "mini.yaml"
+    assert p.is_file()
