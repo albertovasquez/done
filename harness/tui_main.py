@@ -71,11 +71,20 @@ def main(argv=None) -> None:
     args = parser.parse_args(argv)
 
     cwd = str(Path(args.cwd).resolve()) if args.cwd else os.getcwd()
+    # Capture whether VIBEPROXY_MODEL came from the real shell env BEFORE load_env
+    # may fill it from a .env file. Precedence we want: shell env > done.conf >
+    # .env > default. load_env uses override=False, so a .env value only lands in
+    # os.environ here when the shell did NOT already set it.
+    shell_set_model = "VIBEPROXY_MODEL" in os.environ
     paths.load_env(cwd)               # resolve VIBEPROXY_* before spawning the agent
     backend, model_override = _resolve_model(args.model)
     args.model = backend              # normalize so _relaunch_args carries the resolved backend
-    if model_override is not None:
-        os.environ.setdefault("VIBEPROXY_MODEL", model_override)  # process env still wins
+    if model_override is not None and not shell_set_model:
+        # The persisted (done.conf) model wins over any .env-derived value, but a
+        # real shell-exported VIBEPROXY_MODEL still takes priority — so overwrite
+        # only when the shell didn't set it. setdefault wouldn't work: a .env
+        # value is already present by now and would silently beat done.conf.
+        os.environ["VIBEPROXY_MODEL"] = model_override
     # Seed the TUI's displayed worker model AFTER the env export, so the footer
     # shows the real id (e.g. the persisted model) on a fresh launch instead of
     # the "default model" fallback. Same resolution acp_main uses for the agent.
