@@ -29,6 +29,8 @@ from harness.models_mock import build_mock_model  # noqa: E402
 from harness.runner import MiniSweAgentRunner  # noqa: E402
 from harness.router import Router, complete  # noqa: E402
 from harness import skills  # noqa: E402
+from harness import persona as _persona  # noqa: E402
+from harness import paths as _paths_persona  # noqa: E402
 from harness.chat_handler import ChatHandler  # noqa: E402
 
 DEFAULT_TASK = "Fix the failing test in examples/sample-repo so that add(2, 3) == 5."
@@ -123,9 +125,12 @@ def main(argv: list[str] | None = None) -> int:
     emitter = Emitter(run_dir / "events.jsonl", clock=lambda: 0.0, console=True)
 
     def run_agent(prompt, skill_block=""):
+        persona_block = _persona.compose_persona(
+            _paths_persona.default_workspace_dir()).block
         runner = MiniSweAgentRunner(model, env, agent_cfg=agent_cfg)
         try:
-            for event in runner.run(prompt, skill_block=skill_block):
+            for event in runner.run(prompt, skill_block=skill_block,
+                                    persona_block=persona_block):
                 emitter.write_renumbered(event)
         except KeyboardInterrupt:
             print("\ninterrupted", file=sys.stderr)
