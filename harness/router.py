@@ -14,6 +14,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Callable
 
+from harness.transcript import router_preamble
+
 # NOTE: `litellm` is imported lazily inside complete() — importing it at module
 # scope costs ~1s and pulls the whole agent-startup path down (router is imported
 # eagerly by acp_main). It is only needed when a real classification call is made
@@ -89,8 +91,14 @@ class Router:
         self._catalog_names = {n for n, _ in catalog}
         self._threshold = confidence_threshold
 
-    def classify(self, prompt: str) -> Classification:
-        raw = self._complete(_system_prompt(self._catalog), prompt)
+    def classify(self, prompt: str, history: list[dict] | None = None) -> Classification:
+        user = prompt
+        if history:
+            preamble = router_preamble(history)
+            if preamble:
+                user = ("Recent context (for reference only):\n" + preamble +
+                        "\n\nClassify THIS request: " + prompt)
+        raw = self._complete(_system_prompt(self._catalog), user)
         try:
             data = json.loads(_strip_fences(raw))
             if not isinstance(data, dict):

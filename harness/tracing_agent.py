@@ -8,7 +8,15 @@ Why reimplement instead of pure-wrap:
               submit command raises Submitted BEFORE returning, so a post-wrap
               never emits action.done for the final action.
   - run():    parent re-raises on uncaught exceptions, so run.finished must be
-              emitted in a finally.
+              emitted in a finally. ADDITIONALLY (v2.4.2 divergence): parent seeds
+              self.messages = [system, instance] with no hook between the reset and
+              the step loop, so to carry a prior transcript across turns we
+              reimplement the loop here and change ONLY the seed line (prior injected
+              between the fresh system and fresh instance). The exception branches
+              are reproduced verbatim; FormatError/InterruptAgentFlow are subclasses
+              such that `except FormatError` MUST precede `except InterruptAgentFlow`
+              (Submitted/LimitsExceeded/TimeExceeded are all InterruptAgentFlow and
+              are caught there, appending a role:"exit" message that ends the loop).
 The duplicated lines are pinned to upstream v2.4.2 — verify against upstream's default.py before upgrading.
 """
 
@@ -17,7 +25,8 @@ from __future__ import annotations
 import time
 
 from minisweagent.agents.default import DefaultAgent
-from minisweagent.exceptions import LimitsExceeded, Submitted, TimeExceeded
+from minisweagent.exceptions import (FormatError, InterruptAgentFlow,
+                                      LimitsExceeded, Submitted, TimeExceeded)
 
 from harness.events import Emitter
 
@@ -42,17 +51,47 @@ class TracingAgent(DefaultAgent):
         return time.time() - self._run_start
 
     # --- seam 1: loop lifecycle ---
-    def run(self, task: str = "", **kwargs) -> dict:
+    def run(self, task: str = "", prior: list[dict] | None = None, **kwargs) -> dict:
         self._run_start = time.time()
         self._emitter.set_clock(self._t)  # emitter timestamps relative to this run
         self._emitter.emit("run.started", task=task,
                            model_name=getattr(self.model.config, "model_name", "unknown"),
                            cwd=getattr(self.env.config, "cwd", ""))
         exc_type = exc_str = None
-        result: dict = {}
         try:
-            result = super().run(task, **kwargs)
-            return result
+            # --- reimplemented DefaultAgent.run() body, pinned to upstream v2.4.2 ---
+            # ONLY divergence from upstream: `prior` injected between the fresh
+            # system message and the fresh instance message.
+            self.extra_template_vars |= {"task": task, **kwargs}
+            self.messages = []
+            self.add_messages(self.model.format_message(
+                role="system", content=self._render_template(self.config.system_template)))
+            self.add_messages(*(prior or []))
+            self.add_messages(self.model.format_message(
+                role="user", content=self._render_template(self.config.instance_template)))
+            while True:
+                try:
+                    self.step()
+                    self.n_consecutive_format_errors = 0  # reset on any clean step
+                except FormatError as e:
+                    self.n_consecutive_format_errors += 1
+                    if 0 < self.config.max_consecutive_format_errors <= self.n_consecutive_format_errors:
+                        self.add_messages(*e.messages, {
+                            "role": "exit", "content": "RepeatedFormatError",
+                            "extra": {"exit_status": "RepeatedFormatError", "submission": ""}})
+                    else:
+                        self.add_messages(*e.messages)
+                except InterruptAgentFlow as e:
+                    self.add_messages(*e.messages)
+                except Exception as e:
+                    self.handle_uncaught_exception(e)
+                    raise
+                finally:
+                    self.save(self.config.output_path)
+                if self.messages[-1].get("role") == "exit":
+                    break
+            return self.messages[-1].get("extra", {})
+            # --- end reimplemented body ---
         except BaseException as e:  # noqa: BLE001 — record then re-raise
             exc_type, exc_str = type(e).__name__, str(e)
             raise

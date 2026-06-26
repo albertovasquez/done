@@ -20,8 +20,10 @@ class ChatHandler:
         # None => mock mode (no chat-capable model available)
         self._model_id = worker_model_id
 
-    def answer_stream(self, prompt: str) -> Iterator[str]:
+    def answer_stream(self, prompt: str,
+                      history: list[dict] | None = None) -> Iterator[str]:
         """Yield the answer in pieces (one message_chunk per delta downstream).
+        `history` (plain {role, content} turns) is prepended for context.
         Mock mode yields exactly one honest piece."""
         if self._model_id is None:
             yield ("[mock mode] classified as chat_question; chat answers require "
@@ -32,7 +34,7 @@ class ChatHandler:
             model="openai/" + self._model_id,
             api_base=os.getenv("VIBEPROXY_BASE_URL", "http://localhost:8317/v1"),
             api_key=os.getenv("VIBEPROXY_API_KEY", "dummy-not-used"),
-            messages=[{"role": "user", "content": prompt}],
+            messages=(history or []) + [{"role": "user", "content": prompt}],
             max_tokens=1000,
             stream=True,
         )
