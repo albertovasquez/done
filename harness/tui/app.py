@@ -53,10 +53,13 @@ def _provider_label(model: str) -> str:
 
 
 def _model_label(model: str, worker_model_id: str | None) -> str:
-    # Real worker model id when known (vibeproxy); a friendly label for mock.
+    # Real worker model id when known (vibeproxy); a friendly label otherwise.
     if worker_model_id:
         return worker_model_id
-    return "mock model" if model == "mock" else model
+    if model == "mock":
+        return "mock model"
+    # vibeproxy with no model chosen yet — avoid the redundant "vibeproxy Vibeproxy".
+    return "default model"
 
 
 class HarnessTui(App):
@@ -104,11 +107,7 @@ class HarnessTui(App):
             with Vertical(id="landing-col"):
                 with Horizontal(id="landing-header"):
                     yield Static(icon_markup(), id="header-icon", markup=True)
-                    yield Static(
-                        header_text_markup(
-                            "DoneDone", self._version, "Get Shit Done",
-                            self._compose_meta_markup(model_label, provider)),
-                        id="header-text", markup=True)
+                    yield Static(self._header_markup(), id="header-text", markup=True)
                 with Vertical(id="landing-compose", classes="compose"):
                     yield Input(placeholder='Ask anything... "What is the tech stack of this project?"',
                                 id="landing-input")
@@ -124,6 +123,14 @@ class HarnessTui(App):
             return f"[$accent][b]{_MODE}[/b][/] · [$muted]{model_label}[/]"
         return (f"[$accent][b]{_MODE}[/b][/] · {model_label} "
                 f"[$muted]{provider}[/]")
+
+    def _header_markup(self) -> str:
+        """Build the landing header's three text lines from current model state."""
+        label = _model_label(self.model, self._worker_model_id)
+        provider = _provider_label(self.model)
+        return header_text_markup(
+            "DoneDone", self._version, "Get Shit Done",
+            self._compose_meta_markup(label, provider))
 
     def _status_bar(self) -> ComposeResult:
         bar = Container(id="statusbar")
@@ -342,15 +349,19 @@ class HarnessTui(App):
             return
         self._worker_model_id = model_id
         self._refresh_meta_line()
-        self._notify_line(f"model → {self._pretty_model(model_id)}")
 
     def _refresh_meta_line(self) -> None:
-        # update the compose meta (landing) if still present
+        # update the landing model lines (compose meta + header) in place, so a
+        # model switch re-renders them rather than clobbering the header.
         label = _model_label(self.model, self._worker_model_id)
         provider = _provider_label(self.model)
         try:
             self.query_one(".compose-meta", Static).update(
                 self._compose_meta_markup(label, provider))
+        except Exception:
+            pass
+        try:
+            self.query_one("#header-text", Static).update(self._header_markup())
         except Exception:
             pass
 
