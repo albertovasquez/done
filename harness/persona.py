@@ -11,6 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from harness import skills
+
 PERSONA_FILES = ["SOUL.md", "IDENTITY.md", "USER.md"]   # order = injection order
 MAX_FILE_CHARS = 8000                                   # per-file trim ceiling
 
@@ -20,6 +22,27 @@ class PersonaLoad:
     block: str = ""
     injected: list[str] = field(default_factory=list)
     skipped: list[tuple[str, str]] = field(default_factory=list)  # (filename, reason)
+
+
+@dataclass
+class TurnContext:
+    """The injectable context for one turn: persona (identity) + skills (task).
+    The single object every dispatch path consumes so persona reaches all of
+    them without per-site re-wiring."""
+    persona_block: str = ""
+    skill_block: str = ""
+    persona: PersonaLoad = field(default_factory=PersonaLoad)
+    skills: "skills.SkillLoad" = field(default_factory=lambda: skills.SkillLoad())
+
+
+def compose_context(workspace_dir: Path | None, skill_roots: list[Path],
+                    skill_names: list[str]) -> TurnContext:
+    """Resolve persona + skills for one turn. `workspace_dir=None` => no persona
+    (persona_block stays ""). Skills always resolve from skill_roots/skill_names."""
+    persona = compose_persona(workspace_dir) if workspace_dir is not None else PersonaLoad()
+    skill_load = skills.compose(skill_roots, skill_names)
+    return TurnContext(persona_block=persona.block, skill_block=skill_load.block,
+                       persona=persona, skills=skill_load)
 
 
 def _trim(text: str, limit: int) -> tuple[str, bool]:

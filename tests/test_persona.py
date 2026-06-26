@@ -74,3 +74,39 @@ def test_non_utf8_file_skipped_not_raised(tmp_path):
     load = compose_persona(tmp_path)
     assert load.injected == []
     assert load.skipped and load.skipped[0][0] == "SOUL.md"
+
+
+from harness.persona import TurnContext, compose_context
+from harness import skills as _skills
+
+
+def _write_skill(root: Path, name: str, body: str):
+    d = root / name
+    d.mkdir(parents=True)
+    (d / "SKILL.md").write_text(f"---\nname: {name}\ndescription: d\n---\n{body}", encoding="utf-8")
+
+
+def test_compose_context_bundles_persona_and_skills(tmp_path):
+    ws = tmp_path / "ws"
+    (ws).mkdir()
+    (ws / "SOUL.md").write_text("Be terse.", encoding="utf-8")
+    skroot = tmp_path / "sk"
+    _write_skill(skroot, "tdd", "TDD body")
+    ctx = compose_context(ws, [skroot], ["tdd"])
+    assert "Be terse." in ctx.persona_block
+    assert "TDD body" in ctx.skill_block
+    assert ctx.persona.injected == ["SOUL.md"]
+    assert ctx.skills.injected == ["tdd"]
+
+
+def test_compose_context_none_workspace_is_persona_blank(tmp_path):
+    skroot = tmp_path / "sk"
+    _write_skill(skroot, "tdd", "TDD body")
+    ctx = compose_context(None, [skroot], ["tdd"])
+    assert ctx.persona_block == ""
+    assert "TDD body" in ctx.skill_block      # skills still resolve with no persona
+
+
+def test_compose_context_empty_everything(tmp_path):
+    ctx = compose_context(None, [tmp_path], [])
+    assert ctx == TurnContext()               # all-empty default
