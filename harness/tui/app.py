@@ -15,6 +15,7 @@ RichLog.write() only appends (no line handle), so tool status is append-only."""
 
 from __future__ import annotations
 
+import os
 import time
 from typing import Any
 
@@ -26,9 +27,12 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, RichLog, Static
 
 from harness.tui.client import TuiClient
+from harness.tui.commands import build_registry
 from harness.tui.messages import SessionUpdate, PermissionRequest
 from harness.tui.render import render_update, harness_chips, status_style
 from harness.tui.theme import HARNESS_THEME, COLORS, STATUS_COLOR
+from harness.tui.widgets.select_modal import SelectModal, SelectOption
+from harness.tui.widgets.slash_menu import SlashMenu
 from harness.tui.wordmark import wordmark_markup
 
 _GLYPH = {"completed": "✓", "failed": "✗"}
@@ -94,6 +98,8 @@ class HarnessTui(App):
         self._started = False                 # have we left the landing state?
         self._turn_start = 0.0                # monotonic at send, for elapsed meta
         self._tokens = 0                      # last-known token count from usage updates
+        self._commands = build_registry()     # slash-command registry
+        self._slash = None                    # the SlashMenu widget while open, else None
         # Register + activate the theme BEFORE the stylesheet parses (CSS_PATH is
         # parsed at construction/mount; theme custom variables must exist by then).
         self.register_theme(HARNESS_THEME)
@@ -197,6 +203,11 @@ class HarnessTui(App):
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         text = event.value.strip()
+        # slash command: run the highlighted command (or the typed one) instead of
+        # sending a prompt.
+        if text.startswith("/"):
+            await self._run_slash(text)
+            return
         if not text or self._conn is None:
             return
         if not self._started:
@@ -207,6 +218,139 @@ class HarnessTui(App):
         inp.disabled = True
         self._turn_start = time.monotonic()
         self.run_worker(self._send_prompt(text), thread=False)
+
+    # ---- slash menu ----
+
+    async def on_input_changed(self, event: Input.Changed) -> None:
+        # show/hide/filter the slash menu as '/' text changes in the active input
+        value = event.value
+        if value.startswith("/"):
+            await self._open_or_update_slash(value[1:])
+        elif self._slash is not None:
+            await self._close_slash()
+
+    async def _open_or_update_slash(self, query: str) -> None:
+        if self._slash is None:
+            self._slash = SlashMenu(self._commands)
+            # mount directly above the active compose box
+            anchor = "#composer" if self._started else "#landing-compose"
+            await self.mount(self._slash, before=anchor)
+        self._slash.update_query(query)
+
+    async def _close_slash(self) -> None:
+        if self._slash is not None:
+            await self._slash.remove()
+            self._slash = None
+
+    async def on_key(self, event) -> None:
+        # while the slash menu is open, ↑/↓ move the selection; esc closes it
+        if self._slash is None:
+            return
+        if event.key == "down":
+            self._slash.move(1); event.stop()
+        elif event.key == "up":
+            self._slash.move(-1); event.stop()
+        elif event.key == "escape":
+            self._active_input().value = ""
+            await self._close_slash(); event.stop()
+
+    async def _run_slash(self, text: str) -> None:
+        # prefer the highlighted menu command; else parse the typed name
+        cmd = self._slash.highlighted_command() if self._slash is not None else None
+        if cmd is None:
+            name = text[1:].split()[0] if len(text) > 1 else ""
+            cmd = next((c for c in self._commands if c.name == name), None)
+        self._active_input().value = ""
+        await self._close_slash()
+        if cmd is None:
+            self._notify_line(f"unknown command: {text}")
+            return
+        await cmd.handler(self)
+
+    def _notify_line(self, message: str) -> None:
+        """Show a one-off informational line (in transcript if started, else as a
+        transient title under the wordmark)."""
+        if self._started:
+            self._transcript.write(_c("muted", message))
+        else:
+            self.query_one("#wordmark", Static).update(
+                wordmark_markup() + "\n\n" + f"[$muted]{message}[/]")
+
+    # ---- commands: /models, /help, /exit, /quit ----
+
+    async def action_select_model(self) -> None:
+        if self.model != "vibeproxy":
+            self._notify_line("model selection requires launching with --model vibeproxy")
+            return
+        try:
+            models = await self._fetch_models()
+        except Exception as e:
+            self._notify_line(f"could not fetch models: {e}")
+            return
+        if not models:
+            self._notify_line("no models returned by the provider")
+            return
+        options = [SelectOption(id=m, label=self._pretty_model(m)) for m in models]
+        current = self._worker_model_id
+
+        def _picked(choice) -> None:
+            if choice:
+                self.run_worker(self._apply_model(choice), thread=False)
+
+        self.push_screen(
+            SelectModal(title="Select model", options=options, current=current,
+                        footer="[$muted]↑↓ move · enter select · esc cancel[/]"),
+            _picked,
+        )
+
+    async def _fetch_models(self) -> list[str]:
+        import json, urllib.request
+        base = os.getenv("VIBEPROXY_BASE_URL", "http://localhost:8317/v1")
+        url = base.rstrip("/") + "/models"
+
+        def _get() -> list[str]:
+            with urllib.request.urlopen(url, timeout=5) as r:
+                data = json.load(r)
+            return sorted(m.get("id") for m in data.get("data", []) if m.get("id"))
+
+        import asyncio as _asyncio
+        return await _asyncio.get_running_loop().run_in_executor(None, _get)
+
+    @staticmethod
+    def _pretty_model(model_id: str) -> str:
+        return model_id
+
+    async def _apply_model(self, model_id: str) -> None:
+        # hot-swap on the agent for subsequent turns (no restart)
+        try:
+            await self._conn.ext_method("harness/set_model", {"model": model_id})
+        except Exception as e:
+            self._notify_line(f"could not switch model: {e}")
+            return
+        self._worker_model_id = model_id
+        self._refresh_meta_line()
+        self._notify_line(f"model → {self._pretty_model(model_id)}")
+
+    def _refresh_meta_line(self) -> None:
+        # update the compose meta (landing) if still present
+        label = _model_label(self.model, self._worker_model_id)
+        provider = _provider_label(self.model)
+        try:
+            self.query_one(".compose-meta", Static).update(
+                self._compose_meta_markup(label, provider))
+        except Exception:
+            pass
+
+    def show_help(self) -> None:
+        lines = ["[b]commands[/b]"]
+        for c in self._commands:
+            lines.append(f"  [$accent]/{c.name}[/]  [$muted]{c.description}[/]")
+        msg = "\n".join(lines)
+        if self._started:
+            for ln in lines:
+                self._transcript.write(ln)
+        else:
+            self.query_one("#wordmark", Static).update(wordmark_markup() + "\n\n" + msg)
 
     async def _enter_conversation(self) -> None:
         """Tear down the landing view, build the transcript + bottom composer."""

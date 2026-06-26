@@ -38,6 +38,18 @@ class HarnessAgent(acp.Agent):
     def on_connect(self, conn) -> None:
         self._conn = conn
 
+    async def ext_method(self, method: str, params: dict) -> dict:
+        """Harness-specific extension methods. `harness/set_model` hot-swaps the
+        worker model for SUBSEQUENT turns without restarting the agent — both the
+        chat path (ChatHandler) and the agent path (model factory) read
+        self._worker_model_id fresh on each prompt."""
+        if method == "harness/set_model":
+            model = (params or {}).get("model")
+            if model:
+                self._worker_model_id = model
+            return {"ok": True, "model": self._worker_model_id}
+        return {}
+
     async def initialize(self, protocol_version, client_capabilities=None,
                          client_info=None, **kw):
         self._client_caps = client_capabilities
@@ -204,8 +216,10 @@ class HarnessAgent(acp.Agent):
             from harness.events import Emitter
             emitter = Emitter("/dev/null", clock=lambda: 0.0, console=False)  # ACP carries the stream
             cfg = dict(self._agent_cfg)
-            agent = TracingAgent(self._model_factory(), env, emitter=emitter,
-                                 skill_block=skill_block, **cfg)
+            # pass the CURRENT worker model so /models hot-swaps the agent path too;
+            # the factory ignores the arg in mock mode.
+            agent = TracingAgent(self._model_factory(self._worker_model_id), env,
+                                 emitter=emitter, skill_block=skill_block, **cfg)
             try:
                 result = agent.run(text)
                 return result.get("exit_status", "end_turn")
