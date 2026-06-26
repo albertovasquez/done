@@ -121,3 +121,30 @@ def test_resolve_persona_none_is_empty():
 
 def test_resolve_persona_absent_dir_is_empty(tmp_path):
     assert resolve_persona(tmp_path / "nope") == PersonaLoad()
+
+
+def test_html_comment_only_file_is_blank(tmp_path):
+    # a template file (only an HTML comment) must be treated as blank -> not injected
+    (tmp_path / "SOUL.md").write_text(
+        "<!-- SOUL.md — describe the agent's tone here. -->\n", encoding="utf-8")
+    load = compose_persona(tmp_path)
+    assert ("SOUL.md", "blank") in load.skipped
+    assert load.injected == []
+    assert load.block == ""
+
+
+def test_comment_plus_real_line_injects_whole_file(tmp_path):
+    # once the user adds real content, the file injects (comment included is fine)
+    (tmp_path / "SOUL.md").write_text(
+        "<!-- hint -->\nYou are terse.", encoding="utf-8")
+    load = compose_persona(tmp_path)
+    assert load.injected == ["SOUL.md"]
+    assert "You are terse." in load.block
+
+
+def test_markdown_heading_is_not_a_comment(tmp_path):
+    # '#' is a markdown heading, NOT a comment marker — it must inject
+    (tmp_path / "SOUL.md").write_text("# Persona\nBe concise.", encoding="utf-8")
+    load = compose_persona(tmp_path)
+    assert load.injected == ["SOUL.md"]
+    assert "# Persona" in load.block
