@@ -871,3 +871,19 @@ def test_pilot_permission_modal_shows_command_in_body():
                     break
         assert modal_seen, "permission modal never appeared"
     asyncio.run(go())
+
+
+def test_yolo_chip_click_toggles_state():
+    """Clicking the footer mode chip flips the live YOLO state and the chip text."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock", yolo=False)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            chip = app.query_one("#statusbar-mode", Static)
+            assert "ask" in chip._Static__content      # starts off
+            app.action_toggle_yolo()
+            await pilot.pause(); await pilot.pause()
+            assert app._yolo is True
+            assert "YOLO" in app.query_one("#statusbar-mode", Static)._Static__content
+
+    asyncio.run(go())

@@ -45,7 +45,9 @@ from harness.tui.widgets.slash_menu import SlashMenu
 from harness.tui.widgets.prompt_area import PromptArea
 from harness.tui.widgets.task_tree import TaskTree
 from harness.tui.widgets.tool_call_row import ToolCallRow
+from harness.tui.widgets.status_chip import StatusChip
 from harness.tui.header import icon_markup, header_text_markup
+from harness import config as _config
 
 _GLYPH = {"completed": "✓", "failed": "✗"}
 _MODE = "Build"                       # the single agent "mode" we expose for now
@@ -75,13 +77,16 @@ class HarnessTui(App):
     BINDINGS = [("escape", "cancel", "Cancel turn")]
 
     def __init__(self, agent_cmd: list[str], cwd: str, model: str,
-                 worker_model_id: str | None = None, version: str = "0.5.0") -> None:
+                 worker_model_id: str | None = None, version: str = "0.5.0",
+                 yolo: bool = False) -> None:
         super().__init__()
         self.agent_cmd = agent_cmd
         self.cwd = cwd
         self.model = model
         self._worker_model_id = worker_model_id
         self._version = version
+        self._yolo = yolo                          # live gate (TUI mirror of the agent's)
+        self._yolo_pinned = _config.yolo_pinned()  # persisted pin, for the chip's '· pin'
         self._client = TuiClient(self)
         self._conn = None
         self._cm = None                       # the spawn_agent_process context manager
@@ -209,6 +214,9 @@ class HarnessTui(App):
         bar = self.query_one("#statusbar", Container)
         await bar.mount(Static(self._status_left(), id="statusbar-left", markup=True))
         await bar.mount(Static(self._status_right(), id="statusbar-right", markup=True))
+        chip = StatusChip.for_yolo(self._yolo, self._yolo_pinned)
+        chip.id = "statusbar-mode"
+        await bar.mount(chip)
 
     def _status_left(self) -> str:
         return format_cwd(self.cwd, home=os.path.expanduser("~"))
@@ -230,6 +238,49 @@ class HarnessTui(App):
             self.query_one("#statusbar-right", Static).update(self._status_right())
         except Exception:
             pass
+
+    # ---- YOLO mode chip (clickable footer mode chip; see components.md §A) ----
+
+    def _refresh_yolo_chip(self) -> None:
+        """Re-render the footer mode chip in place from the current live + pin
+        state (mirrors _refresh_status: update one widget, no full re-render)."""
+        try:
+            chip = self.query_one("#statusbar-mode", StatusChip)
+        except Exception:
+            return
+        fresh = StatusChip.for_yolo(self._yolo, self._yolo_pinned)
+        chip._label = fresh._label
+        chip.update(fresh._Static__content)
+
+    def action_toggle_yolo(self) -> None:
+        """Flip the live auto-allow gate (chip click / bare /yolo). Persisting is
+        a separate gesture (/yolo pin); a click never changes the pin."""
+        self._yolo = not self._yolo
+        self._refresh_yolo_chip()
+        self.run_worker(self._send_set_yolo(active=self._yolo), thread=False)
+
+    async def _send_set_yolo(self, *, active: bool | None = None,
+                             pin: bool | None = None) -> None:
+        """Push the live/pin change to the agent (which owns the gate). The chip
+        is already updated; an older agent / transient error just no-ops."""
+        if self._conn is None:
+            return
+        params: dict = {}
+        if active is not None:
+            params["active"] = active
+        if pin is not None:
+            params["pin"] = pin
+        try:
+            await self._conn.ext_method("harness/set_yolo", params)
+        except Exception:
+            pass
+
+    def on_click(self, event) -> None:
+        # Footer mode chip: a click anywhere on it toggles YOLO. Guard on the id
+        # so other clicks are unaffected.
+        widget = getattr(event, "widget", None)
+        if widget is not None and getattr(widget, "id", None) == "statusbar-mode":
+            self.action_toggle_yolo()
 
     # ---- presentation model (reducer) ----
 
