@@ -1621,6 +1621,45 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ---
 
+### Task 13b: Full-replace transcript rendering + clean up the permission modal
+
+**Added after user review of the live chat transcript (2026-06-26).** Task 13 wired
+ActivityStatus + TaskTree additively; this task completes the integration by
+REPLACING the flat tool lines with `ToolCallRow` and cleaning up the permission
+modal's command display.
+
+**Files:**
+- Modify: `harness/tui/app.py` (tool rendering in `on_session_update`)
+- Modify: `harness/tui/widgets/permission_modal.py`
+- Possibly modify: `harness/tui/widgets/select_modal.py` (add an OPTIONAL body/subtitle
+  slot used only by PermissionModal — must NOT change the /models look)
+- Modify: `harness/tui/app.tcss`
+- Test: `tests/test_tui_pilot.py`
+
+**Requirements:**
+1. **Full-replace tool rendering.** In `on_session_update`, replace the hand-built
+   flat `tool` / `tool_update` Static lines (the `"$ cmd"` line and the
+   `"  → status glyph"` line) with the design-system widgets: mount a `ToolCallRow`
+   for each tool call (subtype glyph + title + status chip), and update it / the
+   `TaskTree` as `tool_update`s arrive. The live `ActivityStatus` line shows during
+   work. KEEP: the streaming-Markdown answer path (`_stream_message`), the chip
+   lines, the `gen`/`session_id` guards, and the thought/user rendering.
+2. **Permission modal command block.** Change `PermissionModal` so the command is
+   shown in a dedicated, WRAPPING, code-tinted block (token `$code`) below a short
+   title `Run command?` — not crammed into the title line. Long commands like
+   `cd /Users/.../stream-smoothing && …` must wrap and read cleanly. Strip a leading
+   `"$ "`. The `/models` SelectModal must look unchanged (any SelectModal change is
+   an optional slot, off by default).
+   Keep esc = reject and the footer.
+3. Tests (pilot): a tool call renders as a `ToolCallRow` (not a flat `$` Static); the
+   permission modal exposes the full command in its body (assert the command text is
+   present and not truncated into the title).
+
+**Acceptance:** `python -m pytest tests/ -q` all green; manual smoke shows tidy tool
+rows + a readable permission prompt; primary checkout clean.
+
+---
+
 ## Final verification (after Task 13)
 
 - [ ] Run the whole suite from the worktree root: `python -m pytest tests/ -q` → all green.
