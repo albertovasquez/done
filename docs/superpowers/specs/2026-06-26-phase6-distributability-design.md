@@ -1,13 +1,25 @@
 # Phase 6: Full Distributability — Design
 
 **Date:** 2026-06-26
-**Status:** Approved (pending Codex re-review of this written spec)
+**Status:** Revised after 2nd Codex review (NO-GO → fixes folded in). Ready for
+writing-plans.
 **Branch:** `phase6-distributability`
+
+> **Revision note (2026-06-26):** 2nd Codex review (against current `main`, which
+> gained streamed chat + a landing-header `harness/tui/header.py`) found: (1) the
+> distribution name is **`quiubo-done`**, not `quiubo-harness`; (2)
+> `importlib.resources.files("minisweagent")` DOES import the package — switched
+> `mini_yaml_path` to `find_spec`; (3) `.env` must anchor to an explicit
+> `project_dir` (the harness never `chdir`s), and `load_env` must run before any
+> `minisweagent` import; (4) the vendoring fallback must ship the engine as REAL
+> discovered packages (package-data Python isn't importable); (5) no
+> `harness/tui/assets/` dir exists — dropped that package-data glob + test
+> assertion; (6) skills roots are Traversables (use `.is_dir()`, not `.exists()`).
 
 ## Goal
 
-A **non-editable wheel** of `quiubo-harness` installs and runs `dn` from any
-directory **after the source checkout is deleted**. Editable mode
+A **non-editable wheel** of the harness (distribution `quiubo-done`) installs and
+runs `dn` from any directory **after the source checkout is deleted**. Editable mode
 (`uv tool install --editable .`) remains the always-latest dev workflow and must
 not regress.
 
@@ -59,7 +71,7 @@ location. The three entrypoints stop computing paths themselves and call it.
 
 | Asset | Today (breaks in wheel) | Phase 6 resolution |
 |---|---|---|
-| `mini.yaml` | `REPO_ROOT/upstream/src/minisweagent/config/mini.yaml` | `importlib.resources.files("minisweagent")/"config"/"mini.yaml"` |
+| `mini.yaml` | `REPO_ROOT/upstream/src/minisweagent/config/mini.yaml` | `find_spec("minisweagent").submodule_search_locations[0]/"config"/"mini.yaml"` (no import) |
 | `skills/` | `REPO_ROOT/skills` | `harness/skills/` (package-data) **merged with** `~/.config/harness/skills/` |
 | `.env` | `load_dotenv(REPO_ROOT/.env)` | process env → `./.env` → `~/.config/harness/.env` |
 | engine code | `upstream/` path source, `editable=true` | path source `editable=false` (copied into venv) |
@@ -73,30 +85,41 @@ config_dir() -> Path
     $XDG_CONFIG_HOME/harness if XDG_CONFIG_HOME set and non-empty,
     else ~/.config/harness.  Does NOT create the directory.
 
-load_env() -> None
-    Idempotent. Apply in precedence with python-dotenv's override=False
-    (already-set keys are never overwritten):
-      1. process env       (already present — untouched)
-      2. Path.cwd()/".env" (the project being worked in)
+load_env(project_dir: str | Path | None = None) -> None
+    Idempotent. project_dir is the PROJECT the client/agent operates on (the
+    TUI's --cwd / the agent's session cwd) — NOT Path.cwd(). The harness never
+    chdir()s (tui_main.py supports --cwd without chdir), so anchoring to
+    Path.cwd() would read the wrong .env. Apply in precedence with python-dotenv's
+    override=False (already-set keys are never overwritten):
+      1. process env             (already present — untouched)
+      2. project_dir/".env"      (the project being worked on; skip if None)
       3. config_dir()/".env"
-    For each path in [cwd/.env, config_dir/.env] that exists, in that order,
-    call load_dotenv(path, override=False). Missing files are skipped silently.
+    For each existing path in [project_dir/.env, config_dir/.env], in that order,
+    call load_dotenv(path, override=False). Missing files skipped silently.
 
-bundled_skills_dir() -> Path
+bundled_skills_dir() -> Traversable
     importlib.resources.files("harness") / "skills"
-    (an importlib.resources Traversable backed by a real path in both editable
-    and wheel installs for setuptools; usable with iterdir()/joinpath()).
+    A Traversable. For a setuptools-installed (unzipped) wheel and an editable
+    install it is backed by a real path, but callers MUST use the Traversable API
+    (is_dir(), iterdir(), joinpath(), read_text()) — NOT Path-only ops like
+    .exists() — to stay correct under any namespace/zip edge case.
 
-skills_dirs() -> list[Path]
-    Ordered LOWEST precedence first, omitting roots that don't exist:
-      [bundled_skills_dir(), config_dir()/"skills"]
+skills_dirs() -> list[Traversable]
+    Ordered LOWEST precedence first, omitting roots that don't exist (probe via
+    .is_dir() on the Traversable, not .exists()):
+      [bundled_skills_dir(), Path(config_dir())/"skills"]
+    (config_dir()/skills is a plain Path — user dir on the real filesystem — and
+    is wrapped so skills.py sees a uniform Traversable-ish interface; see §skills.)
 
 mini_yaml_path() -> Path
-    importlib.resources.files("minisweagent") / "config" / "mini.yaml"
-    Uses importlib.resources (find_spec-based) — does NOT execute
-    `import minisweagent`, avoiding upstream's __init__ dotenv side-effects.
-    If the file is absent, raise a clear error: "mini-swe-agent config not
-    found; is the engine installed?" (not a raw FileNotFoundError).
+    Resolve WITHOUT importing minisweagent (its __init__ runs dotenv +
+    global-config side effects — upstream/src/minisweagent/__init__.py:26-36).
+    Use importlib.util.find_spec("minisweagent"); take its
+    submodule_search_locations[0] / "config" / "mini.yaml". If the spec or file
+    is absent, raise a clear error: "mini-swe-agent config not found; is the
+    engine installed?" (not a raw FileNotFoundError). NOTE: importlib.resources
+    .files("minisweagent") is NOT acceptable here — it DOES import the package
+    (verified: `minisweagent` enters sys.modules + prints the greeting).
 ```
 
 ### `harness/skills.py` (modified)
@@ -113,10 +136,12 @@ take **one** directory and scan with `iterdir()`. Generalize both to accept the
   event, and the bundled skill remains active.
 - Absent roots contribute nothing (already the single-dir behavior).
 
-Keep the single-`Path` call sites working by accepting either a `Path` or a
-`list[Path]` (normalize a lone `Path` to `[path]` internally), OR update all
-callers — implementer's choice, but all callers must end up passing the ordered
-list from `skills_dirs()`.
+Generalize `load_catalog`/`compose` to take the ordered `skills_dirs()` list and
+consume each root via the **Traversable API** (`is_dir()`/`iterdir()`/
+`joinpath()`/`read_text()`), not `Path.iterdir()` — so a bundled root resolved
+through `importlib.resources` works under any install layout. Update all callers
+to pass the ordered list (no single-`Path` back-compat hedge — it invites a
+caller to keep passing one dir and silently lose the user-skills merge).
 
 ### Entrypoints — `harness/acp_main.py`, `harness/tui_main.py`
 
@@ -124,7 +149,15 @@ list from `skills_dirs()`.
   `load_dotenv(REPO_ROOT/.env)`. (The editable/non-editable install already makes
   `import minisweagent` and `import harness` resolve — that was Phase 5's
   `[tool.uv.sources]` purpose.)
-- At startup call `paths.load_env()`.
+- **`paths.load_env(project_dir)` must run BEFORE any import that triggers
+  `minisweagent`'s package init** — `acp_env.py:12` (`from
+  minisweagent.environments.local import LocalEnvironment`) and `acp_main.py:66`
+  (`from minisweagent.models.litellm_model import LitellmModel`) import upstream,
+  whose `__init__` calls dotenv/global-config side effects. So either call
+  `load_env()` at the very top of the entrypoint `main()` BEFORE importing
+  `HarnessAgent`/engine modules, or make those engine imports lazy (inside the
+  functions that use them). The implementation must pick one and the plan names
+  the exact ordering. `project_dir` = the agent's session cwd / the TUI's --cwd.
 - Build the Router/catalog from `paths.skills_dirs()`.
 - Read the agent config via `paths.mini_yaml_path()`.
 
@@ -144,22 +177,35 @@ self._cm = acp.spawn_agent_process(
     cwd=self.cwd,             # agent runs in the project dir (anchors ./.env)
 )
 ```
-`tui_main.py` must call `paths.load_env()` before the app spawns the agent so
-`os.environ` already holds the resolved `VIBEPROXY_*`.
+`tui_main.py` must call `paths.load_env(args.cwd)` (the resolved `--cwd`, which
+defaults to `os.getcwd()`) before the app spawns the agent so `os.environ` already
+holds the resolved `VIBEPROXY_*`, and pass that SAME cwd as the spawn `cwd=`. Both
+processes thus anchor `.env` to the same project dir.
 
 ### `pyproject.toml`
 
 ```toml
 [tool.setuptools.packages.find]
-include = ["harness*"]          # discovers harness.tui.widgets, etc.
+include = ["harness*"]          # discovers harness.tui, harness.tui.widgets, etc.
 
 [tool.setuptools.package-data]
 "harness" = ["skills/**/*"]
-"harness.tui" = ["*.tcss", "assets/*"]
+"harness.tui" = ["*.tcss"]      # app.tcss. (No assets/ dir exists on main; add a
+                                #  glob only if/when an asset is actually added.)
 
 [tool.uv.sources]
 mini-swe-agent = { path = "upstream", editable = false }   # was editable = true
 ```
+
+Replace the explicit `[tool.setuptools] packages = [...]` list with the `find`
+directive above. Physical move: `skills/` → `harness/skills/`.
+
+**Distribution name.** The current `[project].name` is **`quiubo-done`** (NOT
+`quiubo-harness` — verify before writing the plan: `grep '^name' pyproject.toml`).
+The package is `harness`; the console scripts are `dn`/`dn-agent`. The smoke
+script and any docs must use the real distribution name `quiubo-done` (or this
+phase explicitly renames `[project].name` — a one-line change — and updates every
+reference; pick one in the plan, default = keep `quiubo-done`).
 
 Replace the explicit `[tool.setuptools] packages = [...]` with the `find`
 directive above. Physical move: `skills/` → `harness/skills/`.
@@ -210,24 +256,27 @@ never fatal). The ONE genuinely-fatal case gets an explicit message.
 - `load_env` precedence: process env beats `./.env` beats `config_dir()/.env`;
   files fill gaps only (`override=False`).
 - `load_env` with no files present: no-op, no exception.
-- `skills_dirs` ordering: `[bundled, config]`; missing roots omitted.
-- `mini_yaml_path` returns an existing file via `importlib.resources`. To prove
-  it does not trigger `import minisweagent`, assert `"minisweagent" not in
-  sys.modules` immediately after a fresh `mini_yaml_path()` call in a subprocess
-  / monkeypatched test where `minisweagent` was not previously imported. (If
-  isolating the import state is impractical in-process, assert the function body
-  uses `importlib.resources.files`/`find_spec` and never a bare `import
-  minisweagent` — a source-level check is acceptable as the fallback.)
+- `skills_dirs` ordering: `[bundled, config]`; missing roots omitted (probed via
+  `.is_dir()` on the Traversable, not `.exists()`).
+- `mini_yaml_path` returns an existing file AND does not trigger
+  `import minisweagent`: run it in a SUBPROCESS that asserts `"minisweagent" not
+  in sys.modules` right after the call (a subprocess is required for a clean
+  import state — an in-process test is polluted by other tests importing the
+  engine). The subprocess test is the authoritative check; no source-grep
+  fallback.
 
-`tests/test_skills.py` (update existing) — ordered-list signature; user skill
-overrides bundled by name; invalid user skill does NOT shadow valid bundled.
+`tests/test_skills.py` (update existing) — ordered-list (Traversable) signature;
+user skill overrides bundled by name; invalid user skill does NOT shadow valid
+bundled.
 
-`tests/test_packaging.py` (new) — build the wheel (`python -m build --wheel`)
-and assert it contains: `harness/tui/app.tcss`,
-`harness/tui/widgets/select_modal.py`, `harness/tui/assets/*` (at least one),
-and `harness/skills/*/SKILL.md` (at least one). Catches manifest regressions
-cheaply (build only, no install). Skip with a clear message if `build` is
-unavailable in the environment.
+`tests/test_packaging.py` (new) — build the wheel and assert it contains:
+`harness/tui/app.tcss`, `harness/tui/widgets/select_modal.py`, and
+`harness/skills/*/SKILL.md` (at least one). Do NOT assert an `assets/` entry —
+no `harness/tui/assets/` dir exists on main (verified); add such an assertion
+only if the phase adds a real asset. Build with whatever is available
+(`python -m build --wheel` or `uv build --wheel`); skip with a clear message if
+neither is installable in the environment. Catches manifest regressions cheaply
+(build only, no install).
 
 ### Tier 2 — manual smoke gate (`scripts/smoke-wheel.sh`, documented, NOT pytest)
 
@@ -235,7 +284,7 @@ The mandatory delete-checkout proof. Run from an **unrelated temp cwd** (never
 the repo root — `sys.path[0]` would mask the bug):
 
 ```
-1. python -m build                         # -> dist/quiubo_harness-*.whl
+1. python -m build  (or uv build)          # -> dist/quiubo_done-*.whl  (name = quiubo-done)
 2. cp -r <checkout> /tmp/harness-src       # install from a COPY
 3. uv tool install --force /tmp/harness-src   (NON-editable)
 4. rm -rf /tmp/harness-src                  # delete the source it installed from
@@ -243,20 +292,37 @@ the repo root — `sys.path[0]` would mask the bug):
 6. cd /tmp/empty && dn --model mock
 7. Assert: TUI launches, lands, send a prompt, see the task.classified chip +
    reply. (mock model needs no proxy; this proves assets + manifest + spawn.)
-8. Optional with live proxy: dn (default model), confirm VIBEPROXY_* resolved
-   from ~/.config/harness/.env reaches the agent.
+8. Then assert engine reachability explicitly: `dn-agent --help` runs from
+   /tmp/empty (proves `import minisweagent` resolves post-checkout-deletion —
+   the linchpin). Optionally with live proxy: `dn` (default model), confirm
+   VIBEPROXY_* resolved from ~/.config/harness/.env reaches the agent.
 ```
 
-### Linchpin caveat + named fallback
+### Linchpin caveat + EXECUTABLE fallback
 
-The engine-copy behavior (step 3 → does `upstream/` code land in the tool venv?)
-is **unproven** until we run Tier 2. If a non-editable install does NOT copy the
-path source into the venv, that is a NO-GO discovered at smoke time. **Fallback:**
-vendor `upstream/`'s `minisweagent` source into the harness wheel as bundled
-package-data (and resolve the engine + `mini.yaml` from there), accepting the
-package-size cost. The implementer must run Tier 2 BEFORE the final review and
-report the observed copy behavior; if the fallback is triggered it is its own
-follow-up task, not silently absorbed.
+The engine-copy behavior (step 3 → does `upstream/` code land in the tool venv as
+an importable package?) is **unproven** until Tier 2 runs (uv panicked in two
+review sandboxes; could not be verified by reasoning). If a non-editable install
+does NOT make `import minisweagent` resolve after the checkout is deleted, that is
+a NO-GO discovered at smoke time.
+
+**Executable fallback (not package-data — Python source under package-data is NOT
+importable as a top-level package):** drop the `[tool.uv.sources]` path entry and
+instead vendor the engine as **real, discovered packages** in OUR build:
+- add `minisweagent*` to `[tool.setuptools.packages.find] include` and point
+  `[tool.setuptools.package-dir]` at `upstream/src` for that package (so
+  setuptools compiles `minisweagent` INTO our wheel as importable modules);
+- carry its config via `[tool.setuptools.package-data] "minisweagent" =
+  ["config/**/*"]`;
+- keep `mini-swe-agent` out of `[project.dependencies]` in this fallback (the
+  engine now ships inside our wheel, not as a separate dependency).
+This stays within zero-upstream-edits (we only read `upstream/src`, never modify
+it). It is a larger pyproject change, so it is gated behind the smoke result.
+
+The implementer MUST run Tier 2 BEFORE the final review and report the observed
+copy behavior. If the primary (non-editable path source) works, the fallback is
+not built. If it fails, the fallback is implemented as part of THIS phase (not a
+silent deferral) and re-smoke-tested.
 
 ## Global Constraints
 
@@ -272,7 +338,8 @@ follow-up task, not silently absorbed.
   cwd and `REPO_ROOT/harness/runs` output are not required to work from a wheel.
 - **No new runtime dependency** for config-dir resolution (XDG is ~6 lines; do
   not add `platformdirs`).
-- **Command is `dn`**, package is `harness`, distribution is `quiubo-harness`.
+- **Command is `dn`**, import package is `harness`, distribution name is
+  **`quiubo-done`** (current `pyproject.toml:6` — NOT `quiubo-harness`).
 - **STDOUT is the ACP wire** for the agent — no stray prints to stdout in
   agent-side code paths (existing `MSWEA_SILENT_STARTUP=1` discipline).
 
