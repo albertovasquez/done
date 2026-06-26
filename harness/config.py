@@ -76,3 +76,43 @@ def load() -> dict[str, AgentConfig]:
 def load_default() -> AgentConfig | None:
     """The reserved [agents.default] entry, or None when absent/unreadable."""
     return load().get(RESERVED_KEY)
+
+
+def _quote(value: str) -> str:
+    """Serialize a Python str as a TOML basic string (escape \\ and ")."""
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def _serialize(agents: dict[str, AgentConfig]) -> str:
+    """Render the flat schema: top-level schema_version then one [agents.<key>]
+    table per agent (name only when set). Deterministic key order: the reserved
+    default first, then the rest sorted, so diffs stay stable."""
+    lines = [f"schema_version = {SCHEMA_VERSION}", ""]
+    ordered = ([RESERVED_KEY] if RESERVED_KEY in agents else []) + sorted(
+        k for k in agents if k != RESERVED_KEY
+    )
+    for key in ordered:
+        cfg = agents[key]
+        lines.append(f"[agents.{key}]")
+        if cfg.name is not None:
+            lines.append(f"name = {_quote(cfg.name)}")
+        lines.append(f"backend = {_quote(cfg.backend)}")
+        lines.append(f"model = {_quote(cfg.model)}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def save_default(cfg: AgentConfig) -> None:
+    """Upsert [agents.default] with `cfg`, preserving every other agent table.
+    Writes atomically (temp file + os.replace) under a created config dir.
+    Best-effort: callers that must not fail on I/O errors should guard the call."""
+    agents = load()
+    agents[RESERVED_KEY] = AgentConfig(backend=cfg.backend, model=cfg.model)  # default carries no name
+    text = _serialize(agents)
+
+    path = conf_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
