@@ -285,7 +285,7 @@ component is a dumb, reactive widget reading a snapshot slice, with one purpose 
 snapshot/pilot test (M3). Grouped by the four engine outputs (H5):
 
 ```
-A primitives   StatusChip · StateDot/ActivityGlyph · Hairline/SectionLabel
+A primitives   StatusChip (+ for_yolo footer mode chip) · StateDot/ActivityGlyph · Hairline/SectionLabel
 B responses    AnswerStream* · UserMessage*
 C work         ActivityStatus⭐ · TaskTree⭐ · ToolCallRow · ProgressRow
 D decisions    DecisionPrompt⭐ · PermissionModal* · SelectModal*
