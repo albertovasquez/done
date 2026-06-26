@@ -144,8 +144,11 @@ class HarnessTui(App):
         await self._mount_status_contents()
         self.query_one("#landing-input", Input).focus()
         try:
-            self._cm = acp.spawn_agent_process(self._client, self.agent_cmd[0],
-                                               *self.agent_cmd[1:])
+            self._cm = acp.spawn_agent_process(
+                self._client, self.agent_cmd[0], *self.agent_cmd[1:],
+                env=dict(os.environ),     # VIBEPROXY_* resolved by paths.load_env at startup
+                cwd=self.cwd,             # agent runs in the project dir (anchors .env)
+            )
             self._conn, _proc = await self._cm.__aenter__()
             await self._conn.initialize(
                 protocol_version=acp.PROTOCOL_VERSION,

@@ -35,17 +35,18 @@ dn-agent = "harness.acp_main:main"
 # installed into (editable .venv or a global `uv tool install`), while keeping
 # the zero-upstream-edits constraint (uv installs it in place from the path).
 [tool.uv.sources]
-mini-swe-agent = { path = "upstream", editable = true }
+mini-swe-agent = { path = "upstream", editable = false }
 
-[tool.setuptools]
-# The harness lives in the `harness` package (and `harness.tui`). upstream/ is
-# NOT part of this package — it's a separate dependency declared above.
-# (The package was renamed from `trace`, which shadowed Python's stdlib `trace`
-# module and broke imports for an installed console script.)
-packages = ["harness", "harness.tui"]
+# The harness lives in the `harness` package and its subpackages (e.g.
+# `harness.tui`, `harness.tui.widgets`). upstream/ is NOT part of this package —
+# it's a separate dependency declared above. (The package was renamed from
+# `trace`, which shadowed Python's stdlib `trace` module and broke imports for
+# an installed console script.)
+[tool.setuptools.packages.find]
+include = ["harness*"]
 
 [tool.setuptools.package-data]
-# skills/ and the agent config are resolved at runtime via __file__ (the install
-# dir), so an EDITABLE install keeps them reachable in the checkout. They are not
-# bundled here; `done` is intended to be installed editable.
-"harness" = []
+# skills/ and the .tcss stylesheets are resolved at runtime via __file__, so they
+# must ship inside the wheel for a non-editable install to find them.
+"harness" = ["skills/**/*"]
+"harness.tui" = ["*.tcss"]

@@ -42,10 +42,21 @@ DoneDone needs Python 3.11+. Install the `dn` command with
 [uv](https://github.com/astral-sh/uv):
 
 ```bash
+# Use it (portable): builds a wheel and installs dn globally. Works from any
+# directory and keeps working even if you delete this checkout.
+uv tool install .
+
+# OR — develop it (always-latest): dn runs your live source; edits to code and
+# to skills in harness/skills/ apply immediately, no reinstall.
 uv tool install --editable .
 ```
 
-This puts two commands on your `PATH`:
+Configure VibeProxy by putting your settings in `~/.config/harness/.env`
+(see `.env.example`), or drop a `.env` in the project directory you run `dn`
+from. Add your own skills in `~/.config/harness/skills/` — they override the
+bundled ones of the same name. (`$XDG_CONFIG_HOME` is honored if set.)
+
+Either install puts two commands on your `PATH`:
 
 | Command | What it is |
 |---|---|
