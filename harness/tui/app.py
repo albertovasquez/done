@@ -131,7 +131,7 @@ class HarnessTui(App):
     def _header_markup(self) -> str:
         """Build the landing header text (name + tagline). The mode·model line is
         shown on the compose-meta line under the input, not repeated here."""
-        return header_text_markup("DON≡", self._version, "Get Shit Done")
+        return header_text_markup("≡", self._version, "Get Shit Done")
 
     def _status_bar(self) -> ComposeResult:
         bar = Container(id="statusbar")
