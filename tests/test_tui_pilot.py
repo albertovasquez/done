@@ -79,6 +79,111 @@ def test_pilot_renders_harness_chip_end_to_end():
     asyncio.run(go())
 
 
+def test_pilot_slash_menu_does_not_move_landing_input():
+    """Opening the slash menu on the landing screen must not shift the input box.
+    The menu should grow upward (overlay) so the input's vertical position is
+    pinned — typing '/' and clearing it leaves the input's row unchanged."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            inp = app.query_one("#landing-input", Input)
+            inp.focus()
+            y_before = inp.region.y
+
+            # open the slash menu
+            inp.value = "/"
+            for _ in range(20):
+                await pilot.pause()
+                if app._slash is not None:
+                    break
+            assert app._slash is not None, "slash menu did not open on '/'"
+            assert app.query("#slash-menu"), "slash menu widget should be mounted"
+            y_open = app.query_one("#landing-input", Input).region.y
+            assert y_open == y_before, (
+                f"input moved when slash menu opened: was row {y_before}, now {y_open}")
+
+            # the menu sits directly above the input (bottom edge on the input's top
+            # row) and left-aligns with the compose box — and re-anchors correctly
+            # when the row count changes while filtering (no offset race).
+            def _check_anchored(label: str) -> None:
+                menu = app.query_one("#slash-menu")
+                inp_now = app.query_one("#landing-input", Input)
+                compose_x = app.query_one("#landing-compose").region.x
+                bottom = menu.region.y + menu.region.height
+                assert menu.region.y >= 0, f"{label}: menu clipped off the top"
+                assert bottom == inp_now.region.y, (
+                    f"{label}: menu bottom {bottom} not pinned to input top "
+                    f"{inp_now.region.y}")
+                assert menu.region.x == compose_x, (
+                    f"{label}: menu x {menu.region.x} not aligned to compose "
+                    f"{compose_x}")
+                assert inp_now.region.y == y_before, f"{label}: input moved"
+
+            _check_anchored("all commands")
+
+            # filter to fewer rows, then back to all — stays anchored both times
+            app.query_one("#landing-input", Input).value = "/h"
+            for _ in range(20):
+                await pilot.pause()
+            _check_anchored("filtered")
+            app.query_one("#landing-input", Input).value = "/"
+            for _ in range(20):
+                await pilot.pause()
+            _check_anchored("widened back")
+
+            inp = app.query_one("#landing-input", Input)
+            # close it again — input returns to the same row
+            inp.value = ""
+            for _ in range(20):
+                await pilot.pause()
+                if app._slash is None:
+                    break
+            y_after = app.query_one("#landing-input", Input).region.y
+            assert y_after == y_before, (
+                f"input did not return to its row after closing menu: "
+                f"was {y_before}, now {y_after}")
+
+    asyncio.run(go())
+
+
+def test_pilot_slash_menu_closes_on_resize():
+    """A resize moves the centered landing input, which would detach the floating
+    menu. The menu is transient, so resizing closes it cleanly (no orphaned
+    overlay) and the next keystroke reopens it anchored to the new input row."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            app.query_one("#landing-input", Input).value = "/"
+            for _ in range(20):
+                await pilot.pause()
+                if app._slash is not None:
+                    break
+            assert app._slash is not None, "menu should be open before resize"
+
+            await pilot.resize_terminal(120, 24)
+            for _ in range(20):
+                await pilot.pause()
+                if app._slash is None:
+                    break
+            assert app._slash is None, "menu should close on resize"
+            assert not app.query("#slash-overlay"), "overlay must not be orphaned"
+
+            # reopen at the new size — bottom re-pins to the input's new row
+            app.query_one("#landing-input", Input).value = "/"
+            for _ in range(20):
+                await pilot.pause()
+                if app._slash is not None:
+                    break
+            menu = app.query_one("#slash-menu")
+            inp = app.query_one("#landing-input", Input)
+            assert menu.region.y + menu.region.height == inp.region.y, (
+                "reopened menu not anchored to the input's new row")
+
+    asyncio.run(go())
+
+
 def test_pilot_permission_modal_reject():
     """Optional Smoke: fake agent requests permission; rejecting (esc) resolves
     the Future and the turn completes. The permission modal is the shared
