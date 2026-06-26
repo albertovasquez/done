@@ -40,7 +40,7 @@ def _quant(p):
     r, g, b = p
     if (b - r > 60) and (b - g > 40) and b > 90:   # chromatic blue
         return BLUE
-    if (r + g + b) / 3 < 70:                        # dark, neutral -> background
+    if (r + g + b) / 3 < 45:                        # dark, neutral -> background
         return None
     return WHITE                                    # bright, neutral -> white ink
 
