@@ -4,6 +4,7 @@ sys.path.insert(0, ".")
 
 from harness.tui.state import (
     AgentState, ToolStatus, ToolView, TaskItem, ScheduleView, DecisionView,
+    AgentSnapshot, FleetSnapshot, initial_snapshot,
     infer_subtype,
 )
 
@@ -40,3 +41,18 @@ def test_infer_subtype():
     assert infer_subtype("echo hello") == "shell"
     assert infer_subtype("") == "shell"
     assert infer_subtype("$ pytest") == "test"   # leading "$ " stripped
+
+
+def test_initial_snapshot_one_idle_agent():
+    fs = initial_snapshot()
+    assert len(fs.agents) == 1
+    a = fs.active
+    assert a is not None
+    assert a.id == "default"
+    assert a.state == AgentState.IDLE
+    assert a.elapsed == 0.0 and a.tokens == 0 and a.tasks == ()
+
+
+def test_fleet_active_returns_none_when_missing():
+    fs = FleetSnapshot(agents=(), active_id="nope")
+    assert fs.active is None

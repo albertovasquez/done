@@ -54,6 +54,35 @@ class DecisionView:
     options: tuple[tuple[str, str], ...]   # (title, rationale)
 
 
+@dataclass(frozen=True)
+class AgentSnapshot:
+    id: str
+    name: str
+    state: AgentState = AgentState.IDLE
+    tool: ToolView | None = None
+    activity_label: str = ""
+    elapsed: float = 0.0
+    tokens: int = 0
+    tasks: tuple[TaskItem, ...] = ()
+    schedule: ScheduleView | None = None
+    decision: DecisionView | None = None
+
+
+@dataclass(frozen=True)
+class FleetSnapshot:
+    agents: tuple[AgentSnapshot, ...]
+    active_id: str
+
+    @property
+    def active(self) -> AgentSnapshot | None:
+        return next((a for a in self.agents if a.id == self.active_id), None)
+
+
+def initial_snapshot(agent_id: str = "default", name: str = "agent") -> FleetSnapshot:
+    return FleetSnapshot(agents=(AgentSnapshot(id=agent_id, name=name),),
+                         active_id=agent_id)
+
+
 def infer_subtype(command: str) -> str:
     """Guess a tool-call subtype from the command string, for glyph/label ONLY.
     Display concern; never asked of the engine. Neutral 'shell' fallback."""
