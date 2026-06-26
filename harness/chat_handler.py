@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import os
 
-import litellm
+# `litellm` is imported lazily inside answer() — at module scope it costs ~1s and
+# this module is on the agent-startup path. Mock mode returns before needing it.
 
 
 class ChatHandler:
@@ -21,6 +22,7 @@ class ChatHandler:
         if self._model_id is None:
             return ("[mock mode] classified as chat_question; chat answers require "
                     "--model vibeproxy. (Routing worked: this did not run the agent.)")
+        import litellm  # lazy: keep the ~1s import out of startup (mock mode never hits this)
         resp = litellm.completion(
             model="openai/" + self._model_id,
             api_base=os.getenv("VIBEPROXY_BASE_URL", "http://localhost:8317/v1"),

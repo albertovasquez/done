@@ -14,7 +14,10 @@ import os
 from dataclasses import dataclass, field
 from typing import Callable
 
-import litellm
+# NOTE: `litellm` is imported lazily inside complete() — importing it at module
+# scope costs ~1s and pulls the whole agent-startup path down (router is imported
+# eagerly by acp_main). It is only needed when a real classification call is made
+# (never for --model mock, never when tests inject a stub).
 
 TASK_TYPES = ["chat_question", "code_explain", "code_fix", "code_feature",
               "code_refactor", "ops_task", "ambiguous"]
@@ -36,6 +39,7 @@ class Classification:
 def complete(system: str, user: str) -> str:
     """Thin cheap-model completion for classification. Used by the CLI; tests
     inject a stub instead. Plain text in, text out — no tool calls."""
+    import litellm  # lazy: keep the ~1s import out of startup (see module note)
     resp = litellm.completion(
         model=ROUTER_MODEL,
         api_base=os.getenv("VIBEPROXY_BASE_URL", "http://localhost:8317/v1"),
