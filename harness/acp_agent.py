@@ -22,6 +22,7 @@ from harness.acp_env import AcpEnvironment
 from harness.acp_session import SessionStore
 from harness.router import Router, Classification
 from harness.chat_handler import ChatHandler
+from harness.transcript import flatten_agent_messages
 
 
 class HarnessAgent(acp.Agent):
@@ -91,10 +92,12 @@ class HarnessAgent(acp.Agent):
             raise acp.RequestError.invalid_params()
         state.cancel_flag.clear()
         text = "".join(getattr(b, "text", "") for b in prompt)
+        transcript = state.transcript           # read once; every branch writes back per §6
 
         # 1) classify in the executor (sync litellm call must not block the loop)
         try:
-            cls: Classification = await loop.run_in_executor(None, self._router.classify, text)
+            cls: Classification = await loop.run_in_executor(
+                None, lambda: self._router.classify(text, history=transcript))
         except Exception as e:  # router/VibeProxy unreachable
             await self._conn.session_update(session_id,
                 message_chunk(f"router unavailable: {e}"))
@@ -110,23 +113,34 @@ class HarnessAgent(acp.Agent):
             await self._conn.session_update(session_id, message_chunk(q))
             self._store.record(session_id, {"prompt": text, "stop_reason": "end_turn",
                                             "kind": "clarify"})
+            # write only the user turn — the clarifying question is router
+            # boilerplate, not model output, so it must not pollute later context.
+            self._store.extend(session_id, [
+                {"role": "user", "content": text, "origin": "clarify"}])
             return acp.PromptResponse(stop_reason="end_turn")
 
         if cls.task_type == "chat_question":
             handler = ChatHandler(self._worker_model_id)
+            pieces: list[str] = []
 
             def pump() -> None:
                 # answer_stream is a blocking generator (litellm); run it on the
                 # worker thread and marshal each piece back to the loop as its own
-                # message_chunk — same idiom as the tool-call path above.
-                for piece in handler.answer_stream(text):
+                # message_chunk — same idiom as the tool-call path above. Accumulate
+                # the pieces so the full answer can be written to the transcript.
+                for piece in handler.answer_stream(text, history=transcript):
+                    pieces.append(piece)
                     asyncio.run_coroutine_threadsafe(
                         self._conn.session_update(session_id, message_chunk(piece)),
                         loop).result()
 
             await loop.run_in_executor(None, pump)
+            answer = "".join(pieces)
             self._store.record(session_id, {"prompt": text, "stop_reason": "end_turn",
                                             "kind": "chat"})
+            self._store.extend(session_id, [
+                {"role": "user", "content": text, "origin": "chat"},
+                {"role": "assistant", "content": answer, "origin": "chat"}])
             return acp.PromptResponse(stop_reason="end_turn")
 
         # agent path
@@ -135,12 +149,17 @@ class HarnessAgent(acp.Agent):
         await self._conn.session_update(session_id,
             with_meta(message_chunk(""),
                       {"skill_load": {"injected": load.injected, "skipped": load.skipped}}))
-        stop_reason = await self._run_agent_turn(loop, session_id, state, text, load.block)
+        engine = await self._run_agent_turn(loop, session_id, state, text, load.block, transcript)
+        stop_reason = engine["stop_reason"]
+        assistant = engine["assistant"] or engine["exit_status"] or stop_reason   # never empty
         self._store.record(session_id, {"prompt": text, "stop_reason": stop_reason,
                                         "kind": "agent"})
+        self._store.extend(session_id, [
+            {"role": "user", "content": text, "origin": "agent"},
+            {"role": "assistant", "content": assistant, "origin": "agent"}])
         return acp.PromptResponse(stop_reason=stop_reason)
 
-    async def _run_agent_turn(self, loop, session_id, state, text, skill_block) -> str:
+    async def _run_agent_turn(self, loop, session_id, state, text, skill_block, prior) -> dict:
         tc_counter = {"n": 0}
 
         def on_command(phase: str, command: str, out: dict | None) -> None:
@@ -222,7 +241,7 @@ class HarnessAgent(acp.Agent):
                              cancel_flag=state.cancel_flag,
                              client_terminal=client_terminal)
 
-        def run_engine() -> str:
+        def run_engine() -> dict:
             from harness.tracing_agent import TracingAgent
             from harness.events import Emitter
             emitter = Emitter("/dev/null", clock=lambda: 0.0, console=False)  # ACP carries the stream
@@ -232,21 +251,20 @@ class HarnessAgent(acp.Agent):
             agent = TracingAgent(self._model_factory(self._worker_model_id), env,
                                  emitter=emitter, skill_block=skill_block, **cfg)
             try:
-                result = agent.run(text)
-                return result.get("exit_status", "end_turn")
-            except Exception:  # engine failure → turn resolves refusal, process survives
-                return "refusal"
+                result = agent.run(text, prior=prior)
+                return {"stop_reason": "end_turn",
+                        "exit_status": result.get("exit_status", "end_turn"),
+                        "assistant": flatten_agent_messages(agent.messages)}
+            except Exception:  # engine failure → refusal; capture whatever prose exists
+                return {"stop_reason": "refusal", "exit_status": "refusal",
+                        "assistant": flatten_agent_messages(getattr(agent, "messages", []))}
 
         if state.cancel_flag.is_set():
-            return "cancelled"
-        exit_status = await loop.run_in_executor(None, run_engine)
-        # surface the agent's final assistant text (full content, not the preview event)
-        # (the smoke test asserts a tool_call happened; final text is best-effort here)
+            return {"stop_reason": "cancelled", "exit_status": "cancelled", "assistant": ""}
+        engine = await loop.run_in_executor(None, run_engine)
         if state.cancel_flag.is_set():
-            return "cancelled"
-        # run_engine returns "refusal" on engine failure (per the error contract);
-        # anything else (Submitted / normal completion) is a clean end_turn.
-        return "refusal" if exit_status == "refusal" else "end_turn"
+            return {"stop_reason": "cancelled", "exit_status": "cancelled", "assistant": ""}
+        return engine
 
 
 def build_harness_agent(*, model_factory, agent_cfg, skills_dir: Path,
