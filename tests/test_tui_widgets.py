@@ -28,3 +28,23 @@ def test_status_chip_renders_uppercase_label():
 def test_activity_glyph_reduced_motion_is_static():
     g = ActivityGlyph(reduced_motion=True)
     assert g._frames_static is True
+
+
+from harness.tui.state import AgentSnapshot
+from harness.tui.widgets.activity_status import ActivityStatus
+
+
+def test_activity_status_renders_label_elapsed_tokens():
+    w = ActivityStatus()
+    snap = AgentSnapshot(id="default", name="agent", state=AgentState.RESPONDING,
+                         activity_label="Responding", elapsed=78.0, tokens=4000)
+    text = w.line_for(snap)
+    assert "Responding" in text
+    assert "4.0" in text or "4000" in text     # token formatting
+    assert "78" in text or "1m" in text         # elapsed formatting
+
+
+def test_activity_status_blank_when_idle():
+    w = ActivityStatus()
+    snap = AgentSnapshot(id="default", name="agent", state=AgentState.IDLE)
+    assert w.line_for(snap).strip() == ""
