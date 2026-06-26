@@ -31,6 +31,14 @@ def _resolve_model(explicit_backend: str | None) -> tuple[str, str | None]:
     return "vibeproxy", None
 
 
+def _resolve_yolo(flag: bool) -> bool:
+    """--yolo forces auto-allow on; else the persisted pin; else off. Mirrors
+    _resolve_model's precedence (explicit flag > done.conf > default)."""
+    if flag:
+        return True
+    return config.yolo_pinned()
+
+
 def _effective_worker_model_id(backend: str) -> str | None:
     """The model id the agent will actually run, so the TUI footer can show it
     on a fresh launch (not the 'default model' fallback). Mirrors acp_main's
@@ -80,6 +88,8 @@ def main(argv=None) -> None:
     paths.load_env(cwd)               # resolve VIBEPROXY_* before spawning the agent
     backend, model_override = _resolve_model(args.model)
     args.model = backend              # normalize so _relaunch_args carries the resolved backend
+    yolo = _resolve_yolo(args.yolo)
+    args.yolo = yolo                  # normalize so /reload re-execs with the resolved state
     if model_override is not None and not shell_set_model:
         # The persisted (done.conf) model wins over any .env-derived value, but a
         # real shell-exported VIBEPROXY_MODEL still takes priority — so overwrite
@@ -95,7 +105,7 @@ def main(argv=None) -> None:
     if args.yolo:
         agent_cmd.append("--yolo")    # auto-allow flows to the agent, which owns the gate
     app = HarnessTui(agent_cmd=agent_cmd, cwd=cwd, model=backend,
-                     worker_model_id=worker_model_id)
+                     worker_model_id=worker_model_id, yolo=yolo)
     app.run()
     if getattr(app, "_reexec", False):
         cmd = _relaunch_command(args, cwd)
