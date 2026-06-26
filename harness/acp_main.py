@@ -53,13 +53,11 @@ def _model_factory(model_choice: str):
     # no top-level api_base/api_key fields); mirror run_traced.py's proven wiring.
     def make(current_model=None):
         from harness.streaming_model import StreamingLitellmModel
-        model_id = current_model or os.getenv("VIBEPROXY_MODEL", "gpt-5.4")
+        from harness import vibeproxy
+        model_id = current_model or vibeproxy.default_model()
         return StreamingLitellmModel(
-            model_name="openai/" + model_id,
-            model_kwargs={
-                "api_base": os.getenv("VIBEPROXY_BASE_URL", "http://localhost:8317/v1"),
-                "api_key": os.getenv("VIBEPROXY_API_KEY", "dummy-not-used"),
-            },
+            model_name=vibeproxy.model_id(model_id),
+            model_kwargs=vibeproxy.model_kwargs(),
             cost_tracking="ignore_errors",
         )
     return make
@@ -84,7 +82,8 @@ async def _main(argv=None) -> None:
     from harness.router import Router, complete
     from harness import skills
 
-    worker_model_id = None if args.model == "mock" else os.getenv("VIBEPROXY_MODEL", "gpt-5.4")
+    from harness import vibeproxy
+    worker_model_id = None if args.model == "mock" else vibeproxy.default_model()
 
     # Test seam: HARNESS_ROUTER_STUB=1 swaps the live (VibeProxy) classifier for a
     # fixed one, so tests that only exercise downstream behavior (e.g. session

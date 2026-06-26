@@ -427,8 +427,8 @@ class HarnessTui(App):
 
     async def _fetch_models(self) -> list[str]:
         import json, urllib.request
-        base = os.getenv("VIBEPROXY_BASE_URL", "http://localhost:8317/v1")
-        url = base.rstrip("/") + "/models"
+        from harness import vibeproxy
+        url = vibeproxy.base_url().rstrip("/") + "/models"
 
         def _get() -> list[str]:
             with urllib.request.urlopen(url, timeout=5) as r:
