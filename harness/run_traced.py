@@ -138,14 +138,15 @@ def main(argv: list[str] | None = None) -> int:
                 raise
 
     skills_dir = REPO_ROOT / "skills"
-    router = Router(complete, catalog=skills.load_catalog(skills_dir))
+    skills_roots = [skills_dir]
+    router = Router(complete, catalog=skills.load_catalog(skills_roots))
     try:
         rc = route_and_dispatch(
             args.task, router=router, emitter=emitter,
             make_chat_handler=lambda: ChatHandler(worker_model_id),
             run_agent=run_agent, ask_user=input, echo=print,
             worker_model_id=worker_model_id,
-            load_skills=lambda names: skills.compose(skills_dir, names))
+            load_skills=lambda names: skills.compose(skills_roots, names))
     except Exception as e:  # noqa: BLE001 — router model unreachable etc.
         print(f"\nRouter failed: {e}\n"
               f"Is VibeProxy running on {os.getenv('VIBEPROXY_BASE_URL', 'http://localhost:8317/v1')}? "

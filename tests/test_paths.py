@@ -51,3 +51,11 @@ def test_mini_yaml_path_exists():
     p = paths.mini_yaml_path()
     assert p.name == "mini.yaml"
     assert p.is_file()
+
+
+def test_skills_dirs_orders_bundled_then_user(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    (tmp_path / "harness" / "skills").mkdir(parents=True)   # user dir exists
+    dirs = paths.skills_dirs()
+    assert dirs[0] == paths.bundled_skills_dir()            # bundled first (lowest precedence)
+    assert dirs[-1] == tmp_path / "harness" / "skills"      # user last (wins)

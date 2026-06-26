@@ -5,6 +5,7 @@ after the source checkout is deleted."""
 
 from __future__ import annotations
 
+import importlib.resources
 import importlib.util
 import os
 from pathlib import Path
@@ -32,6 +33,19 @@ def load_env(project_dir: str | Path | None = None) -> None:
     for path in candidates:
         if path.is_file():
             load_dotenv(path, override=False)
+
+
+def bundled_skills_dir() -> Path:
+    """The skills shipped inside the harness package (harness/skills/). Works in
+    editable and installed (unzipped) wheels."""
+    return Path(importlib.resources.files("harness")) / "skills"
+
+
+def skills_dirs() -> list[Path]:
+    """Ordered LOWEST precedence first: bundled, then the user dir. Absent roots
+    are kept in the list — skills.load_catalog/compose skip non-dirs — so callers
+    need not pre-filter."""
+    return [bundled_skills_dir(), config_dir() / "skills"]
 
 
 def mini_yaml_path() -> Path:

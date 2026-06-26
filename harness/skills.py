@@ -37,51 +37,51 @@ def _parse_skill_md(path: Path) -> tuple[dict, str]:
     return data, body.lstrip("\n")
 
 
-def load_catalog(skills_dir: Path) -> list[tuple[str, str]]:
-    """Scan skills_dir/<name>/SKILL.md, return [(name, description)] sorted by
-    name. A dir whose SKILL.md is missing/malformed/name-mismatched/missing keys
-    is skipped. Absent skills_dir -> []."""
-    if not skills_dir.is_dir():
-        return []
-    catalog: list[tuple[str, str]] = []
-    for child in sorted(skills_dir.iterdir(), key=lambda p: p.name):
-        if not child.is_dir():
+def load_catalog(roots: list[Path]) -> list[tuple[str, str]]:
+    """Scan each root's <name>/SKILL.md; later roots override earlier by name.
+    Invalid skill dirs are silently omitted (can't select what can't parse)."""
+    merged: dict[str, str] = {}
+    for root in roots:
+        if not Path(root).is_dir():
             continue
-        skill_md = child / "SKILL.md"
-        try:
-            data, _ = _parse_skill_md(skill_md)
-            name, desc = data.get("name"), data.get("description")
-            if not name or not desc:
-                raise ValueError("frontmatter missing name/description")
-            if name != child.name:
-                raise ValueError("name mismatch")
-        except (OSError, UnicodeDecodeError, yaml.YAMLError, ValueError):
-            continue  # silently omit from catalog; can't select what can't be parsed
-        catalog.append((name, desc))
-    return catalog
+        for child in sorted(Path(root).iterdir(), key=lambda p: p.name):
+            if not child.is_dir():
+                continue
+            try:
+                data, _ = _parse_skill_md(child / "SKILL.md")
+                name, desc = data.get("name"), data.get("description")
+                if not name or not desc:
+                    raise ValueError("frontmatter missing name/description")
+                if name != child.name:
+                    raise ValueError("name mismatch")
+            except (OSError, UnicodeDecodeError, yaml.YAMLError, ValueError):
+                continue
+            merged[name] = desc          # later root wins
+    return sorted(merged.items())
 
 
-def compose(skills_dir: Path, names: list[str]) -> SkillLoad:
-    """Read each selected skill's SKILL.md and append its body to one block.
-    Records failures in skipped; never raises."""
+def compose(roots: list[Path], names: list[str]) -> SkillLoad:
+    """Compose selected skills' bodies. For each name, the LAST root that has a
+    valid SKILL.md for it wins. Records failures in skipped; never raises."""
     load = SkillLoad()
     bodies: list[str] = []
     for name in names:
-        skill_md = skills_dir / name / "SKILL.md"
-        if not skill_md.is_file():
-            load.skipped.append((name, "no SKILL.md"))
+        chosen_body = None
+        for root in roots:
+            skill_md = Path(root) / name / "SKILL.md"
+            if not skill_md.is_file():
+                continue
+            try:
+                data, body = _parse_skill_md(skill_md)
+                if data.get("name") != name:
+                    raise ValueError("name mismatch")
+            except (OSError, UnicodeDecodeError, yaml.YAMLError, ValueError):
+                continue
+            chosen_body = body           # later root overrides
+        if chosen_body is None:
+            load.skipped.append((name, "no valid SKILL.md in any root"))
             continue
-        try:
-            data, body = _parse_skill_md(skill_md)
-            if data.get("name") != name:
-                raise ValueError("name mismatch")
-        except (OSError, UnicodeDecodeError) as e:
-            load.skipped.append((name, f"unreadable: {type(e).__name__}"))
-            continue
-        except (yaml.YAMLError, ValueError) as e:
-            load.skipped.append((name, f"bad frontmatter: {e}"))
-            continue
-        bodies.append(f"## {name}\n{body}")
+        bodies.append(f"## {name}\n{chosen_body}")
         load.injected.append(name)
     if bodies:
         load.block = ("\n\n# Available Skills\n\n"

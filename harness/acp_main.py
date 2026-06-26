@@ -91,11 +91,12 @@ async def _main(argv=None) -> None:
     # default; only honored when the env flag is set.
     complete_fn = _stub_complete if os.getenv("HARNESS_ROUTER_STUB") == "1" else complete
 
+    skills_roots = [REPO_ROOT / "skills"]
     agent = HarnessAgent(
         model_factory=_model_factory(args.model),
         agent_cfg=_load_agent_cfg(),
-        skills_dir=REPO_ROOT / "skills",
-        router=Router(complete_fn, catalog=skills.load_catalog(REPO_ROOT / "skills")),
+        skills_dir=skills_roots,
+        router=Router(complete_fn, catalog=skills.load_catalog(skills_roots)),
         worker_model_id=worker_model_id,
     )
     await acp.run_agent(agent)
