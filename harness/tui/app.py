@@ -79,6 +79,7 @@ class HarnessTui(App):
         self._cm = None                       # the spawn_agent_process context manager
         self._session_id = None
         self._gen = 0                         # session generation; bumped each _connect
+        self._send_gen = 0                    # generation a prompt worker was launched in
         self._busy = False                    # lifecycle guard (reload/clear/model)
         self._launch_worker_model_id = worker_model_id  # source of truth for "user switched model?"
         self._pending_perm = None             # the in-flight permission Future, if any
@@ -254,6 +255,7 @@ class HarnessTui(App):
         inp.value = ""
         inp.disabled = True
         self._turn_start = time.monotonic()
+        self._send_gen = self._gen            # tag this turn's worker with its generation
         self.run_worker(self._send_prompt(text), thread=False)
 
     # ---- slash menu ----
@@ -487,6 +489,7 @@ class HarnessTui(App):
         # runs before this on a new turn). Closing keeps the widget reference so a
         # late delta from the prior answer extends ITS block in place rather than
         # spawning a stray block under this prompt (see _stream_message).
+        gen = self._send_gen                      # this turn belongs to this generation
         self._show_working()                      # spinner until the first token
         try:
             resp = await self._conn.prompt(
@@ -498,9 +501,10 @@ class HarnessTui(App):
         except Exception as e:
             self._append_line(_c("error", f"agent disconnected — restart to continue ({e})"))
         finally:
-            self._hide_working()
-            self._active_input().disabled = False
-            self._active_input().focus()
+            if gen == self._gen:                  # only the CURRENT generation touches the UI
+                self._hide_working()
+                self._active_input().disabled = False
+                self._active_input().focus()
 
     def _write_meta(self, elapsed: float) -> None:
         model_label = _model_label(self.model, self._worker_model_id)
@@ -554,6 +558,13 @@ class HarnessTui(App):
     def on_session_update(self, msg: SessionUpdate) -> None:
         if not self._started:
             return  # updates before first send (shouldn't happen) are ignored
+        # drop updates from a reloaded-away session: an explicit _gen tag wins;
+        # otherwise a session_id that no longer matches the live session is stale.
+        if getattr(msg, "_gen", self._gen) != self._gen:
+            return
+        if msg.session_id is not None and self._session_id is not None \
+                and msg.session_id != self._session_id:
+            return
         # token usage, if the agent surfaced any under _meta
         self._maybe_update_tokens(getattr(msg.update, "field_meta", None))
         for chip in harness_chips(getattr(msg.update, "field_meta", None)):

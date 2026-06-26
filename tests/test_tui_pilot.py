@@ -415,3 +415,44 @@ def test_reload_respawns_and_bumps_generation():
             assert _transcript_text(app) == "", "scrollback wiped on reload"
             assert app._busy is False
     asyncio.run(go())
+
+
+def test_stale_session_update_after_reload_is_dropped():
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await _send_first_prompt(pilot, app, "hello")
+            for _ in range(50):
+                await pilot.pause()
+                if "done" in _transcript_text(app):
+                    break
+            await app.action_reload()           # bumps _gen; transcript wiped
+            await pilot.pause()
+            # an update tagged with the OLD generation must be ignored
+            stale = SessionUpdate(update_agent_message_text("GHOST"), session_id="fake-session")
+            stale._gen = app._gen - 1            # mark as belonging to the prior session
+            app.on_session_update(stale)
+            await pilot.pause()
+            assert "GHOST" not in _transcript_text(app), "stale update must be dropped"
+    asyncio.run(go())
+
+
+def test_send_prompt_finally_no_reenable_after_generation_bump():
+    # An old prompt worker whose generation is stale must NOT re-enable input
+    # (that would undo a _fatal disable after a reload failure).
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await app._enter_conversation()
+            class _Conn:
+                async def prompt(self, **kw):
+                    return NS(stop_reason="end_turn")
+            app._conn = _Conn(); app._session_id = "fake-session"
+            app._send_gen = app._gen
+            app._active_input().disabled = True
+            app._gen += 1                        # simulate a reload happening mid-flight
+            await app._send_prompt("x")          # its captured gen is now stale
+            assert app._active_input().disabled is True, "stale worker must not re-enable input"
+    asyncio.run(go())
