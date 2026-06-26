@@ -71,3 +71,25 @@ def test_acp_main_wires_default_workspace(monkeypatch, tmp_path):
     from harness import acp_main
     asyncio.run(acp_main._main(["--model", "mock"]))
     assert captured["workspace_dir"] == paths.default_workspace_dir()
+
+
+def test_acp_main_seeds_default_workspace(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("HARNESS_ROUTER_STUB", "1")
+    import asyncio
+    import acp
+    from harness import persona
+
+    called = {"n": 0}
+    real = persona.seed_default_workspace
+    def spy():
+        called["n"] += 1
+        real()
+    monkeypatch.setattr(persona, "seed_default_workspace", spy)
+    monkeypatch.setattr(acp, "run_agent", lambda agent: asyncio.sleep(0))
+
+    from harness import acp_main
+    asyncio.run(acp_main._main(["--model", "mock"]))
+    assert called["n"] == 1
+    # and it actually seeded
+    assert (tmp_path / "harness" / "agents" / "default" / "SOUL.md").is_file()

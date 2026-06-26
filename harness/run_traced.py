@@ -109,6 +109,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     load_dotenv(REPO_ROOT / ".env")  # explicit: mini's own load targets the global dir
+    _persona.seed_default_workspace()  # first-run: drop editable templates in the config dir
 
     run_dir = REPO_ROOT / "harness" / "runs" / _run_id()
     run_dir.mkdir(parents=True, exist_ok=True)

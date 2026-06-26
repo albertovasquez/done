@@ -77,6 +77,9 @@ async def _main(argv=None) -> None:
     cwd = str(Path(args.cwd).resolve()) if args.cwd else os.getcwd()
     paths.load_env(cwd)               # BEFORE importing engine-touching modules
 
+    from harness import persona
+    persona.seed_default_workspace()   # first-run: drop editable templates in the config dir
+
     from harness.acp_agent import HarnessAgent
     from harness.router import Router, complete
     from harness import skills

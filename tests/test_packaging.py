@@ -30,3 +30,4 @@ def test_wheel_includes_tui_assets_and_skills(tmp_path):
     assert any(n.endswith("harness/tui/app.tcss") for n in names), names
     assert any(n.endswith("harness/tui/widgets/select_modal.py") for n in names), names
     assert any(n.endswith("/SKILL.md") and "harness/skills/" in n for n in names), names
+    assert any(n.endswith("harness/templates/agents/default/SOUL.md") for n in names), names

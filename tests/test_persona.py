@@ -121,3 +121,67 @@ def test_resolve_persona_none_is_empty():
 
 def test_resolve_persona_absent_dir_is_empty(tmp_path):
     assert resolve_persona(tmp_path / "nope") == PersonaLoad()
+
+
+def test_html_comment_only_file_is_blank(tmp_path):
+    # a template file (only an HTML comment) must be treated as blank -> not injected
+    (tmp_path / "SOUL.md").write_text(
+        "<!-- SOUL.md — describe the agent's tone here. -->\n", encoding="utf-8")
+    load = compose_persona(tmp_path)
+    assert ("SOUL.md", "blank") in load.skipped
+    assert load.injected == []
+    assert load.block == ""
+
+
+def test_comment_plus_real_line_injects_whole_file(tmp_path):
+    # once the user adds real content, the file injects (comment included is fine)
+    (tmp_path / "SOUL.md").write_text(
+        "<!-- hint -->\nYou are terse.", encoding="utf-8")
+    load = compose_persona(tmp_path)
+    assert load.injected == ["SOUL.md"]
+    assert "You are terse." in load.block
+
+
+def test_markdown_heading_is_not_a_comment(tmp_path):
+    # '#' is a markdown heading, NOT a comment marker — it must inject
+    (tmp_path / "SOUL.md").write_text("# Persona\nBe concise.", encoding="utf-8")
+    load = compose_persona(tmp_path)
+    assert load.injected == ["SOUL.md"]
+    assert "# Persona" in load.block
+
+
+from harness.persona import seed_default_workspace
+from harness import paths
+
+
+def test_seed_creates_trio_when_absent(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    seed_default_workspace()
+    ws = paths.default_workspace_dir()
+    for name in ("SOUL.md", "IDENTITY.md", "USER.md"):
+        assert (ws / name).is_file(), name
+    # seeded templates are inert -> compose injects nothing
+    assert compose_persona(ws).block == ""
+
+
+def test_seed_does_not_clobber_existing_dir(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    ws = paths.default_workspace_dir()
+    ws.mkdir(parents=True)
+    (ws / "SOUL.md").write_text("You are terse.", encoding="utf-8")  # user content
+    seed_default_workspace()                                          # must NOT overwrite
+    assert (ws / "SOUL.md").read_text(encoding="utf-8") == "You are terse."
+    # and it did not drop in the other templates either (dir already existed)
+    assert not (ws / "IDENTITY.md").exists()
+
+
+def test_seed_never_raises_on_oserror(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    def boom(*a, **k):
+        raise OSError("read-only home")
+    # Force the mkdir inside seed_default_workspace to fail. persona.Path IS
+    # pathlib.Path; monkeypatch auto-restores after the test, so the global patch
+    # is safe here. (This is intentional — do not "simplify" it away.)
+    monkeypatch.setattr("harness.persona.Path.mkdir", boom)
+    seed_default_workspace()   # must not raise — best-effort startup

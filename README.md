@@ -116,18 +116,18 @@ A persona lives in a workspace directory. The built-in one is
 | `IDENTITY.md` | name / vibe / emoji |
 | `USER.md` | who the user is (static context you write) |
 
-Create the directory and drop in any of the three:
+A fresh install seeds these files for you as inert templates (just a commented
+hint, so they change nothing until edited). Edit one to give the agent a persona:
 
 ```bash
-mkdir -p ~/.config/harness/agents/default
 echo "You are terse and never explain unless asked." > ~/.config/harness/agents/default/SOUL.md
 dn   # the agent now answers in that persona, on chat and coding turns alike
 ```
 
-If the workspace is absent or empty, behavior is unchanged — no persona, no
-overhead. See [docs/personas.md](docs/personas.md) for the full reference
-(trimming, blank-skip, the dev path, and what's coming in later phases:
-multiple personas, selection, memory, scheduling).
+Until you edit a file, behavior is unchanged — no persona, no overhead. See
+[docs/personas.md](docs/personas.md) for the full reference (seeding, trimming,
+blank/inert-skip, the dev path, and what's coming in later phases: multiple
+personas, selection, memory, scheduling).
 
 ## Using the TUI
 

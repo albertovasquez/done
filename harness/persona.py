@@ -9,12 +9,25 @@ per-file read is wrapped so one bad/missing file can never abort a turn.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from pathlib import Path
 
+from harness import paths
 from harness import skills
 
 PERSONA_FILES = ["SOUL.md", "IDENTITY.md", "USER.md"]   # order = injection order
 MAX_FILE_CHARS = 8000                                   # per-file trim ceiling
+
+_HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+
+
+def _meaningful(raw: str) -> bool:
+    """True if the file has injectable content — anything but whitespace remains
+    after HTML comments are removed. A comment-only template => False (skipped,
+    never injected), so shipped templates preserve the byte-identical no-op.
+    HTML comments only: '#' is a Markdown heading and must NOT be treated as a
+    comment."""
+    return bool(_HTML_COMMENT.sub("", raw).strip())
 
 
 @dataclass
@@ -62,6 +75,24 @@ def _trim(text: str, limit: int) -> tuple[str, bool]:
     return text[:limit], True
 
 
+def seed_default_workspace() -> None:
+    """Copy the bundled inert templates into ~/.config/harness/agents/default/ on
+    first run. No-op if the dir already exists (never clobber a real workspace).
+    Never overwrites a file. Best-effort: never raises into the startup path."""
+    dest = paths.default_workspace_dir()
+    if dest.exists():
+        return                                  # user has a workspace; do not clobber
+    try:
+        src = paths.bundled_persona_templates_dir()
+        dest.mkdir(parents=True, exist_ok=True)
+        for name in PERSONA_FILES:
+            s, d = src / name, dest / name
+            if s.is_file() and not d.exists():
+                d.write_text(s.read_text(encoding="utf-8"), encoding="utf-8")
+    except OSError:
+        pass                                    # read-only home etc. — never break startup
+
+
 def compose_persona(workspace_dir: Path) -> PersonaLoad:
     """Read the identity trio from `workspace_dir` and compose one block. Absent
     dir, missing files, and blank (whitespace-only) files yield an empty/partial
@@ -80,7 +111,7 @@ def compose_persona(workspace_dir: Path) -> PersonaLoad:
         except (OSError, UnicodeDecodeError) as e:
             load.skipped.append((name, type(e).__name__))
             continue
-        if not raw.strip():                           # blank == empty after strip
+        if not _meaningful(raw):                      # blank, whitespace, or comment-only
             load.skipped.append((name, "blank"))
             continue
         body, trimmed = _trim(raw, MAX_FILE_CHARS)

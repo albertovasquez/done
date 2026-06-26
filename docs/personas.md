@@ -30,14 +30,18 @@ It reads three files, all optional:
 | `IDENTITY.md` | name / vibe / emoji |
 | `USER.md` | who the user is (static context you write) |
 
-Nothing creates this directory for you — you make it and drop in the files you
-want. A file you omit is simply skipped.
+On first run, DoneDone seeds this directory with all three files as **inert
+templates** — each holds only a commented hint, so the agent's behavior is
+unchanged until you edit one. You don't create anything; you edit the files
+already there. A file you leave as-is (or delete) is simply skipped.
 
 ## Quick start
 
-```bash
-mkdir -p ~/.config/harness/agents/default
+A fresh install already placed template files in
+`~/.config/harness/agents/default/`. Open one and replace the comment with real
+text:
 
+```bash
 cat > ~/.config/harness/agents/default/SOUL.md <<'EOF'
 You are terse. You never explain your reasoning unless asked.
 You address the user as "Captain".
@@ -45,6 +49,9 @@ EOF
 
 dn
 ```
+
+(If the directory isn't there — e.g. you deleted it — DoneDone re-seeds the
+templates on the next run. It never overwrites a file you've already edited.)
 
 Now both a chat question ("what's the weather model here?") and a coding task
 ("fix the failing test") run with that persona baked into the agent's system
@@ -92,8 +99,9 @@ Deliberately out of scope for now:
 
 - **Multiple personas / selection.** There's one fixed `default` workspace; no
   `--persona` flag or `/persona` picker yet. *(Phase C.)*
-- **Onboarding / scaffolding.** You create the directory and files by hand;
-  nothing generates templates or runs a first-run setup. *(Phase D.)*
+- **Guided onboarding.** First-run seeding drops editable templates (done), but
+  there's no interactive `BOOTSTRAP.md` setup ritual or wiped-workspace
+  attestation yet. *(Phase D.)*
 - **Memory.** The persona is static — it can't learn or accumulate context
   across sessions. *(Phase B.)*
 - **Per-persona model / config** (`persona.toml`). *(Phase C.)*
