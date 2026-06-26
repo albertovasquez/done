@@ -23,19 +23,24 @@ from textual.widgets import TextArea
 class PromptArea(TextArea):
     """Auto-growing compose box. Enter submits; Shift+Enter inserts a newline."""
 
-    # A *modified* Enter (Shift/Alt/Ctrl/…+Enter) must insert a newline; only a
-    # bare Enter submits. Terminals encode modified Enter in several ways and
-    # Textual surfaces each under a different event.key:
-    #   Kitty CSI-u form        -> "shift+enter", "alt+enter", "ctrl+enter", …
-    #   modifyOtherKeys form    -> "shift+\r", "ctrl+\r", "ctrl+shift+\r", …
-    #   (cmux/libghostty + Ghostty use the modifyOtherKeys form.)
-    # Rather than enumerate every combination, match structurally: a key with a
-    # modifier prefix ("<mods>+") whose final segment is enter / \r / \n.
+    # "Insert a newline" instead of "submit" must fire for every way a terminal
+    # can signal a soft return; only a *bare* Enter (key "enter", char "\r")
+    # submits. Textual surfaces the soft-return forms several ways:
+    #   Kitty CSI-u           -> "shift+enter", "alt+enter", "ctrl+enter", …
+    #   modifyOtherKeys       -> "shift+\r", "ctrl+\r", "ctrl+shift+\r", …
+    #   a literal LF (\n)     -> "ctrl+j" with character "\n"  (e.g. a Ghostty
+    #                            `keybind = shift+enter=text:\n`, and Ctrl+J)
+    # Match structurally rather than enumerating every combination.
     _ENTER_SEGMENTS = frozenset({"enter", "return", "\r", "\n"})
 
     @classmethod
-    def _is_modified_enter(cls, key: str) -> bool:
-        if "+" not in key:                 # bare key (e.g. "enter") -> not modified
+    def _is_newline_key(cls, key: str, character: str | None) -> bool:
+        # A literal newline character that is NOT a bare carriage-return Enter:
+        # covers "ctrl+j" (char "\n") and any key carrying an LF.
+        if character == "\n":
+            return True
+        # A modifier+Enter combo: "<mods>+" prefix ending in enter/return/\r/\n.
+        if "+" not in key:                 # bare key (e.g. "enter") -> submit
             return False
         return key.rsplit("+", 1)[-1] in cls._ENTER_SEGMENTS
 
@@ -87,7 +92,7 @@ class PromptArea(TextArea):
         # _on_key only maps bare "enter" to "\n" and ignores modified variants, so
         # we handle them. On legacy terminals that can't distinguish the keys, the
         # press arrives as bare "enter" and falls through to the submit branch.
-        if self._is_modified_enter(event.key):
+        if self._is_newline_key(event.key, event.character):
             event.stop()
             event.prevent_default()
             self.insert("\n")

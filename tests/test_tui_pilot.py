@@ -610,18 +610,24 @@ def test_pilot_enter_submits_shift_enter_newlines():
     asyncio.run(go())
 
 
-def test_prompt_area_modified_enter_classifier():
+def test_prompt_area_newline_key_classifier():
     """The structural matcher: any modifier+Enter (Kitty 'shift+enter' form OR
-    modifyOtherKeys 'shift+\\r' form, any modifier combo) is a newline; bare
-    Enter and unrelated keys are not. Fast unit test, no Pilot."""
-    nl = PromptArea._is_modified_enter
-    for k in ("shift+enter", "alt+enter", "ctrl+enter", "alt+shift+enter",
-              "ctrl+shift+enter", "super+enter", "shift+return",
-              "shift+\r", "ctrl+\r", "ctrl+shift+\r", "shift+\n"):
-        assert nl(k), f"{k!r} should be treated as a newline"
-    for k in ("enter", "ctrl+j", "a", "shift+a", "ctrl+c", "escape",
-              "tab", "shift+tab"):
-        assert not nl(k), f"{k!r} must NOT be treated as a newline"
+    modifyOtherKeys 'shift+\\r' form, any combo) OR a literal LF (ctrl+j / a key
+    carrying '\\n') is a newline; bare Enter (char '\\r') and unrelated keys are
+    not. Fast unit test, no Pilot."""
+    nl = PromptArea._is_newline_key
+    # (key, character) pairs that SHOULD insert a newline
+    for k, ch in [("shift+enter", None), ("alt+enter", None), ("ctrl+enter", None),
+                  ("alt+shift+enter", None), ("ctrl+shift+enter", None),
+                  ("super+enter", None), ("shift+return", None),
+                  ("shift+\r", "\r"), ("ctrl+\r", "\r"), ("ctrl+shift+\r", "\r"),
+                  ("shift+\n", "\n"), ("ctrl+j", "\n")]:
+        assert nl(k, ch), f"({k!r}, {ch!r}) should be a newline"
+    # bare Enter (char '\r') submits; these must NOT be newlines
+    for k, ch in [("enter", "\r"), ("a", "a"), ("shift+a", "A"),
+                  ("ctrl+c", None), ("escape", None), ("tab", None),
+                  ("shift+tab", None)]:
+        assert not nl(k, ch), f"({k!r}, {ch!r}) must NOT be a newline"
 
 
 def test_pilot_modified_enter_encodings_insert_newline():
@@ -637,14 +643,18 @@ def test_pilot_modified_enter_encodings_insert_newline():
             inp = app.query_one("#landing-input", PromptArea)
             inp.focus()
             await pilot.press("a")
-            for variant in ("shift+enter", "shift+\r", "shift+\n", "ctrl+\r"):
-                inp.post_message(events.Key(variant, "\r"))
+            # (key, character) pairs Textual emits for Shift+Enter / soft-return
+            # across terminal encodings, plus ctrl+j (Ghostty text:\n form).
+            variants = [("shift+enter", None), ("shift+\r", "\r"),
+                        ("shift+\n", "\n"), ("ctrl+\r", "\r"), ("ctrl+j", "\n")]
+            for key, ch in variants:
+                inp.post_message(events.Key(key, ch))
                 await pilot.pause()
             await pilot.press("b")
             await pilot.pause()
-            assert inp.value == "a\n\n\n\nb", \
-                f"all modified-enter encodings should insert newlines: {inp.value!r}"
-            assert not app._started, "modified-enter variants must NOT submit"
+            assert inp.value == "a" + "\n" * len(variants) + "b", \
+                f"all soft-return encodings should insert newlines: {inp.value!r}"
+            assert not app._started, "soft-return variants must NOT submit"
 
     asyncio.run(go())
 
