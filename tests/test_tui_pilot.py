@@ -429,12 +429,56 @@ def test_stale_session_update_after_reload_is_dropped():
                     break
             await app.action_reload()           # bumps _gen; transcript wiped
             await pilot.pause()
-            # an update tagged with the OLD generation must be ignored
-            stale = SessionUpdate(update_agent_message_text("GHOST"), session_id="fake-session")
-            stale._gen = app._gen - 1            # mark as belonging to the prior session
-            app.on_session_update(stale)
+            live_session = app._session_id
+            # 1) generation filter (load-bearing): an update stamped with the OLD
+            #    generation must be dropped even if its session_id matches the live
+            #    session.
+            stale_gen = SessionUpdate(
+                update_agent_message_text("GHOST"),
+                session_id=live_session, gen=app._gen - 1)
+            app.on_session_update(stale_gen)
             await pilot.pause()
-            assert "GHOST" not in _transcript_text(app), "stale update must be dropped"
+            assert "GHOST" not in _transcript_text(app), \
+                "stale-generation update must be dropped"
+            # 2) session_id filter (defense-in-depth): an update with the CURRENT
+            #    generation but a session_id from a prior session must also drop.
+            stale_session = SessionUpdate(
+                update_agent_message_text("GHOST"),
+                session_id="OLD-SESSION", gen=app._gen)
+            app.on_session_update(stale_session)
+            await pilot.pause()
+            assert "GHOST" not in _transcript_text(app), \
+                "stale-session_id update must be dropped"
+    asyncio.run(go())
+
+
+def test_busy_guard_blocks_models_picker_and_prompt_send():
+    # Spec §6: while busy (e.g. a reload in flight), /models must not open a
+    # picker and a submitted prompt must not start a worker.
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="vibeproxy")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await app._enter_conversation()
+            class _Conn:
+                async def prompt(self, **kw):
+                    return NS(stop_reason="end_turn")
+            app._conn = _Conn(); app._session_id = "fake-session"
+            app._busy = True
+            # /models is a no-op while busy: no screen pushed, no fetch attempted.
+            screens_before = len(app.screen_stack)
+            await app.action_select_model()
+            await pilot.pause()
+            assert len(app.screen_stack) == screens_before, \
+                "busy /models must not push a model picker"
+            # a prompt submitted while busy must NOT start a worker.
+            workers_before = len(app.workers)
+            inp = app._active_input()
+            inp.value = "hello while busy"
+            await app.on_input_submitted(Input.Submitted(inp, "hello while busy"))
+            await pilot.pause()
+            assert len(app.workers) == workers_before, \
+                "busy prompt-send must not start a worker"
     asyncio.run(go())
 
 

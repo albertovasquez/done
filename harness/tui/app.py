@@ -246,7 +246,7 @@ class HarnessTui(App):
         if text.startswith("/"):
             await self._run_slash(text)
             return
-        if not text or self._conn is None:
+        if not text or self._conn is None or self._busy:
             return
         if not self._started:
             await self._enter_conversation()
@@ -340,6 +340,8 @@ class HarnessTui(App):
     # ---- commands: /models, /help, /exit, /quit ----
 
     async def action_select_model(self) -> None:
+        if self._busy:
+            return            # lifecycle guard (§6): no model picker mid-reload
         if self.model != "vibeproxy":
             self._notify_line("model selection requires launching with --model vibeproxy")
             return
@@ -558,9 +560,10 @@ class HarnessTui(App):
     def on_session_update(self, msg: SessionUpdate) -> None:
         if not self._started:
             return  # updates before first send (shouldn't happen) are ignored
-        # drop updates from a reloaded-away session: an explicit _gen tag wins;
-        # otherwise a session_id that no longer matches the live session is stale.
-        if getattr(msg, "_gen", self._gen) != self._gen:
+        # drop updates from a reloaded-away session: the generation tag is the
+        # load-bearing filter (stamped at post time); a gen-less message falls
+        # through to the session_id check (defense-in-depth).
+        if msg.gen is not None and msg.gen != self._gen:
             return
         if msg.session_id is not None and self._session_id is not None \
                 and msg.session_id != self._session_id:

@@ -13,20 +13,24 @@ from harness.tui.messages import SessionUpdate, PermissionRequest
 
 class _FakeApp:
     """Records posted Textual messages without a running app."""
-    def __init__(self):
+    def __init__(self, gen=7):
         self.posted = []
+        self._gen = gen
     def post_message(self, msg):
         self.posted.append(msg)
 
 
 def test_session_update_posts_message():
-    app = _FakeApp()
+    app = _FakeApp(gen=7)
     client = TuiClient(app)
     update = NS(field_meta=None)
     asyncio.run(client.session_update("sid", update))
     assert len(app.posted) == 1
     assert isinstance(app.posted[0], SessionUpdate)
     assert app.posted[0].update is update
+    # the client stamps the app's CURRENT generation so the freshness filter is live
+    assert app.posted[0].gen == 7
+    assert app.posted[0].session_id == "sid"
 
 
 def test_request_permission_allow():
