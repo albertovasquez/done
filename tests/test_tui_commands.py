@@ -169,6 +169,13 @@ def test_reload_clear_handlers_delegate_to_app_actions():
     assert app.called == ["reload", "clear"]
 
 
+def test_reload_clear_descriptions_match_new_behavior():
+    from harness.tui.commands import build_registry
+    reg = {c.name: c for c in build_registry()}
+    assert reg["reload"].description == "Reload everything (restart the app)"
+    assert reg["clear"].description == "Fresh conversation (restart the agent)"
+
+
 def test_select_modal_search_and_select():
     async def go():
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")

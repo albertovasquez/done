@@ -5,6 +5,8 @@ from types import SimpleNamespace as NS
 sys.path.insert(0, "upstream/src")
 sys.path.insert(0, ".")
 
+import pytest
+from harness import tui_main
 from harness.tui_main import _relaunch_args, _relaunch_command
 
 
@@ -36,10 +38,6 @@ def test_relaunch_command_falls_back_to_dash_m(monkeypatch):
     cmd = _relaunch_command(args, "/p")
     assert cmd == [sys.executable, "-m", "harness.tui_main",
                    "--model", "vibeproxy", "--cwd", "/p", "--yolo"]
-
-
-import pytest
-from harness import tui_main
 
 
 class _FakeApp:
