@@ -66,3 +66,32 @@ def test_request_permission_reject():
     resp = asyncio.run(go())
     assert isinstance(resp.outcome, DeniedOutcome)
     assert resp.outcome.outcome == "cancelled"
+
+
+def test_request_permission_reject_option_denies():
+    """Regression test: resolving future with reject_once option_id must deny.
+
+    Before the fix, if option_id was truthy (e.g., "reject_once"), the code would
+    wrap it in AllowedOutcome and the agent would allow the command. This test
+    ensures that reject-kind options result in DeniedOutcome.
+    """
+    app = _FakeApp()
+    client = TuiClient(app)
+    opts = [
+        PermissionOption(kind="allow_once", name="Allow once", option_id="allow_once"),
+        PermissionOption(kind="reject_once", name="Reject", option_id="reject_once"),
+    ]
+
+    async def go():
+        task = asyncio.ensure_future(
+            client.request_permission(options=opts, session_id="sid", tool_call=NS())
+        )
+        await asyncio.sleep(0)
+        req = app.posted[-1]
+        assert isinstance(req, PermissionRequest)
+        req.future.set_result("reject_once")        # user chose reject
+        return await task
+
+    resp = asyncio.run(go())
+    assert isinstance(resp.outcome, DeniedOutcome)
+    assert resp.outcome.outcome == "cancelled"

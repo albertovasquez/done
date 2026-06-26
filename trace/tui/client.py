@@ -31,10 +31,13 @@ class TuiClient:                      # implements the acp.Client Protocol
         fut: asyncio.Future = asyncio.get_running_loop().create_future()
         self._app.post_message(PermissionRequest(options, tool_call, fut))
         option_id = await fut
-        if option_id:
-            # AllowedOutcome REQUIRES outcome="selected" — omitting raises ValidationError.
-            return RequestPermissionResponse(
-                outcome=AllowedOutcome(outcome="selected", option_id=option_id))
+        if option_id is not None:
+            # Look up the chosen option by option_id and inspect its kind.
+            chosen = next((o for o in (options or []) if getattr(o, "option_id", None) == option_id), None)
+            if chosen is not None and str(getattr(chosen, "kind", "")).startswith("allow"):
+                # AllowedOutcome REQUIRES outcome="selected" — omitting raises ValidationError.
+                return RequestPermissionResponse(
+                    outcome=AllowedOutcome(outcome="selected", option_id=option_id))
         return RequestPermissionResponse(outcome=DeniedOutcome(outcome="cancelled"))
 
     # --- benign defaults: unused in v1 (no fs/terminal capability advertised) ---
