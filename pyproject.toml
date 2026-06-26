@@ -19,12 +19,14 @@ dependencies = [
 ]
 
 [project.scripts]
-# Type `done` from any directory to launch the Textual ACP client (the TUI).
+# Type `dn` from any directory to launch the Textual ACP client (the TUI).
 # It operates on YOUR current working directory as the project.
-done = "harness.tui_main:main"
+# (Named `dn` rather than `done` — `done` is a zsh reserved keyword and can't be
+# used as a command.)
+dn = "harness.tui_main:main"
 # The raw ACP agent server (for editor clients like Zed); also used internally
 # by the TUI, which launches it via `python -m harness.acp_main`.
-done-agent = "harness.acp_main:main"
+dn-agent = "harness.acp_main:main"
 
 # The engine is the vendored, unmodified mini-swe-agent under upstream/. We
 # install it as a real, editable dependency instead of sys.path-hacking it —

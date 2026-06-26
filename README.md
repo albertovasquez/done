@@ -4,7 +4,7 @@ A learning-first agent harness, built by forking a vendored, unmodified copy of
 [mini-swe-agent](https://github.com/SWE-agent/mini-swe-agent) (v2.4.2) and
 growing it in phases: an event tracer (Phase 0) → a live runner (Phase 1) → a
 Router (Phase 2) → a skills layer (Phase 3) → an ACP agent (Phase 4) → a Textual
-ACP client / TUI you launch with `done` (Phase 5). The engine is the product;
+ACP client / TUI you launch with `dn` (Phase 5). The engine is the product;
 clients (TUI, editors, future workers) drive it over the Agent Client Protocol.
 
 ## Setup
@@ -42,13 +42,13 @@ phases. Instead of a CLI driving the engine, an editor (e.g. Zed) or a smoke
 client drives the agent over JSON-RPC/stdio using the
 [Agent Client Protocol](https://github.com/i-am-bee/acp).
 
-Launch the agent server (once installed — see Phase 5 below — use `done-agent`):
+Launch the agent server (once installed — see Phase 5 below — use `dn-agent`):
 
 ```bash
 # mock LLM (zero cost, no VibeProxy needed)
-done-agent --model mock
+dn-agent --model mock
 # real LLM through VibeProxy
-done-agent --model vibeproxy
+dn-agent --model vibeproxy
 # from a source checkout, without installing:
 .venv/bin/python -m harness.acp_main --model mock
 ```
@@ -66,26 +66,26 @@ A single-session Textual TUI that is an **ACP client**. It launches the Phase-4
 agent (`harness/acp_main.py`) as a subprocess and drives it over ACP — so the TUI
 talks to the engine exactly the way Zed would, not by importing it.
 
-**Install the `done` command (global):**
+**Install the `dn` command (global):**
 
 ```bash
-uv tool install --editable .        # → `done` on your PATH, from anywhere
+uv tool install --editable .        # → `dn` on your PATH, from anywhere
 # or, into the project venv:  .venv/bin/pip install -e .
 ```
 
 This installs the harness as a package (with the vendored `mini-swe-agent` as a
-dependency) and creates two console scripts: `done` (the TUI) and `done-agent`
+dependency) and creates two console scripts: `dn` (the TUI) and `dn-agent`
 (the raw ACP server for editor clients like Zed).
 
 **Run it:**
 
 ```bash
-done                       # mock LLM (zero cost); operates on the current dir
-done --model vibeproxy     # real LLM through VibeProxy
-done --cwd ~/myproject     # operate on a specific project instead of the cwd
+dn                       # mock LLM (zero cost); operates on the current dir
+dn --model vibeproxy     # real LLM through VibeProxy
+dn --cwd ~/myproject     # operate on a specific project instead of the cwd
 ```
 
-`done` operates on **whatever directory you launch it from** — like `git`. The
+`dn` operates on **whatever directory you launch it from** — like `git`. The
 harness's own assets (skills, config) resolve from the install location, not your
 project. From a source checkout you can also run it without installing:
 `.venv/bin/python -m harness.tui_main`.
