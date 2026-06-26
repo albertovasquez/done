@@ -13,6 +13,7 @@ class SessionState:
     cwd: str
     cancel_flag: threading.Event = field(default_factory=threading.Event)
     history: list[dict] = field(default_factory=list)
+    transcript: list[dict] = field(default_factory=list)  # [{role, content, origin}], plain text
 
 
 class SessionStore:
@@ -29,3 +30,11 @@ class SessionStore:
 
     def record(self, session_id: str, turn: dict) -> None:
         self._sessions[session_id].history.append(turn)
+
+    def extend(self, session_id: str, msgs: list[dict]) -> None:
+        transcript = self._sessions[session_id].transcript
+        for m in msgs:
+            assert m["role"] in ("user", "assistant")
+            assert m["origin"] in ("chat", "agent", "clarify")
+            transcript.append({"role": m["role"], "content": m["content"],
+                               "origin": m["origin"]})  # fresh copy, not alias

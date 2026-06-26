@@ -30,3 +30,30 @@ def test_record_appends_history(tmp_path):
 def test_ids_are_unique(tmp_path):
     store = SessionStore()
     assert store.new(cwd=str(tmp_path)) != store.new(cwd=str(tmp_path))
+
+
+def test_transcript_starts_empty(tmp_path):
+    store = SessionStore(); sid = store.new(cwd=str(tmp_path))
+    assert store.get(sid).transcript == []
+
+
+def test_extend_appends_copies(tmp_path):
+    store = SessionStore(); sid = store.new(cwd=str(tmp_path))
+    msg = {"role": "user", "content": "hi", "origin": "chat"}
+    store.extend(sid, [msg])
+    msg["content"] = "mutated"                      # mutate the input after storing
+    assert store.get(sid).transcript == [{"role": "user", "content": "hi", "origin": "chat"}]
+
+
+def test_extend_rejects_bad_role_or_origin(tmp_path):
+    store = SessionStore(); sid = store.new(cwd=str(tmp_path))
+    with pytest.raises(AssertionError):
+        store.extend(sid, [{"role": "system", "content": "x", "origin": "chat"}])
+    with pytest.raises(AssertionError):
+        store.extend(sid, [{"role": "user", "content": "x", "origin": "tool"}])
+
+
+def test_extend_does_not_touch_history(tmp_path):
+    store = SessionStore(); sid = store.new(cwd=str(tmp_path))
+    store.extend(sid, [{"role": "user", "content": "hi", "origin": "agent"}])
+    assert store.get(sid).history == []
