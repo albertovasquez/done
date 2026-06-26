@@ -92,6 +92,8 @@ SelectModal #select-footer { padding-top: 1; color: $muted; }
 
 /* Permission prompt: few options, no search → hug content (no tall empty box).
    ListView defaults to 1fr inside the column, which stretches the box; pin the
-   box and the list to their content height. */
-PermissionModal #select-box { height: auto; max-height: 12; }
-PermissionModal #select-list { height: 2; }
+   box and the list to their content height. Extra top padding pushes the
+   title/options/footer group down so it sits vertically balanced rather than
+   top-anchored in the box. */
+PermissionModal #select-box { height: auto; max-height: 14; padding: 3 2 2 2; }
+PermissionModal #select-list { height: 2; margin-top: 1; }
