@@ -33,7 +33,7 @@ from harness.tui.theme import HARNESS_THEME, COLORS, STATUS_COLOR
 from harness.tui.widgets.permission_modal import PermissionModal
 from harness.tui.widgets.select_modal import SelectModal, SelectOption
 from harness.tui.widgets.slash_menu import SlashMenu
-from harness.tui.wordmark import wordmark_markup
+from harness.tui.logo import logo_markup
 
 _GLYPH = {"completed": "✓", "failed": "✗"}
 _MODE = "Build"                       # the single agent "mode" we expose for now
@@ -94,7 +94,7 @@ class HarnessTui(App):
         provider = _provider_label(self.model)
         with Container(id="landing"):
             with Vertical(id="landing-col"):
-                yield Static(wordmark_markup(), id="wordmark", markup=True)
+                yield Static(logo_markup(), id="wordmark", markup=True)
                 with Vertical(id="landing-compose", classes="compose"):
                     yield Input(placeholder='Ask anything... "What is the tech stack of this project?"',
                                 id="landing-input")
@@ -251,7 +251,7 @@ class HarnessTui(App):
             self._transcript.write(_c("muted", message))
         else:
             self.query_one("#wordmark", Static).update(
-                wordmark_markup() + "\n\n" + f"[$muted]{message}[/]")
+                logo_markup() + "\n\n" + f"[$muted]{message}[/]")
 
     # ---- commands: /models, /help, /exit, /quit ----
 
@@ -327,7 +327,7 @@ class HarnessTui(App):
             for ln in lines:
                 self._transcript.write(ln)
         else:
-            self.query_one("#wordmark", Static).update(wordmark_markup() + "\n\n" + msg)
+            self.query_one("#wordmark", Static).update(logo_markup() + "\n\n" + msg)
 
     async def _enter_conversation(self) -> None:
         """Tear down the landing view, build the transcript + bottom composer."""
