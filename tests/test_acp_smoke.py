@@ -29,11 +29,10 @@ from acp.schema import (
 )
 
 REPO = Path(__file__).resolve().parent.parent
-AGENT_CMD = [
-    str(REPO / ".venv/bin/python"),
-    str(REPO / "harness/acp_main.py"),
-    "--model", "mock",
-]
+# Launch the agent with the RUNNING interpreter + module invocation — portable
+# (works from a git worktree or any cwd, and matches how the TUI launches the
+# agent). A hardcoded REPO/.venv/bin/python breaks when REPO has no .venv.
+AGENT_CMD = [sys.executable, "-m", "harness.acp_main", "--model", "mock"]
 
 # ---------------------------------------------------------------------------
 # VibeProxy reachability guard
@@ -400,14 +399,20 @@ def test_terminal_delegation_uses_client_terminal(tmp_path):
 # commands via LocalEnvironment (file actually changes).
 # ---------------------------------------------------------------------------
 
-@needs_vibeproxy
-def test_load_session_replays_history(tmp_path):
+def test_load_session_replays_history(tmp_path, monkeypatch):
     """load_session must replay recorded turns as session_update notifications.
 
-    Drive two chat prompts in one session (records 2 history turns), then call
+    Drive two prompts in one session (records 2 history turns), then call
     load_session for the same session_id. The agent must emit one session_update
     per recorded turn, each containing '[resumed]' in the message text.
+
+    Uses HARNESS_ROUTER_STUB=1 so classification is deterministic and OFFLINE —
+    the replay logic this test exercises is classification-independent, and the
+    previous live-VibeProxy classification round-trips made it slow + flaky. The
+    agent subprocess inherits this env var.
     """
+    monkeypatch.setenv("HARNESS_ROUTER_STUB", "1")
+
     async def go():
         client = _CollectingClient()
         async with acp.spawn_agent_process(client, AGENT_CMD[0], *AGENT_CMD[1:]) as (conn, _proc):
@@ -415,12 +420,9 @@ def test_load_session_replays_history(tmp_path):
             new = await conn.new_session(cwd=str(tmp_path), mcp_servers=[])
             sid = new.session_id
 
-            # Two chat prompts → records 2 turns in history
+            # Two prompts → records 2 turns in history
             await conn.prompt(prompt=[acp.text_block("what is 1+1")], session_id=sid)
             await conn.prompt(prompt=[acp.text_block("what is 2+2")], session_id=sid)
-
-            # Snapshot updates before load_session so we can isolate replay updates
-            updates_before = len(client.updates)
 
             # Call load_session for the same session_id
             load_resp = await conn.load_session(
@@ -428,23 +430,30 @@ def test_load_session_replays_history(tmp_path):
             )
             assert load_resp is not None, "load_session must return a LoadSessionResponse, got None"
 
-            # Collect session_update notifications emitted during load_session
-            replay_updates = client.updates[updates_before:]
-
-            # Each update that contains '[resumed]' counts as a replayed turn.
             # AgentMessageChunk stores text in .content.text
             def _chunk_text(u) -> str:
                 content = getattr(u, "content", None)
                 return getattr(content, "text", None) or ""
 
-            resumed_chunks = [
-                u for u in replay_updates
-                if "[resumed]" in _chunk_text(u)
-            ]
+            def _resumed() -> list:
+                # The '[resumed]' marker is emitted ONLY by replay, so counting it
+                # across ALL updates is immune to the delivery-timing race between
+                # conn.prompt returning and its notifications arriving (a positional
+                # slice of client.updates was flaky for exactly that reason — a late
+                # prior-turn notification could land inside the sliced window).
+                return [u for u in client.updates if "[resumed]" in _chunk_text(u)]
+
+            # Allow any in-flight replay notifications to settle (bounded).
+            for _ in range(50):
+                if len(_resumed()) >= 2:
+                    break
+                await asyncio.sleep(0.02)
+
+            resumed_chunks = _resumed()
             assert len(resumed_chunks) == 2, (
                 f"expected 2 '[resumed]' session_update chunks (one per history turn), "
                 f"got {len(resumed_chunks)}.\n"
-                f"Replay updates: {[(type(u).__name__, _chunk_text(u)) for u in replay_updates]!r}"
+                f"All updates: {[(type(u).__name__, _chunk_text(u)) for u in client.updates]!r}"
             )
 
     asyncio.run(go())

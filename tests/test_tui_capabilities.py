@@ -11,7 +11,8 @@ import acp
 from acp.schema import ClientCapabilities, ElicitationCapabilities, RequestPermissionResponse, AllowedOutcome
 
 REPO = Path(__file__).resolve().parent.parent
-AGENT_CMD = [str(REPO / ".venv/bin/python"), str(REPO / "harness/acp_main.py"), "--model", "mock"]
+# Running interpreter + module invocation = portable (worktree / any cwd).
+AGENT_CMD = [sys.executable, "-m", "harness.acp_main", "--model", "mock"]
 SAMPLE = REPO / "examples" / "sample-repo"
 
 

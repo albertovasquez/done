@@ -13,8 +13,10 @@ from harness.tui.widgets.select_modal import SelectModal, SelectOption
 from textual.widgets import Input, ListView
 
 REPO = Path(__file__).resolve().parent.parent
-FAKE_CMD = [str(REPO / ".venv/bin/python"), str(REPO / "tests/fake_agent.py")]
-AGENT_CMD = [str(REPO / ".venv/bin/python"), "-m", "harness.acp_main", "--model", "vibeproxy"]
+# Running interpreter (portable across worktrees / any cwd), not a hardcoded
+# REPO/.venv path which doesn't exist in a git worktree.
+FAKE_CMD = [sys.executable, str(REPO / "tests/fake_agent.py")]
+AGENT_CMD = [sys.executable, "-m", "harness.acp_main", "--model", "vibeproxy"]
 
 
 def _vibeproxy_up() -> bool:
