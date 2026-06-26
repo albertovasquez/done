@@ -21,6 +21,8 @@ GLYPH: dict[str, str] = {
     "read": "◇",
     "shell": "$",
     "search": "⌕",
+    # footer
+    "path": "▸",                     # cwd location anchor in the status bar
 }
 
 STATUS_LABEL: dict[str, str] = {
