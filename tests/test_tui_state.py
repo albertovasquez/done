@@ -133,3 +133,36 @@ def test_reduce_is_pure_returns_new_object():
     fs1 = reduce(fs0, TurnStarted())
     assert fs0.active.state == AgentState.IDLE   # original unchanged
     assert fs1 is not fs0
+
+
+# ---- decision tests ----
+
+from harness.tui.state import decision_from_meta, DecisionOpened
+
+
+def test_decision_from_meta_parses():
+    fm = {"harness": {"decision": {
+        "question": "Where should the seam live?",
+        "options": [
+            {"title": "Wrapper", "rationale": "isolated"},
+            {"title": "Patch upstream", "rationale": "violates zero-edits"},
+        ]}}}
+    dv = decision_from_meta(fm)
+    assert dv is not None
+    assert dv.question.startswith("Where")
+    assert dv.options[0] == ("Wrapper", "isolated")
+
+
+def test_decision_from_meta_malformed_returns_none():
+    assert decision_from_meta(None) is None
+    assert decision_from_meta({}) is None
+    assert decision_from_meta({"harness": {"decision": {}}}) is None
+    assert decision_from_meta({"harness": "x"}) is None
+
+
+def test_decision_opened_sets_state():
+    dv = DecisionView(question="q?", options=(("a", "b"),))
+    fs = reduce(initial_snapshot(), DecisionOpened(dv))
+    a = fs.active
+    assert a.state == AgentState.AWAITING_DECISION
+    assert a.decision == dv

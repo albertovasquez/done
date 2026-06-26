@@ -131,6 +131,11 @@ class PermissionOpened: ...
 class PermissionClosed: ...
 
 
+@dataclass(frozen=True)
+class DecisionOpened:
+    view: "DecisionView"
+
+
 def _tool_status(raw: str) -> ToolStatus:
     s = str(raw)
     if "." in s:
@@ -159,6 +164,8 @@ def _reduce_agent(a: AgentSnapshot, event) -> AgentSnapshot:
     if isinstance(event, PermissionClosed):
         nxt = AgentState.RUNNING_TOOL if a.tool is not None else AgentState.RESPONDING
         return replace(a, state=nxt)
+    if isinstance(event, DecisionOpened):
+        return replace(a, state=AgentState.AWAITING_DECISION, decision=event.view)
     if isinstance(event, TurnEnded):
         return replace(a, state=AgentState.DONE if event.ok else AgentState.FAILED,
                        tool=None, activity_label="")
@@ -195,3 +202,28 @@ def reduce(snapshot: FleetSnapshot, event) -> FleetSnapshot:
         for a in snapshot.agents
     )
     return FleetSnapshot(agents=agents, active_id=snapshot.active_id)
+
+
+def decision_from_meta(field_meta: dict | None) -> DecisionView | None:
+    """Recognize a clarification ('grill-me') request from the harness meta chip.
+    Tolerant: any missing/malformed shape yields None, never raises. Swaps to a
+    formal ACP signal later with no widget change (spec §5.1)."""
+    if not isinstance(field_meta, dict):
+        return None
+    harness = field_meta.get("harness")
+    if not isinstance(harness, dict):
+        return None
+    dec = harness.get("decision")
+    if not isinstance(dec, dict):
+        return None
+    question = dec.get("question")
+    raw_opts = dec.get("options")
+    if not question or not isinstance(raw_opts, list) or not raw_opts:
+        return None
+    options = tuple(
+        (str(o.get("title", "")), str(o.get("rationale", "")))
+        for o in raw_opts if isinstance(o, dict) and o.get("title")
+    )
+    if not options:
+        return None
+    return DecisionView(question=str(question), options=options)
