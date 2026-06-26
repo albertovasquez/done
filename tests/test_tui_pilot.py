@@ -690,6 +690,53 @@ def test_pilot_shift_enter_modifyotherkeys_form_inserts_newline():
     asyncio.run(go())
 
 
+def test_prompt_area_newline_key_classifier():
+    """The structural matcher: any modifier+Enter (Kitty 'shift+enter' form OR
+    modifyOtherKeys 'shift+\\r' form, any combo) OR a literal LF (ctrl+j / a key
+    carrying '\\n') is a newline; bare Enter (char '\\r') and unrelated keys are
+    not. Fast unit test, no Pilot."""
+    nl = PromptArea._is_newline_key
+    # (key, character) pairs that SHOULD insert a newline
+    for k, ch in [("shift+enter", None), ("alt+enter", None), ("ctrl+enter", None),
+                  ("alt+shift+enter", None), ("ctrl+shift+enter", None),
+                  ("super+enter", None), ("shift+return", None),
+                  ("shift+\r", "\r"), ("ctrl+\r", "\r"), ("ctrl+shift+\r", "\r"),
+                  ("shift+\n", "\n"), ("ctrl+j", "\n")]:
+        assert nl(k, ch), f"({k!r}, {ch!r}) should be a newline"
+    # bare Enter (char '\r') submits; these must NOT be newlines
+    for k, ch in [("enter", "\r"), ("a", "a"), ("shift+a", "A"),
+                  ("ctrl+c", None), ("escape", None), ("tab", None),
+                  ("shift+tab", None)]:
+        assert not nl(k, ch), f"({k!r}, {ch!r}) must NOT be a newline"
+
+
+def test_pilot_modified_enter_encodings_insert_newline():
+    """Drive the actual widget with the key strings Textual emits for Shift+Enter
+    across terminal encodings (Kitty 'shift+enter' + modifyOtherKeys 'shift+\\r'/
+    'shift+\\n' + a ctrl variant + ctrl+j). Each must insert a newline, not submit."""
+    from textual import events
+
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            inp = app.query_one("#landing-input", PromptArea)
+            inp.focus()
+            await pilot.press("a")
+            variants = [("shift+enter", None), ("shift+\r", "\r"),
+                        ("shift+\n", "\n"), ("ctrl+\r", "\r"), ("ctrl+j", "\n")]
+            for key, ch in variants:
+                inp.post_message(events.Key(key, ch))
+                await pilot.pause()
+            await pilot.press("b")
+            await pilot.pause()
+            assert inp.value == "a" + "\n" * len(variants) + "b", \
+                f"all soft-return encodings should insert newlines: {inp.value!r}"
+            assert not app._started, "soft-return variants must NOT submit"
+
+    asyncio.run(go())
+
+
 def test_pilot_compose_box_grows_then_caps_at_three_rows():
     """The compose box starts one row tall, grows as lines are added, and is
     capped at three rows (max-height: 3 in app.tcss); a fourth line scrolls
