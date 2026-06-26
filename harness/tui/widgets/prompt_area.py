@@ -4,9 +4,10 @@ A multi-line TextArea that auto-grows with its content (height: auto, capped at
 max-height: 3 in app.tcss, then it scrolls). It replaces the old single-line
 Input so a wrapped or multi-line prompt is visible while typing.
 
-Key model (Kitty keyboard protocol required for Shift+Enter):
+Key model (Shift+Enter needs a terminal that distinguishes it from Enter):
   Enter        submit the prompt  -> posts PromptArea.Submitted
-  Shift+Enter  insert a newline    (default TextArea behaviour, left untouched)
+  Shift+Enter  insert a newline   -> matched across terminal encodings, see
+                                     _NEWLINE_KEYS
 
 A `.value` alias mirrors Input's API so the app's existing call sites
 (`.value = ""`, reads, slash-menu region math) keep working unchanged. The app
@@ -21,6 +22,13 @@ from textual.widgets import TextArea
 
 class PromptArea(TextArea):
     """Auto-growing compose box. Enter submits; Shift+Enter inserts a newline."""
+
+    # Shift+Enter reaches Textual under several key names depending on how the
+    # terminal encodes it: "shift+enter" (Kitty CSI-u form) and "shift+\r" /
+    # "shift+\n" (the modifyOtherKeys form some terminals — e.g. cmux/libghostty,
+    # Ghostty — emit). Match them all so Shift+Enter inserts a newline rather than
+    # silently submitting/doing nothing.
+    _NEWLINE_KEYS = frozenset({"shift+enter", "shift+\r", "shift+\n"})
 
     class Submitted(Message):
         """Posted when the user presses Enter. Carries the current text."""
@@ -67,10 +75,11 @@ class PromptArea(TextArea):
             return
 
         # Shift+Enter inserts a newline. TextArea's own _on_key only maps plain
-        # "enter" to "\n" — it ignores "shift+enter" — so we insert it ourselves.
-        # (Requires a terminal that reports Shift+Enter distinctly, e.g. Kitty
-        # keyboard protocol; elsewhere the key arrives as plain Enter and submits.)
-        if event.key == "shift+enter":
+        # "enter" to "\n" — it ignores the shifted variants — so we insert it
+        # ourselves. Requires a terminal that reports Shift+Enter distinctly from
+        # Enter (any modern keyboard protocol); plain legacy terminals send the
+        # same bytes for both, where it falls through to the Enter→submit branch.
+        if event.key in self._NEWLINE_KEYS:
             event.stop()
             event.prevent_default()
             self.insert("\n")
