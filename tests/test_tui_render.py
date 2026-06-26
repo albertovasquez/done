@@ -4,7 +4,8 @@ sys.path.insert(0, ".")
 
 from types import SimpleNamespace as NS
 
-from harness.tui.render import render_update, harness_chips, status_style, RenderedItem
+from harness.tui.render import render_update, harness_chips, status_style, format_cwd, RenderedItem
+from harness.tui.tokens import GLYPH
 
 
 # --- helpers: build stub update objects that duck-type the acp ones ---
@@ -96,3 +97,50 @@ def test_harness_chips_malformed_never_raises():
     assert harness_chips({"harness": {"task_classified": {}}}) == ["classified: ? · skills: — · conf: 0.00"]
     assert harness_chips({"harness": {"skill_load": {}}}) == ["skills: 0 loaded, 0 skipped"]
     assert harness_chips({"harness": "not-a-dict"}) == []
+
+
+# --- format_cwd: the two-tone, home-relative status-bar path ---
+G = GLYPH["path"]
+
+
+def test_format_cwd_collapses_home_and_emphasizes_basename():
+    out = format_cwd("/Users/alberto/Work/Quiubo/harness", home="/Users/alberto")
+    # parent (incl. ~) is dim, current dir is bright, leading glyph present
+    assert out == f"[$path-dim]{G} ~/Work/Quiubo/[/][$path]harness[/]"
+
+
+def test_format_cwd_home_itself_is_just_tilde():
+    out = format_cwd("/Users/alberto", home="/Users/alberto")
+    assert out == f"[$path-dim]{G} [/][$path]~[/]"
+
+
+def test_format_cwd_non_home_absolute_path_keeps_leading_slash():
+    out = format_cwd("/etc/nginx", home="/Users/alberto")
+    assert out == f"[$path-dim]{G} /etc/[/][$path]nginx[/]"
+
+
+def test_format_cwd_root_edge_case():
+    out = format_cwd("/", home="/Users/alberto")
+    assert out == f"[$path-dim]{G} [/][$path]/[/]"
+
+
+def test_format_cwd_empty_is_safe():
+    out = format_cwd("", home="/Users/alberto")
+    assert out == f"[$path-dim]{G} [/][$path]/[/]"
+
+
+def test_format_cwd_left_truncates_long_path_never_the_basename():
+    long = "/Users/alberto/Work/Quiubo/very/deeply/nested/project-dir"
+    out = format_cwd(long, home="/Users/alberto", max_width=24)
+    # the bright basename always survives; the dim prefix collapses behind …/
+    assert "[$path]project-dir[/]" in out
+    assert "…/" in out
+    # markup chars don't count toward width; the visible text fits the budget
+    visible = (out.replace("[$path-dim]", "").replace("[$path]", "")
+                  .replace("[/]", ""))
+    assert len(visible) <= 24
+
+
+def test_format_cwd_no_home_leaves_absolute_path():
+    out = format_cwd("/srv/app", home=None)
+    assert out == f"[$path-dim]{G} /srv/[/][$path]app[/]"

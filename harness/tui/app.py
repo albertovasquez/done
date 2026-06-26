@@ -32,7 +32,7 @@ from textual.widgets import LoadingIndicator, Markdown, Static, TextArea
 from harness.tui.client import TuiClient
 from harness.tui.commands import build_registry, resolve_command
 from harness.tui.messages import SessionUpdate, PermissionRequest
-from harness.tui.render import render_update, harness_chips, status_style
+from harness.tui.render import render_update, harness_chips, status_style, format_cwd
 from harness.tui.state import (
     initial_snapshot, reduce, TurnStarted, TurnEnded, ItemReceived,
     TokensUpdated, DecisionOpened, decision_from_meta,
@@ -211,7 +211,7 @@ class HarnessTui(App):
         await bar.mount(Static(self._status_right(), id="statusbar-right", markup=True))
 
     def _status_left(self) -> str:
-        return f"[$muted]{self.cwd}[/]"
+        return format_cwd(self.cwd, home=os.path.expanduser("~"))
 
     def _status_right(self) -> str:
         right = f"ctrl+p commands"

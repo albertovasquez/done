@@ -43,6 +43,10 @@ HARNESS_THEME = Theme(
         "wordmark-bright": "#286CE9",# right half of the wordmark (brand blue)
         "accent-bar": "#286CE9",
         "scheduled": "#e3b341",      # product-status: cron/scheduled/attention (sanctioned, spec §4.1)
+        # cwd footer: a muted, desaturated amber (NOT $scheduled/$warning — those
+        # mean "attention"). Parent path dim, current dir bright, so location pops.
+        "path-dim": "#8a6d3b",       # parent segments — amber pulled toward muted luminance
+        "path": "#d9a441",           # current dir (basename) — brighter, still calm
     },
 )
 

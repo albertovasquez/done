@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from harness.tui.tokens import GLYPH
+
 
 @dataclass(frozen=True)
 class RenderedItem:
@@ -79,3 +81,40 @@ def harness_chips(field_meta: dict | None) -> list[str]:
         skipped = sl.get("skipped") or []
         chips.append(f"skills: {len(injected)} loaded, {len(skipped)} skipped")
     return chips
+
+
+def format_cwd(cwd: str, home: str | None = None, max_width: int = 48) -> str:
+    """Two-tone, home-relative cwd for the status bar (Textual content markup).
+
+    `$HOME` collapses to `~`; parent segments render dim ($path-dim), the current
+    dir bright ($path) so the eye lands on where you are. If the result exceeds
+    `max_width` columns, leading segments are dropped behind an `…/` ellipsis —
+    the current dir is never truncated. A leading location glyph anchors it.
+
+    Pure (no Textual / no os calls): `home` is injected so it stays unit-testable.
+    """
+    glyph = GLYPH["path"]
+    path = cwd or ""
+    if home and (path == home or path.startswith(home.rstrip("/") + "/")):
+        path = "~" + path[len(home.rstrip("/")):]
+
+    segs = [s for s in path.split("/") if s]
+    if not segs:                                  # "/" or empty → just the root
+        return f"[$path-dim]{glyph} [/][$path]{path or '/'}[/]"
+
+    base = segs[-1]
+    rooted = path.startswith("/")
+    # budget: total minus glyph+space and the bright basename
+    budget = max_width - len(glyph) - 1 - len(base)
+    parent = segs[:-1]
+    prefix = ""
+    parent_str = ("/".join(parent) + "/") if parent else ""
+    if rooted and parent:
+        parent_str = "/" + parent_str
+    # left-truncate parent segments until the dim prefix fits the budget
+    while parent and len(prefix + parent_str) > max(budget, 0):
+        parent = parent[1:]
+        parent_str = ("/".join(parent) + "/") if parent else ""
+        prefix = "…/"
+    dim = f"{prefix}{parent_str}"
+    return f"[$path-dim]{glyph} {dim}[/][$path]{base}[/]"
