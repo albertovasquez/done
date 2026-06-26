@@ -29,17 +29,20 @@ WHITE = (0xE3, 0xE3, 0xE3) # brand white
 COLS = 96                  # width in cells; the landing column is sized to fit
 
 
-def _dist(a, b):
-    return abs(a[0] - b[0]) + abs(a[1] - b[1]) + abs(a[2] - b[2])
-
-
 def _quant(p):
-    """Snap a pixel to the nearest of {navy→blank, blue, white}."""
-    dn, db, dw = _dist(p, NAVY), _dist(p, BLUE), _dist(p, WHITE)
-    m = min(dn, db, dw)
-    if m == dn:
+    """Classify a pixel as blue ink, white ink, or navy background (None).
+
+    Nearest-color (L1) distance fails here: the grey anti-aliased edges of the
+    WHITE letters land closer to blue than to white, so the mirrored white half
+    bled stray blue specks. Instead we test chromaticity — only a saturated,
+    clearly-blue pixel is blue; everything achromatic is navy or white by
+    brightness. This keeps the white half clean."""
+    r, g, b = p
+    if (b - r > 60) and (b - g > 40) and b > 90:   # chromatic blue
+        return BLUE
+    if (r + g + b) / 3 < 70:                        # dark, neutral -> background
         return None
-    return BLUE if m == db else WHITE
+    return WHITE                                    # bright, neutral -> white ink
 
 
 def _hex(p):
