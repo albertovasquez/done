@@ -23,6 +23,14 @@ async def _models(app) -> None:
     await app.action_select_model()
 
 
+async def _reload(app) -> None:
+    await app.action_reload()
+
+
+async def _clear(app) -> None:
+    await app.action_clear()
+
+
 async def _exit(app) -> None:
     app.exit()
 
@@ -35,6 +43,8 @@ def build_registry() -> list[Command]:
     """The commands available in the slash menu, in display order."""
     return [
         Command("models", "Select the active model", _models),
+        Command("reload", "Restart the agent (reloads edited code)", _reload),
+        Command("clear", "Clear the conversation", _clear),
         Command("help", "Show available commands", _help),
         Command("exit", "Exit the app", _exit),
         Command("quit", "Exit the app", _exit),

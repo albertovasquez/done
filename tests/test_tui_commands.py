@@ -147,6 +147,28 @@ def test_models_real_switch_round_trip():
     asyncio.run(go())
 
 
+def test_registry_includes_reload_and_clear():
+    from harness.tui.commands import build_registry
+    names = [c.name for c in build_registry()]
+    assert "reload" in names
+    assert "clear" in names
+
+def test_reload_clear_handlers_delegate_to_app_actions():
+    import asyncio
+    from harness.tui.commands import build_registry
+
+    class _App:
+        def __init__(self): self.called = []
+        async def action_reload(self): self.called.append("reload")
+        async def action_clear(self): self.called.append("clear")
+
+    reg = {c.name: c for c in build_registry()}
+    app = _App()
+    asyncio.run(reg["reload"].handler(app))
+    asyncio.run(reg["clear"].handler(app))
+    assert app.called == ["reload", "clear"]
+
+
 def test_select_modal_search_and_select():
     async def go():
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
