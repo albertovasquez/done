@@ -16,6 +16,25 @@ from harness import paths
 from harness.tui.app import HarnessTui
 
 
+def _relaunch_args(args, cwd) -> list[str]:
+    """Flags to re-launch THIS TUI with, reconstructed from parsed args (not raw
+    sys.argv) so they are correct however it was invoked. --cwd is always explicit."""
+    flags = ["--model", args.model, "--cwd", cwd]
+    if args.yolo:
+        flags.append("--yolo")
+    return flags
+
+
+def _relaunch_command(args, cwd) -> list[str]:
+    """argv for os.execv: the original launcher (the `dn` console script at
+    sys.argv[0]) when it is an executable file, else `python -m harness.tui_main`."""
+    launcher = sys.argv[0]
+    flags = _relaunch_args(args, cwd)
+    if launcher and os.path.isfile(launcher) and os.access(launcher, os.X_OK):
+        return [launcher, *flags]
+    return [sys.executable, "-m", "harness.tui_main", *flags]
+
+
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description="Harness Textual ACP client")
     parser.add_argument("--model", choices=["mock", "vibeproxy"], default="vibeproxy")
