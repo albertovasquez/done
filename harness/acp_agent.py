@@ -163,7 +163,9 @@ class HarnessAgent(acp.Agent):
                 PermissionOption(kind="allow_once", name="Allow once", option_id="allow_once"),
                 PermissionOption(kind="reject_once", name="Reject", option_id="reject_once"),
             ]
-            tool_call = ToolCallUpdate(tool_call_id=tc_id)
+            # carry the actual command in title so the client can show it
+            # ("$ <cmd>") instead of the opaque tool_call_id.
+            tool_call = ToolCallUpdate(tool_call_id=tc_id, title=f"$ {command}")
             coro = self._conn.request_permission(
                 options=options, session_id=session_id, tool_call=tool_call
             )

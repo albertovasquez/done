@@ -33,26 +33,33 @@ class SelectModal(ModalScreen):
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
 
     def __init__(self, title: str, options: list[SelectOption],
-                 current: str | None = None, footer: str = "") -> None:
+                 current: str | None = None, footer: str = "",
+                 searchable: bool = True) -> None:
         super().__init__()
         self._title = title
         self._options = options
         self._current = current
         self._footer = footer
+        self._searchable = searchable
 
     def compose(self) -> ComposeResult:
         with Vertical(id="select-box"):
             with Vertical(id="select-header"):
                 yield Static(f"[b]{self._title}[/b]   [$muted]esc[/]",
                              id="select-title", markup=True)
-            yield Input(placeholder="Search", id="select-search")
+            if self._searchable:
+                yield Input(placeholder="Search", id="select-search")
             yield ListView(id="select-list")
             if self._footer:
                 yield Static(self._footer, id="select-footer", markup=True)
 
     def on_mount(self) -> None:
         self._populate(self._options)
-        self.query_one("#select-search", Input).focus()
+        # focus the search box if present, else the list (so ↑↓/enter work)
+        if self._searchable:
+            self.query_one("#select-search", Input).focus()
+        else:
+            self.query_one("#select-list", ListView).focus()
 
     def _row_markup(self, opt: SelectOption) -> str:
         marker = "●" if opt.id == self._current else " "

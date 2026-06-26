@@ -80,8 +80,10 @@ def test_pilot_renders_harness_chip_end_to_end():
 
 
 def test_pilot_permission_modal_reject():
-    """Optional Smoke: fake agent requests permission; rejecting resolves the
-    Future and the turn completes."""
+    """Optional Smoke: fake agent requests permission; rejecting (esc) resolves
+    the Future and the turn completes. The permission modal is the shared
+    SelectModal-based component — it shows the command as the title and rejects
+    on esc (dismiss None)."""
     async def go():
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
         async with app.run_test() as pilot:
@@ -92,7 +94,11 @@ def test_pilot_permission_modal_reject():
                 await pilot.pause()
                 if isinstance(app.screen, PermissionModal):
                     modal_seen = True
-                    await pilot.click("#opt-__reject__")
+                    # the modal shows the REAL command (from tool_call.title),
+                    # not the opaque tool_call_id
+                    assert app.screen._title == "$ echo hello", (
+                        f"modal title should be the command, got {app.screen._title!r}")
+                    await pilot.press("escape")          # esc = reject
                     break
             for _ in range(50):
                 await pilot.pause()

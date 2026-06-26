@@ -23,14 +23,14 @@ import acp
 from acp.schema import ClientCapabilities, ElicitationCapabilities
 from textual.app import App, ComposeResult
 from textual.containers import Container, Vertical
-from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Label, RichLog, Static
+from textual.widgets import Input, RichLog, Static
 
 from harness.tui.client import TuiClient
 from harness.tui.commands import build_registry
 from harness.tui.messages import SessionUpdate, PermissionRequest
 from harness.tui.render import render_update, harness_chips, status_style
 from harness.tui.theme import HARNESS_THEME, COLORS, STATUS_COLOR
+from harness.tui.widgets.permission_modal import PermissionModal
 from harness.tui.widgets.select_modal import SelectModal, SelectOption
 from harness.tui.widgets.slash_menu import SlashMenu
 from harness.tui.wordmark import wordmark_markup
@@ -53,29 +53,6 @@ def _model_label(model: str, worker_model_id: str | None) -> str:
     if worker_model_id:
         return worker_model_id
     return "mock model" if model == "mock" else model
-
-
-class PermissionModal(ModalScreen):
-    """Renders ALL acp-provided options generically + a Reject path. Dismisses
-    with the chosen option_id (str) or None (reject)."""
-
-    def __init__(self, options, tool_call) -> None:
-        super().__init__()
-        self._options = options or []
-        self._tool_call = tool_call
-
-    def compose(self) -> ComposeResult:
-        cmd = getattr(self._tool_call, "tool_call_id", "") or "permission requested"
-        with Vertical(id="box"):
-            yield Label(f"$ {cmd}", id="cmd")
-            for opt in self._options:
-                yield Button(getattr(opt, "name", "Allow"),
-                             id=f"opt-{getattr(opt, 'option_id', 'allow')}")
-            yield Button("Reject", id="opt-__reject__", variant="error")
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        oid = event.button.id[len("opt-"):]
-        self.dismiss(None if oid == "__reject__" else oid)
 
 
 class HarnessTui(App):
@@ -459,7 +436,11 @@ class HarnessTui(App):
             if not msg.future.done():
                 msg.future.set_result(chosen)
 
-        self.push_screen(PermissionModal(msg.options, msg.tool_call), _resolve)
+        # The agent sends the real command in tool_call.title (e.g. "$ sed ...");
+        # strip a leading "$ " so the modal doesn't double it.
+        title = getattr(msg.tool_call, "title", "") or ""
+        command = title[2:] if title.startswith("$ ") else title
+        self.push_screen(PermissionModal(command, msg.options), _resolve)
 
     async def action_cancel(self) -> None:
         if self._conn is not None and self._session_id is not None:
