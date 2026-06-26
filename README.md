@@ -100,6 +100,35 @@ context:
 Add your own skills in `~/.config/harness/skills/<name>/SKILL.md`; a user skill
 with the same name as a bundled one overrides it.
 
+## Personas
+
+A **persona** gives the agent an identity — tone, boundaries, and who it's
+talking to. Where skills are task-knowledge the router selects per request, a
+persona is a small set of plain-text files injected into the agent's context for
+the whole session, on **both** the chat and coding paths.
+
+A persona lives in a workspace directory. The built-in one is
+`~/.config/harness/agents/default/`, and it reads three files (all optional):
+
+| File | Role |
+|---|---|
+| `SOUL.md` | persona, tone, boundaries — "who are you?" |
+| `IDENTITY.md` | name / vibe / emoji |
+| `USER.md` | who the user is (static context you write) |
+
+Create the directory and drop in any of the three:
+
+```bash
+mkdir -p ~/.config/harness/agents/default
+echo "You are terse and never explain unless asked." > ~/.config/harness/agents/default/SOUL.md
+dn   # the agent now answers in that persona, on chat and coding turns alike
+```
+
+If the workspace is absent or empty, behavior is unchanged — no persona, no
+overhead. See [docs/personas.md](docs/personas.md) for the full reference
+(trimming, blank-skip, the dev path, and what's coming in later phases:
+multiple personas, selection, memory, scheduling).
+
 ## Using the TUI
 
 - Type a prompt in the input box and press **Enter** to send. Input is disabled
