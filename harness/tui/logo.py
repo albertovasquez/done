@@ -99,7 +99,7 @@ _E = [
 ]
 
 _GLYPHS = [_D, _O, _N, _E]
-_GAP = 4          # blank sub-columns between letters
+_GAP = 2          # blank sub-columns between letters
 _ROWS_TALL = 15   # 5 sextant cell-rows
 
 
