@@ -248,12 +248,12 @@ class HarnessAgent(acp.Agent):
             # runs on the worker thread → marshal to the loop and block until sent
             if phase == "start":
                 tc_counter["n"] += 1
-                state._last_tc_id = f"tc{tc_counter['n']}"          # transient, on the state obj
-                upd = tool_call_start(state._last_tc_id, command)
+                state.last_tc_id = f"tc{tc_counter['n']}"
+                upd = tool_call_start(state.last_tc_id, command)
             elif phase in ("done", "rejected"):
                 result = out if out is not None else {"output": "permission denied",
                                                       "returncode": -1, "exception_info": ""}
-                upd = tool_call_done(getattr(state, "_last_tc_id", "tc0"), result)
+                upd = tool_call_done(state.last_tc_id, result)
             else:
                 return
             fut = asyncio.run_coroutine_threadsafe(
@@ -271,7 +271,7 @@ class HarnessAgent(acp.Agent):
             # prompt it can't service.
             if self._client_caps is None or getattr(self._client_caps, "elicitation", None) is None:
                 return True
-            tc_id = getattr(state, "_last_tc_id", "tc0")
+            tc_id = state.last_tc_id
             options = [
                 PermissionOption(kind="allow_once", name="Allow once", option_id="allow_once"),
                 PermissionOption(kind="reject_once", name="Reject", option_id="reject_once"),
