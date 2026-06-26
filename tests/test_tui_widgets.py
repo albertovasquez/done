@@ -64,7 +64,7 @@ def test_activity_status_reduced_motion_disables_animation():
 
 from harness.tui.state import TaskItem, ToolView, ToolStatus
 from harness.tui.widgets.task_tree import TaskTree
-from harness.tui.widgets.tool_call_row import ToolCallRow
+from harness.tui.widgets.tool_call_row import ToolCallRow, cap_body
 
 
 def test_task_tree_glyphs():
@@ -86,6 +86,28 @@ def test_tool_call_row_line():
     line = row.line_for(row._tool)
     assert "⚑" in line                # test subtype glyph
     assert "pytest" in line
+
+
+def test_cap_body_caps_lines():
+    body = "\n".join(f"line{i}" for i in range(20))
+    assert cap_body(body, "read").count("\n") <= 6
+    assert cap_body(body, "shell").count("\n") <= 10
+    assert cap_body("", "shell") == ""
+
+
+def test_tool_call_row_detail_includes_body():
+    tool = ToolView(title="$ cat f.py", status=ToolStatus.DONE, subtype="read",
+                    body="alpha\nbeta", id="t1")
+    row = ToolCallRow(tool, expanded=True)
+    detail = row.detail_for(tool)
+    assert "f.py" in detail
+    assert "alpha" in detail and "beta" in detail
+
+
+def test_tool_call_row_collapsed_line_unchanged():
+    tool = ToolView(title="$ pytest", status=ToolStatus.ACTIVE, subtype="test", id="t1")
+    row = ToolCallRow(tool)
+    assert "⚑" in row.line_for(tool) and "pytest" in row.line_for(tool)
 
 
 from harness.tui.state import DecisionView

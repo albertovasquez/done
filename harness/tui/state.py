@@ -34,6 +34,7 @@ class ToolView:
     status: ToolStatus
     subtype: str
     body: str = ""
+    id: str = ""
 
 
 @dataclass(frozen=True)
@@ -184,7 +185,8 @@ def _reduce_agent(a: AgentSnapshot, event) -> AgentSnapshot:
                            activity_label=f"Running {subtype}")
         if kind == "tool_update":
             ts = _tool_status(getattr(item, "status", ""))
-            tool = replace(a.tool, status=ts) if a.tool is not None else None
+            body = getattr(item, "body", "") or (a.tool.body if a.tool is not None else "")
+            tool = replace(a.tool, status=ts, body=body) if a.tool is not None else None
             new_task_status = _task_status_from_tool(ts)
             live_title = a.tool.title if a.tool is not None else None
             if live_title is not None and any(t.label == live_title for t in a.tasks):

@@ -210,6 +210,16 @@ def test_tool_update_targets_live_tool_not_last_index():
     )
 
 
+def test_tool_update_propagates_body():
+    """tool_update with a body must set the matching ToolView's body."""
+    fs = reduce(initial_snapshot(), TurnStarted())
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="tool", id="t1", title="$ cat f", status="pending")))
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="tool_update", id="t1", status="completed", body="hello\nworld")))
+    tv = _active(fs).tool
+    assert tv is not None
+    assert tv.body == "hello\nworld"
+
+
 def test_permission_closed_restores_responding_when_no_live_tool():
     """PermissionClosed with no live tool must restore RESPONDING state."""
     fs = reduce(initial_snapshot(), TurnStarted())
