@@ -77,6 +77,7 @@ class HarnessTui(App):
         self._tokens = 0                      # last-known token count from usage updates
         self._commands = build_registry()     # slash-command registry
         self._slash = None                    # the SlashMenu widget while open, else None
+        self._slash_overlay = None            # landing-only overlay box wrapping the menu
         # Register + activate the theme BEFORE the stylesheet parses (CSS_PATH is
         # parsed at construction/mount; theme custom variables must exist by then).
         self.register_theme(HARNESS_THEME)
@@ -209,15 +210,38 @@ class HarnessTui(App):
     async def _open_or_update_slash(self, query: str) -> None:
         if self._slash is None:
             self._slash = SlashMenu(self._commands)
-            # mount directly above the active compose box
-            anchor = "#composer" if self._started else "#landing-compose"
-            await self.mount(self._slash, before=anchor)
+            if self._started:
+                # conversation: composer is docked to the bottom, so mounting the
+                # menu in-flow directly above it already grows upward.
+                await self.mount(self._slash, before="#composer")
+            else:
+                # landing: the compose box is vertically centered, so an in-flow
+                # mount would push it down. Float the menu inside an overlay box
+                # whose height we pin to the input's top row; the menu docks to that
+                # box's bottom and grows UPWARD from the input — no offset math, so
+                # nothing races as the row count changes while filtering.
+                inp = self.query_one("#landing-input", Input)
+                self._slash_overlay = Container(self._slash, id="slash-overlay")
+                self._slash_overlay.styles.height = inp.region.y
+                await self.mount(self._slash_overlay)
         self._slash.update_query(query)
+
+    async def on_resize(self, event) -> None:
+        # the floating menu's height is pinned to the input's top row at open time;
+        # a resize moves the centered input, detaching the menu. The menu is a
+        # transient in-progress element, so just close it — the next keystroke
+        # reopens it correctly anchored to the input's new row.
+        if self._slash_overlay is not None:
+            self._active_input().value = ""
+            await self._close_slash()
 
     async def _close_slash(self) -> None:
         if self._slash is not None:
-            await self._slash.remove()
+            # remove the overlay wrapper if we floated it (landing); else the menu
+            target = self._slash_overlay if self._slash_overlay is not None else self._slash
+            await target.remove()
             self._slash = None
+            self._slash_overlay = None
 
     async def on_key(self, event) -> None:
         # while the slash menu is open, ↑/↓ move the selection; esc closes it

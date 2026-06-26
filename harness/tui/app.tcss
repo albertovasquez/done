@@ -1,7 +1,7 @@
 /* harness TUI — opencode-style two-state chat. Colors come from the `harness`
    theme (theme.py): $accent, $surface, $foreground, $muted, $code, etc. */
 
-Screen { layout: vertical; background: $background; }
+Screen { layout: vertical; background: $background; layers: base overlay; }
 
 /* ---- shared compose box (landing + conversation): left accent bar ---- */
 .compose {
@@ -47,8 +47,17 @@ Screen { layout: vertical; background: $background; }
 /* PermissionModal subclasses SelectModal, so the SelectModal #select-* rules
    below style it too (Textual matches type selectors against base classes). */
 
-/* ---- slash menu (above the compose box) ---- */
+/* ---- slash menu (above the compose box) ----
+   CONVERSATION: the composer is docked to the bottom, so the menu mounts in-flow
+   above it and already grows upward (the base #slash-menu rule applies).
+   LANDING: the compose box is vertically centered, so an in-flow mount would push
+   it down. Instead we float the menu inside #slash-overlay — an overlay-layer box
+   whose height the app pins to the input's top row. `align: center bottom` seats
+   the menu against that box's bottom (and centers it onto the compose column), so
+   it grows UPWARD from the input with no per-frame offset math. */
 #slash-menu { height: auto; max-height: 12; margin: 0 2; background: $surface; }
+#slash-overlay { layer: overlay; width: 100%; align: center bottom; }
+#slash-overlay #slash-menu { width: 100; margin: 0; }
 #slash-menu #slash-list { height: auto; max-height: 12; background: $surface; border: none; }
 #slash-menu ListItem { background: $surface; padding: 0 1; }
 #slash-menu ListItem.--highlight { background: $accent 25%; }
