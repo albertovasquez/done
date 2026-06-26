@@ -76,7 +76,7 @@ def test_non_utf8_file_skipped_not_raised(tmp_path):
     assert load.skipped and load.skipped[0][0] == "SOUL.md"
 
 
-from harness.persona import TurnContext, compose_context
+from harness.persona import TurnContext, compose_context, resolve_persona
 from harness import skills as _skills
 
 
@@ -86,27 +86,38 @@ def _write_skill(root: Path, name: str, body: str):
     (d / "SKILL.md").write_text(f"---\nname: {name}\ndescription: d\n---\n{body}", encoding="utf-8")
 
 
-def test_compose_context_bundles_persona_and_skills(tmp_path):
-    ws = tmp_path / "ws"
-    (ws).mkdir()
-    (ws / "SOUL.md").write_text("Be terse.", encoding="utf-8")
+def test_compose_context_bundles_given_persona_and_skills(tmp_path):
     skroot = tmp_path / "sk"
     _write_skill(skroot, "tdd", "TDD body")
-    ctx = compose_context(ws, [skroot], ["tdd"])
-    assert "Be terse." in ctx.persona_block
+    ctx = compose_context("PERSONA TEXT", [skroot], ["tdd"])
+    assert ctx.persona_block == "PERSONA TEXT"
     assert "TDD body" in ctx.skill_block
-    assert ctx.persona.injected == ["SOUL.md"]
     assert ctx.skills.injected == ["tdd"]
 
 
-def test_compose_context_none_workspace_is_persona_blank(tmp_path):
+def test_compose_context_empty_persona_still_resolves_skills(tmp_path):
     skroot = tmp_path / "sk"
     _write_skill(skroot, "tdd", "TDD body")
-    ctx = compose_context(None, [skroot], ["tdd"])
+    ctx = compose_context("", [skroot], ["tdd"])
     assert ctx.persona_block == ""
-    assert "TDD body" in ctx.skill_block      # skills still resolve with no persona
+    assert "TDD body" in ctx.skill_block
 
 
-def test_compose_context_empty_everything(tmp_path):
-    ctx = compose_context(None, [tmp_path], [])
-    assert ctx == TurnContext()               # all-empty default
+def test_compose_context_all_empty(tmp_path):
+    ctx = compose_context("", [tmp_path], [])
+    assert ctx == TurnContext()
+
+
+def test_resolve_persona_reads_workspace(tmp_path):
+    (tmp_path / "SOUL.md").write_text("Be terse.", encoding="utf-8")
+    load = resolve_persona(tmp_path)
+    assert "Be terse." in load.block
+    assert load.injected == ["SOUL.md"]
+
+
+def test_resolve_persona_none_is_empty():
+    assert resolve_persona(None) == PersonaLoad()
+
+
+def test_resolve_persona_absent_dir_is_empty(tmp_path):
+    assert resolve_persona(tmp_path / "nope") == PersonaLoad()

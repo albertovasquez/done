@@ -26,23 +26,33 @@ class PersonaLoad:
 
 @dataclass
 class TurnContext:
-    """The injectable context for one turn: persona (identity) + skills (task).
-    The single object every dispatch path consumes so persona reaches all of
-    them without per-site re-wiring."""
+    """The injectable context for one turn: persona (identity, resolved once per
+    session) + skills (task, resolved per turn). The single bundle every agent
+    dispatch path consumes so persona reaches all of them without per-site
+    re-wiring."""
     persona_block: str = ""
     skill_block: str = ""
-    persona: PersonaLoad = field(default_factory=PersonaLoad)
     skills: "skills.SkillLoad" = field(default_factory=lambda: skills.SkillLoad())
 
 
-def compose_context(workspace_dir: Path | None, skill_roots: list[Path],
+def resolve_persona(workspace_dir: Path | None) -> PersonaLoad:
+    """The single persona-resolution entry point. None or absent workspace =>
+    empty PersonaLoad (no persona). Callers cache `.block` per their own lifecycle
+    (acp_agent caches per session on SessionState; run_traced reads once per run)."""
+    if workspace_dir is None:
+        return PersonaLoad()
+    return compose_persona(workspace_dir)
+
+
+def compose_context(persona_block: str, skill_roots: list[Path],
                     skill_names: list[str]) -> TurnContext:
-    """Resolve persona + skills for one turn. `workspace_dir=None` => no persona
-    (persona_block stays ""). Skills always resolve from skill_roots/skill_names."""
-    persona = compose_persona(workspace_dir) if workspace_dir is not None else PersonaLoad()
+    """Bundle an ALREADY-RESOLVED persona block with a fresh skill compose. Takes
+    the resolved block (not a workspace) so the caller owns persona timing/caching
+    — persona resolves once per session, skills per turn. This is the chokepoint
+    every agent dispatch path routes through."""
     skill_load = skills.compose(skill_roots, skill_names)
-    return TurnContext(persona_block=persona.block, skill_block=skill_load.block,
-                       persona=persona, skills=skill_load)
+    return TurnContext(persona_block=persona_block, skill_block=skill_load.block,
+                       skills=skill_load)
 
 
 def _trim(text: str, limit: int) -> tuple[str, bool]:

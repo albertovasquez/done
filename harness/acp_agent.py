@@ -118,9 +118,8 @@ class HarnessAgent(acp.Agent):
         persona_first_load = None
         if state.persona_block is None:
             persona_first_load = await loop.run_in_executor(
-                None, persona.compose_persona, self._workspace_dir) \
-                if self._workspace_dir is not None else None
-            state.persona_block = persona_first_load.block if persona_first_load else ""
+                None, persona.resolve_persona, self._workspace_dir)
+            state.persona_block = persona_first_load.block
 
         # 1) classify in the executor (sync litellm call must not block the loop)
         try:
@@ -186,13 +185,16 @@ class HarnessAgent(acp.Agent):
             return acp.PromptResponse(stop_reason="end_turn")
 
         # agent path
-        # offload skills.compose: it does filesystem I/O; keep the event loop free
-        load = await loop.run_in_executor(None, skills.compose, self._skills_dir, cls.skills)
+        # offload compose_context: it does filesystem I/O (skills); keep the event loop free
+        ctx = await loop.run_in_executor(
+            None, persona.compose_context, state.persona_block or "",
+            self._skills_dir, cls.skills)
         await self._conn.session_update(session_id,
             with_meta(message_chunk(""),
-                      {"skill_load": {"injected": load.injected, "skipped": load.skipped}}))
-        engine = await self._run_agent_turn(loop, session_id, state, text, load.block,
-                                            transcript, state.persona_block or "")
+                      {"skill_load": {"injected": ctx.skills.injected,
+                                      "skipped": ctx.skills.skipped}}))
+        engine = await self._run_agent_turn(loop, session_id, state, text, ctx.skill_block,
+                                            transcript, ctx.persona_block)
         stop_reason = engine["stop_reason"]
         assistant = engine["assistant"] or engine["exit_status"] or stop_reason   # never empty
         self._store.record(session_id, {"prompt": text, "stop_reason": stop_reason,

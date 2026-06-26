@@ -125,7 +125,7 @@ def main(argv: list[str] | None = None) -> int:
     emitter = Emitter(run_dir / "events.jsonl", clock=lambda: 0.0, console=True)
 
     def run_agent(prompt, skill_block=""):
-        persona_block = _persona.compose_persona(
+        persona_block = _persona.resolve_persona(
             _paths_persona.default_workspace_dir()).block
         runner = MiniSweAgentRunner(model, env, agent_cfg=agent_cfg)
         try:
