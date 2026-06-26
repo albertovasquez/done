@@ -27,14 +27,20 @@ from harness.transcript import flatten_agent_messages
 
 class HarnessAgent(acp.Agent):
     def __init__(self, *, model_factory, agent_cfg, skills_dir: list[Path], router: Router,
-                 worker_model_id):
+                 worker_model_id, yolo: bool = False):
         self._model_factory = model_factory
         self._agent_cfg = agent_cfg
         self._skills_dir = skills_dir
         self._router = router
         self._worker_model_id = worker_model_id
+        self._yolo = yolo                 # --yolo: auto-allow every command, no prompts
         self._store = SessionStore()
         self._conn = None
+
+    def _auto_allow(self) -> bool:
+        """True when the permission gate should allow without prompting the
+        client (yolo mode). Kept tiny + pure so the gate is unit-testable."""
+        return self._yolo
 
     def on_connect(self, conn) -> None:
         self._conn = conn
@@ -179,6 +185,9 @@ class HarnessAgent(acp.Agent):
             fut.result()
 
         def request_permission(command: str) -> bool:
+            # --yolo: auto-allow everything, no client round-trip, no modal.
+            if self._auto_allow():
+                return True
             # Auto-allow (standalone path) unless the client advertised it can
             # handle permission prompts. ACP routes permission via elicitation;
             # gate on that rather than a bare None-check so a client that sends
