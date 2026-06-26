@@ -21,7 +21,7 @@ Screen { layout: vertical; background: $background; }
 
 /* ---- LANDING state: vertically centered column ---- */
 #landing { align: center middle; height: 1fr; }
-#landing-col { width: 84; height: auto; }
+#landing-col { width: 100; height: auto; }  /* sized to fit the 96-cell logo */
 #wordmark { content-align: center middle; padding-bottom: 2; height: auto; }
 #hint { color: $muted; content-align: right middle; padding-top: 1; height: auto; }
 
