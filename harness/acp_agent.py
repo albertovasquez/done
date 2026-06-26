@@ -126,7 +126,9 @@ class HarnessAgent(acp.Agent):
             return acp.PromptResponse(stop_reason="end_turn")
 
         if cls.task_type == "chat_question":
-            handler = ChatHandler(self._worker_model_id)
+            # hand the router's catalog so "what skills do we have?" is answered
+            # from data, not the model (see ChatHandler.is_capability_question)
+            handler = ChatHandler(self._worker_model_id, catalog=self._router.catalog)
             pieces: list[str] = []
 
             def pump() -> None:

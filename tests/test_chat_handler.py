@@ -74,3 +74,69 @@ def test_history_is_prepended_to_messages(monkeypatch):
         {"role": "assistant", "content": "earlier a"},
         {"role": "user", "content": "follow up"},
     ]
+
+
+# ---- capability questions: answered from the catalog, not the model ----------
+
+from harness.chat_handler import is_capability_question  # noqa: E402
+
+CAT = [
+    ("test-driven-development", "Write a failing test first, then minimal code."),
+    ("systematic-debugging", "Find the root cause before fixing."),
+]
+
+
+def test_is_capability_question_matches_skill_meta_questions():
+    for q in ["what skills do we have?", "which skills do you have",
+              "list your skills", "what skills are available", "what can you do?",
+              "what are your capabilities"]:
+        assert is_capability_question(q), q
+
+
+def test_is_capability_question_rejects_ordinary_chat():
+    for q in ["what is python?", "use TDD to add validation",
+              "debug this skillfully", "explain how the router works"]:
+        assert not is_capability_question(q), q
+
+
+def test_capability_question_answered_from_catalog_even_in_mock_mode():
+    # The whole point: routing already knows the catalog, so we can answer a
+    # capability question deterministically WITHOUT a model (works in mock mode).
+    out = "".join(ChatHandler(None, catalog=CAT).answer_stream("what skills do we have?"))
+    assert "test-driven-development" in out
+    assert "Write a failing test first" in out
+    assert "systematic-debugging" in out
+    assert MOCK_LINE not in out                 # did NOT fall through to the mock line
+
+
+def test_capability_question_does_not_call_the_model(monkeypatch):
+    # Even with a real model id, a capability question must be answered from the
+    # catalog and must NOT hit litellm.
+    import litellm
+
+    def boom(**kwargs):
+        raise AssertionError("model must not be called for a capability question")
+
+    monkeypatch.setattr(litellm, "completion", boom)
+    out = "".join(ChatHandler("gpt-5.4", catalog=CAT).answer_stream("what skills do you have?"))
+    assert "test-driven-development" in out
+
+
+def test_capability_question_with_empty_catalog_says_none():
+    out = "".join(ChatHandler(None, catalog=[]).answer_stream("what skills do we have?"))
+    assert "no skills" in out.lower()
+
+
+def test_ordinary_chat_still_streams_from_model_when_catalog_present(monkeypatch):
+    captured = {}
+
+    def fake_completion(**kwargs):
+        captured.update(kwargs)
+        return iter([_Chunk("Py"), _Chunk("thon")])
+
+    import litellm
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+
+    out = "".join(ChatHandler("gpt-5.4", catalog=CAT).answer_stream("what is python?"))
+    assert out == "Python"                       # catalog present but not a meta-question
+    assert captured.get("stream") is True
