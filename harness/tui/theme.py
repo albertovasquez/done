@@ -10,9 +10,10 @@ DoneDone brand colors (Brand Book p.13):
     #E3E3E3  light grey  — foreground text
     #8690A3  slate grey  — secondary / muted text
     #E02F07  red-orange  — error / alert
-The brand defines no green/amber, so success/warning keep functional colors for
-legibility (green = go, amber = caution); inline-code is tinted into the blue
-family rather than inventing an off-brand hue.
+The brand defines no green/amber, but green/amber are adopted as sanctioned
+product-status tokens for product UI (go / caution / future semantics) — see the
+TUI design-system spec §4.1. Inline-code is tinted into the blue family rather
+than inventing an off-brand hue.
 
 Reference: docs/learning-log.md (Phase 5 chat UI)."""
 
@@ -41,6 +42,7 @@ HARNESS_THEME = Theme(
         "wordmark-dim": "#3A4D6B",   # left half of the wordmark (navy-blue dim)
         "wordmark-bright": "#286CE9",# right half of the wordmark (brand blue)
         "accent-bar": "#286CE9",
+        "scheduled": "#e3b341",      # product-status: cron/scheduled/attention (sanctioned, spec §4.1)
     },
 )
 
@@ -54,6 +56,7 @@ COLORS = {
     "foreground": "#E3E3E3",
     "success": "#7ee787",
     "warning": "#e3b341",
+    "scheduled": "#e3b341",
     "error": "#E02F07",
     "primary": "#286CE9",
     "secondary": "#8690A3",
@@ -64,5 +67,6 @@ STATUS_COLOR = {
     "pending": COLORS["warning"],
     "in_progress": COLORS["primary"],
     "completed": COLORS["success"],
+    "scheduled": COLORS["scheduled"],
     "failed": COLORS["error"],
 }

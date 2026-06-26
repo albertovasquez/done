@@ -109,5 +109,14 @@ SelectModal #select-footer { padding-top: 1; color: $muted; }
    box and the list to their content height. Extra top padding pushes the
    title/options/footer group down so it sits vertically balanced rather than
    top-anchored in the box. */
-PermissionModal #select-box { height: auto; max-height: 14; padding: 3 2 2 2; }
+PermissionModal #select-box { height: auto; max-height: 20; padding: 2 2 2 2; }
 PermissionModal #select-list { height: 2; margin-top: 1; }
+
+/* Command body block in the permission modal: code-tinted, wrapping. */
+.select-body-code { color: $code; padding: 0 0 1 0; }
+
+/* ---- design-system activity region (conversation view) ---- */
+#activity { height: 1; padding: 0 2; color: $accent; }
+#tasktree { height: auto; padding: 0 2; color: $foreground; }
+#decision-prompt { padding: 1 2; border-left: thick $accent; background: $surface; }
+#decision-question { text-style: bold; padding-bottom: 1; }

@@ -33,11 +33,18 @@ from harness.tui.client import TuiClient
 from harness.tui.commands import build_registry, resolve_command
 from harness.tui.messages import SessionUpdate, PermissionRequest
 from harness.tui.render import render_update, harness_chips, status_style
+from harness.tui.state import (
+    initial_snapshot, reduce, TurnStarted, TurnEnded, ItemReceived,
+    TokensUpdated, DecisionOpened, decision_from_meta,
+)
 from harness.tui.theme import HARNESS_THEME, COLORS, STATUS_COLOR
+from harness.tui.widgets.activity_status import ActivityStatus
 from harness.tui.widgets.permission_modal import PermissionModal
 from harness.tui.widgets.select_modal import SelectModal, SelectOption
 from harness.tui.widgets.slash_menu import SlashMenu
 from harness.tui.widgets.prompt_area import PromptArea
+from harness.tui.widgets.task_tree import TaskTree
+from harness.tui.widgets.tool_call_row import ToolCallRow
 from harness.tui.header import icon_markup, header_text_markup
 
 _GLYPH = {"completed": "✓", "failed": "✗"}
@@ -92,6 +99,8 @@ class HarnessTui(App):
         self._stream_closed = True            # True => the next message delta starts a fresh widget
         self._boundary_after = False          # True => an in-turn boundary (tool/thought/stream_reset) closed the block; next prose opens a FRESH widget (vs. a late delta of the prior answer, which extends in place)
         self._tokens = 0                      # last-known token count from usage updates
+        self._snapshot = initial_snapshot()   # the presentation model (pure, immutable)
+        self._tool_rows: dict[str, ToolCallRow] = {}  # tool_call_id → mounted ToolCallRow
         self._commands = build_registry()     # slash-command registry
         self._slash = None                    # the SlashMenu widget while open, else None
         self._slash_overlay = None            # landing-only overlay box wrapping the menu
@@ -190,6 +199,7 @@ class HarnessTui(App):
         # populate the status bar (left: path:branch, right: version)
         await self._mount_status_contents()
         self.query_one("#landing-input", PromptArea).focus()
+        self.set_interval(0.25, self._tick_elapsed)
         try:
             await self._connect()
         except Exception as e:                # startup failure is fatal but must not crash the UI
@@ -218,6 +228,49 @@ class HarnessTui(App):
     def _refresh_status(self) -> None:
         try:
             self.query_one("#statusbar-right", Static).update(self._status_right())
+        except Exception:
+            pass
+
+    # ---- presentation model (reducer) ----
+
+    def _apply(self, event) -> None:
+        """Fold one event into the snapshot, then push fresh data to the live widgets."""
+        self._snapshot = reduce(self._snapshot, event)
+        a = self._snapshot.active
+        if a is None:
+            return
+        try:
+            self.query_one("#activity", ActivityStatus).update_from(a)
+        except Exception:
+            pass
+        try:
+            self.query_one("#tasktree", TaskTree).update_tasks(a.tasks)
+        except Exception:
+            pass
+
+    def _tick_elapsed(self) -> None:
+        """Quarter-second tick: update the active agent's elapsed time in-snapshot and
+        refresh ActivityStatus while a turn is in flight. This 4Hz tick is a no-op
+        while idle (guarded by the early return below), so no need to pause it."""
+        from dataclasses import replace as _replace
+        a = self._snapshot.active
+        if a is None:
+            return
+        working_states = {
+            "thinking", "responding", "running_tool",
+            "awaiting_permission", "awaiting_decision",
+        }
+        if a.state.value not in working_states:
+            return
+        elapsed = time.monotonic() - self._turn_start
+        agents = tuple(
+            _replace(x, elapsed=elapsed) if x.id == a.id else x
+            for x in self._snapshot.agents
+        )
+        self._snapshot = type(self._snapshot)(agents=agents,
+                                              active_id=self._snapshot.active_id)
+        try:
+            self.query_one("#activity", ActivityStatus).update_from(self._snapshot.active)
         except Exception:
             pass
 
@@ -254,6 +307,8 @@ class HarnessTui(App):
         inp.value = ""
         inp.disabled = True
         self._turn_start = time.monotonic()
+        self._tool_rows = {}                  # fresh tool-row registry for this turn
+        self._apply(TurnStarted())
         self._send_gen = self._gen            # tag this turn's worker with its generation
         self.run_worker(self._send_prompt(text), thread=False)
 
@@ -428,6 +483,8 @@ class HarnessTui(App):
         self._started = True
         await self.query_one("#landing", Container).remove()
         await self.mount(VerticalScroll(id="transcript"), before="#statusbar")
+        await self.mount(ActivityStatus(id="activity"), before="#statusbar")
+        await self.mount(TaskTree(id="tasktree"), before="#statusbar")
         composer = Vertical(id="composer", classes="compose")
         await self.mount(composer, before="#statusbar")
         await composer.mount(PromptArea(placeholder="Reply…", id="conversation-input"))
@@ -445,7 +502,18 @@ class HarnessTui(App):
         self._stream_closed = True
         self._boundary_after = False
         self._tokens = 0
+        self._tool_rows = {}
+        self._snapshot = initial_snapshot()
         self._refresh_status()
+        # Refresh mounted widgets if they exist (they may not be in all states)
+        try:
+            self.query_one("#activity", ActivityStatus).update_from(self._snapshot.active)
+        except Exception:
+            pass
+        try:
+            self.query_one("#tasktree", TaskTree).update_tasks(self._snapshot.active.tasks if self._snapshot.active else [])
+        except Exception:
+            pass
 
     @property
     def _transcript(self) -> VerticalScroll:
@@ -515,11 +583,13 @@ class HarnessTui(App):
         try:
             resp = await self._conn.prompt(
                 prompt=[acp.text_block(text)], session_id=self._session_id)
+            self._apply(TurnEnded(ok=True))
             elapsed = time.monotonic() - self._turn_start
             self._write_meta(elapsed)
             if getattr(resp, "stop_reason", "end_turn") != "end_turn":
                 self._append_line(_c("muted", f"— turn ended: {resp.stop_reason} —"))
         except Exception as e:
+            self._apply(TurnEnded(ok=False))
             self._append_line(_c("error", f"agent disconnected — restart to continue ({e})"))
         finally:
             if gen == self._gen:                  # only the CURRENT generation touches the UI
@@ -609,11 +679,17 @@ class HarnessTui(App):
         if isinstance(meta, dict) and (meta.get("harness") or {}).get("stream_reset"):
             self._end_stream(boundary=True)
             return
+        # fold a decision view if present
+        dv = decision_from_meta(getattr(msg.update, "field_meta", None))
+        if dv is not None:
+            self._apply(DecisionOpened(dv))
         for chip in harness_chips(getattr(msg.update, "field_meta", None)):
             self._append_line(_c("muted", f"\\[{chip}]"))
         item = render_update(msg.update)
         if item is None:
             return
+        # fold item into the presentation model
+        self._apply(ItemReceived(item))
         if item.kind == "message":
             if item.text:
                 self._stream_message(item.text)
@@ -626,15 +702,30 @@ class HarnessTui(App):
                 self._append_line(f"{_c('accent', '▌')} [b]{self._escape(item.text)}[/b]")
         elif item.kind == "tool":
             self._end_stream(boundary=True)  # a tool call finalizes the current step's block
-            color = self._status_hex(item.status)
-            self._append_line(f"[{color}]{self._escape(item.title)}[/]")
+            # mount a ToolCallRow driven by the reducer's ToolView
+            tool_view = self._snapshot.active.tool if self._snapshot.active else None
+            if tool_view is not None:
+                row = ToolCallRow(tool_view)
+                self._tool_rows[item.id] = row
+                self._append(row)
+            else:
+                # fallback: no snapshot tool (shouldn't happen in normal flow)
+                color = self._status_hex(item.status)
+                self._append_line(f"[{color}]{self._escape(item.title)}[/]")
         elif item.kind == "tool_update":
-            color = self._status_hex(item.status)
-            glyph = _GLYPH.get(item.status, "")
-            line = f"  [{color}]→ {item.status} {glyph}[/]"
-            if item.body:
-                line += f"  {self._escape(item.body.splitlines()[0][:120])}"
-            self._append_line(line)
+            row = self._tool_rows.get(item.id)
+            if row is not None and self._snapshot.active is not None:
+                tool_view = self._snapshot.active.tool
+                if tool_view is not None:
+                    row.update(row.line_for(tool_view))
+            else:
+                # fallback for untracked updates
+                color = self._status_hex(item.status)
+                glyph = _GLYPH.get(item.status, "")
+                line = f"  [{color}]→ {item.status} {glyph}[/]"
+                if item.body:
+                    line += f"  {self._escape(item.body.splitlines()[0][:120])}"
+                self._append_line(line)
 
     @staticmethod
     def _status_hex(status: str) -> str:
@@ -651,6 +742,7 @@ class HarnessTui(App):
             field_meta.get("harness"), dict) else None
         if isinstance(usage, dict) and isinstance(usage.get("total"), int):
             self._tokens = usage["total"]
+            self._apply(TokensUpdated(self._tokens))
             self._refresh_status()
 
     # ---- permissions / cancel / teardown (unchanged plumbing) ----

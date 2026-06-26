@@ -8,7 +8,9 @@ Textual markup ($accent / $muted) so it tracks the theme."""
 
 from __future__ import annotations
 
-BLUE = "#286ce9"
+from harness.tui.theme import COLORS
+
+BLUE = COLORS["accent"]
 
 # The brand ≡ mark: three heavy box-drawing rules '━', one per text row. Unlike a
 # half-block ('▀'/'▄'), '━' is a MID-CELL horizontal stroke, so it renders on the

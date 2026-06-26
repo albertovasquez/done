@@ -30,3 +30,11 @@ class PermissionRequest(Message):
         self.options = options
         self.tool_call = tool_call
         self.future = future
+
+
+class FleetUpdated(Message):
+    """The presentation model changed; widgets re-render from the new snapshot.
+    Posted by the app after folding a session update through state.reduce()."""
+    def __init__(self, snapshot: Any) -> None:
+        super().__init__()
+        self.snapshot = snapshot
