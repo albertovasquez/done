@@ -18,15 +18,21 @@ cd .worktrees/<short-task-name>
 
 - One worktree per task/branch. `.worktrees/` is gitignored.
 - Branch off the latest `main`. If `main` moved while you worked, `git rebase
-  main` before merging.
-- Finish via merge-to-main locally, then remove the worktree and prune:
-  `git worktree remove .worktrees/<name> && git worktree prune && git branch -d <name>`.
+  main` before pushing.
+- Finish by **pushing the branch and opening a PR against `main`** — not a local
+  merge. Production runs off `main`, so every change is review-gated:
+  `git push -u origin <branch> && gh pr create --base main`. Do **not** merge the
+  PR yourself; that is the maintainer's call. Clean up the worktree only after the
+  PR merges: `git worktree remove .worktrees/<name> && git worktree prune`.
+- **Never merge into or commit on the primary checkout.** Assume another branch
+  (e.g. one an agent or automation left checked out) may be live there; touching it
+  collides with in-flight work.
 - **Only exception:** a truly trivial, single-file change (a typo, a one-line doc
-  tweak) may be done on a short branch in the primary checkout. Anything
-  multi-file or multi-step gets a worktree. When in doubt, use a worktree.
+  tweak) may still skip the worktree, but it must reach `main` the same way — via a
+  branch + PR, never a direct push to `main`. When in doubt, use a worktree.
 
-Rationale: isolates in-progress work, keeps `main` green, and lets several agents
-run at once without stepping on each other.
+Rationale: isolates in-progress work, keeps `main` green and review-gated, and
+lets several agents run at once without stepping on each other.
 
 ## 2. Commit your work promptly; don't leave it uncommitted across branch switches
 
@@ -34,15 +40,16 @@ Uncommitted working-tree edits are lost on a branch switch. Commit each logical
 unit as you complete it (small, frequent commits). Never switch branches with
 unverified, uncommitted changes you care about.
 
-## 3. Tests must pass before merging
+## 3. Tests must pass before opening the PR
 
-Run the suite from the worktree root and confirm green before merging to `main`:
+Run the suite from the worktree root and confirm green before opening the PR:
 
 ```bash
 .venv/bin/python -m pytest tests/ -q     # target tests/ only — upstream/tests needs optional deps
 ```
 
-`main` must always pass the suite. Do not merge a red branch.
+`main` must always pass the suite. Don't open a PR from a red branch; put the test
+result in the PR body so the reviewer sees it.
 
 ## 4. Zero upstream edits
 
