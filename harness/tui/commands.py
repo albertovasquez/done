@@ -13,9 +13,10 @@ from typing import Awaitable, Callable
 
 @dataclass(frozen=True)
 class Command:
-    name: str                                  # without the leading slash
+    name: str                                  # without the leading slash; shown in the menu
     description: str
     handler: Callable[["HarnessTui"], Awaitable[None]]  # noqa: F821
+    aliases: tuple[str, ...] = ()              # extra typed names that resolve here, hidden from the menu
 
 
 # Handlers are thin: they delegate to app methods so the app owns the wiring.
@@ -46,9 +47,15 @@ def build_registry() -> list[Command]:
         Command("reload", "Reload everything (restart the app)", _reload),
         Command("clear", "Fresh conversation (restart the agent)", _clear),
         Command("help", "Show available commands", _help),
-        Command("exit", "Exit the app", _exit),
-        Command("quit", "Exit the app", _exit),
+        Command("exit", "Exit the app", _exit, aliases=("quit",)),
     ]
+
+
+def resolve_command(commands: list[Command], name: str) -> "Command | None":
+    """Find the command a typed name refers to: its canonical name, or an exact
+    alias. Aliases are exact-match only and never surface in the menu/filter."""
+    return next((c for c in commands
+                 if c.name == name or name in c.aliases), None)
 
 
 def filter_commands(commands: list[Command], query: str) -> list[Command]:

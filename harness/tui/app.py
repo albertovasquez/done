@@ -30,7 +30,7 @@ from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import Input, LoadingIndicator, Markdown, Static
 
 from harness.tui.client import TuiClient
-from harness.tui.commands import build_registry
+from harness.tui.commands import build_registry, resolve_command
 from harness.tui.messages import SessionUpdate, PermissionRequest
 from harness.tui.render import render_update, harness_chips, status_style
 from harness.tui.theme import HARNESS_THEME, COLORS, STATUS_COLOR
@@ -322,7 +322,7 @@ class HarnessTui(App):
         cmd = self._slash.highlighted_command() if self._slash is not None else None
         if cmd is None:
             name = text[1:].split()[0] if len(text) > 1 else ""
-            cmd = next((c for c in self._commands if c.name == name), None)
+            cmd = resolve_command(self._commands, name)   # canonical name or exact alias
         self._active_input().value = ""
         await self._close_slash()
         if cmd is None:
