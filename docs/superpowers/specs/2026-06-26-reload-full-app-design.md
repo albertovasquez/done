@@ -92,34 +92,58 @@ lifecycle command can't interleave during the exit; it is never released (the
 process is about to be replaced), which is fine. `self._reexec` defaults to
 `False` in `__init__`.
 
-**In `tui_main.main()`** — reconstruct the relaunch argv and re-exec after the app
-returns:
+`action_reload` deliberately does **not** call `_cancel_inflight()` (unlike
+`/clear`). An in-flight `_send_prompt` worker is cancelled by Textual's shutdown
+(`workers.cancel_all()`); its `CancelledError` is a `BaseException`, so it bypasses
+the worker's `except Exception` (no spurious "agent disconnected" line), and
+`on_unmount` force-kills the agent regardless — verified safe by the design review.
+It may optionally call `_cancel_inflight()` for symmetry, but it is not
+load-bearing.
+
+**In `tui_main.main()`** — reconstruct the relaunch command and re-exec after the
+app returns. **The real launcher is the console script `dn`** (`pyproject.toml`
+`[project.scripts] dn = "harness.tui_main:main"`), not `python -m
+harness.tui_main` — so prefer re-exec'ing the **actual launcher** (`sys.argv[0]`,
+i.e. the `dn` executable) when it is a real, executable path, and fall back to the
+`-m` form otherwise. This is both faithful (preserves `argv[0]` = `…/bin/dn`) and
+robust against any wrapper/shim that injects environment before `main()`:
+
 ```python
-def _relaunch_argv(args, cwd) -> list[str]:
-    """The exact command to re-launch THIS TUI with the same flags."""
-    argv = [sys.executable, "-m", "harness.tui_main",
-            "--model", args.model, "--cwd", cwd]
+def _relaunch_args(args, cwd) -> list[str]:
+    """The flags to re-launch THIS TUI with, reconstructed from parsed args
+    (not raw sys.argv) so they are correct regardless of how it was invoked."""
+    flags = ["--model", args.model, "--cwd", cwd]      # always explicit --cwd
     if args.yolo:
-        argv.append("--yolo")
-    return argv
+        flags.append("--yolo")
+    return flags
+
+def _relaunch_command(args, cwd) -> list[str]:
+    """argv[0] for execv + the relaunch flags. Prefer the original launcher
+    (the `dn` console script at sys.argv[0]); fall back to `python -m`."""
+    launcher = sys.argv[0]
+    flags = _relaunch_args(args, cwd)
+    if launcher and os.path.isfile(launcher) and os.access(launcher, os.X_OK):
+        return [launcher, *flags]                      # re-exec `dn` faithfully
+    return [sys.executable, "-m", "harness.tui_main", *flags]   # path-equivalent fallback
 
 def main(argv=None) -> None:
     ...                                    # existing parse + paths.load_env + agent_cmd
     app = HarnessTui(agent_cmd=agent_cmd, cwd=cwd, model=args.model)
     app.run()
     if getattr(app, "_reexec", False):
-        relaunch = _relaunch_argv(args, cwd)
+        cmd = _relaunch_command(args, cwd)
         try:
-            os.execv(relaunch[0], relaunch)   # replaces the process; never returns on success
+            os.execv(cmd[0], cmd)          # replaces the process; never returns on success
         except OSError as e:
             print(f"reload failed to re-exec: {e}", file=sys.stderr)
             sys.exit(1)
 ```
 
-The relaunch argv is reconstructed from the **parsed args**, not raw `sys.argv`
-(so it is correct whether launched as `done` or `python -m harness.tui_main`). It
-reuses the same shape `tui_main` already builds for the agent command — the TUI is
-relaunched with `python -m harness.tui_main` + the same `--model/--cwd/--yolo`.
+`os.execv` preserves the process cwd and the full environment, and the `--cwd`
+flag is **always passed explicitly** (the app keys off `self.cwd`/`--cwd`, never
+process-cwd, so omitting it could silently switch projects — verified). The flags
+are reconstructed from the **parsed args**, not raw `sys.argv`, so they are correct
+whichever way `done`/`dn` was launched.
 
 ### 4. Registry (`harness/tui/commands.py`)
 
@@ -142,8 +166,11 @@ Descriptions updated to match the new behaviors (handlers already delegate to
 `/reload`'s full path cannot be exercised end-to-end (a pilot test cannot
 `os.execv` itself). The logic is split into independently testable pieces:
 
-- **`_relaunch_argv` (pure helper)** — unit tests: mock vs vibeproxy; with and
-  without `--yolo`; cwd is passed through. Asserts the exact command list.
+- **`_relaunch_args` / `_relaunch_command` (pure helpers)** — unit tests: mock vs
+  vibeproxy; with and without `--yolo`; `--cwd` always passed through; and the
+  launcher selection — when `sys.argv[0]` is an executable file it is used as
+  `argv[0]`, else the `python -m harness.tui_main` fallback. Asserts the exact
+  command list for each case (monkeypatch `sys.argv[0]` / `os.access`).
 - **`action_reload` sets the intent** — pilot test: calling `action_reload()` sets
   `app._reexec is True` and the app exits (no `os.execv` is invoked from the test).
 - **`main()` re-exec branch** — test with `os.execv` monkeypatched to record its
@@ -155,6 +182,29 @@ Descriptions updated to match the new behaviors (handlers already delegate to
   and resets the conversation; `_busy` released; failure path shows `_fatal`.
 - The existing reload/clear/lifecycle tests are updated to the new semantics; the
   full suite stays green.
+
+## Design review (2026-06-26)
+
+Adversarial review against Textual 8.2.7 and the real code confirmed the load-bearing
+sequencing and surfaced one gap (now folded in above):
+
+- **Shutdown ordering is safe.** `app.exit()` is non-blocking (posts `ExitApp`).
+  On shutdown Textual restores the terminal (`driver.stop_application_mode`) and
+  then awaits `_shutdown` → `on_unmount` (which kills the agent via
+  `_cm.__aexit__`) — **both** complete before `run()` returns. So the re-exec point
+  (`main()` after `run()`) has a restored terminal AND a dead agent. No raw-mode
+  inheritance, no orphaned agent.
+- **In-flight worker on `/reload`** — safe without `_cancel_inflight` (CancelledError
+  bypasses `except Exception`; `on_unmount` kills the agent).
+- **`_busy` guard is atomic** (no `await` between check and set) → double-`/reload`
+  and `/reload`-during-`/clear` are safe no-ops; `app.exit()` is idempotent.
+- **`/reload` from the landing screen** is safe (the trivial body touches no
+  started-only widget).
+- **cwd is consistent** across `execv` (app keys off `self.cwd`/`--cwd`, recomputed
+  identically; explicit `--cwd` pass-through retained).
+- **Gap fixed:** the real launcher is the `dn` console script, not `python -m`;
+  the design now prefers re-exec'ing `sys.argv[0]` (the launcher) with a `-m`
+  fallback (§3).
 
 ## Out of scope (follow-up)
 
