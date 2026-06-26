@@ -138,6 +138,21 @@ def test_router_unavailable_writes_nothing():
     assert agent._store.get(sid).transcript == []
 
 
+def test_agent_engine_construction_failure_is_refusal_not_unbound():
+    # If TracingAgent construction raises, run_engine's except must not itself
+    # raise UnboundLocalError on `agent`. Force it via a model factory that throws.
+    router = _ScriptedRouter([_agent_fix()])
+    agent = _build(router)
+    agent._model_factory = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
+    sid = agent._store.new(cwd=".")
+    resp = _prompt(agent, sid, "fix it")
+    assert resp.stop_reason == "refusal"
+    # the turn is still recorded (user + a non-empty assistant fallback)
+    t = agent._store.get(sid).transcript
+    assert [(m["role"], m["origin"]) for m in t] == [("user", "agent"), ("assistant", "agent")]
+    assert t[1]["content"]                    # fallback (exit_status/stop_reason), never empty
+
+
 def test_second_turn_passes_prior_transcript_to_classify():
     router = _ScriptedRouter([_chat(), _chat()])
     agent = _build(router)

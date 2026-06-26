@@ -246,16 +246,17 @@ class HarnessAgent(acp.Agent):
             from harness.events import Emitter
             emitter = Emitter("/dev/null", clock=lambda: 0.0, console=False)  # ACP carries the stream
             cfg = dict(self._agent_cfg)
-            # pass the CURRENT worker model so /models hot-swaps the agent path too;
-            # the factory ignores the arg in mock mode.
-            agent = TracingAgent(self._model_factory(self._worker_model_id), env,
-                                 emitter=emitter, skill_block=skill_block, **cfg)
+            agent = None  # bound before construction so the except can reference it
             try:
+                # pass the CURRENT worker model so /models hot-swaps the agent path
+                # too; the factory ignores the arg in mock mode.
+                agent = TracingAgent(self._model_factory(self._worker_model_id), env,
+                                     emitter=emitter, skill_block=skill_block, **cfg)
                 result = agent.run(text, prior=prior)
                 return {"stop_reason": "end_turn",
                         "exit_status": result.get("exit_status", "end_turn"),
                         "assistant": flatten_agent_messages(agent.messages)}
-            except Exception:  # engine failure → refusal; capture whatever prose exists
+            except Exception:  # engine/construction failure → refusal; capture any prose
                 return {"stop_reason": "refusal", "exit_status": "refusal",
                         "assistant": flatten_agent_messages(getattr(agent, "messages", []))}
 
