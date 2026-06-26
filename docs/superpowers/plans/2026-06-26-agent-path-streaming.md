@@ -643,7 +643,9 @@ def test_explicit_stream_reset_opens_new_block():
             app.on_session_update(SessionUpdate(update_agent_message_text("aaa")))
             await pilot.pause()
             reset = update_agent_message_text("")
-            reset.field_meta = {"stream_reset": True}
+            # NOTE: Task 4 emits the flag via with_meta(), which nests under
+            # field_meta["harness"]. The TUI reader MUST use the nested path.
+            reset.field_meta = {"harness": {"stream_reset": True}}
             app.on_session_update(SessionUpdate(reset))
             await pilot.pause()
             app.on_session_update(SessionUpdate(update_agent_message_text("bbb")))
@@ -708,11 +710,15 @@ Replace the branch block:
 
 In `on_session_update` (app.py ≈575), before the `harness_chips` loop, handle the
 reset flag so an empty `stream_reset` chunk closes the block without rendering an
-empty line:
+empty line. **The flag is nested under `field_meta["harness"]`** — Task 4 emits it
+via `with_meta()`, which wraps the payload as `{"harness": {...}}` (see
+acp_emit.py:33-36), and the existing TUI reader at app.py:613 already uses this
+nested idiom for `usage`. Read the SAME nested path (a flat `meta.get("stream_reset")`
+would never fire):
 
 ```python
         meta = getattr(msg.update, "field_meta", None)
-        if isinstance(meta, dict) and meta.get("stream_reset"):
+        if isinstance(meta, dict) and (meta.get("harness") or {}).get("stream_reset"):
             self._end_stream()
             return
 ```
