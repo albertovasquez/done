@@ -44,10 +44,8 @@ Screen { layout: vertical; background: $background; }
 #statusbar-left { width: 1fr; color: $muted; }
 #statusbar-right { width: auto; color: $muted; content-align: right middle; }
 
-/* ---- permission modal (themed) ---- */
-PermissionModal { align: center middle; }
-PermissionModal #box { width: 70; border: thick $accent; padding: 1 2; background: $surface; }
-PermissionModal #cmd { color: $accent; margin-bottom: 1; text-style: bold; }
+/* PermissionModal subclasses SelectModal, so the SelectModal #select-* rules
+   below style it too (Textual matches type selectors against base classes). */
 
 /* ---- slash menu (above the compose box) ---- */
 #slash-menu { height: auto; max-height: 12; margin: 0 2; background: $surface; }
@@ -69,3 +67,9 @@ SelectModal #select-list { height: auto; max-height: 14; background: $surface;
 SelectModal #select-list ListItem { background: $surface; padding: 0 1; }
 SelectModal #select-list ListItem.--highlight { background: $accent 30%; }
 SelectModal #select-footer { padding-top: 1; color: $muted; }
+
+/* Permission prompt: few options, no search → hug content (no tall empty box).
+   ListView defaults to 1fr inside the column, which stretches the box; pin the
+   box and the list to their content height. */
+PermissionModal #select-box { height: auto; max-height: 12; }
+PermissionModal #select-list { height: 2; }

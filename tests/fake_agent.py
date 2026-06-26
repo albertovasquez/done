@@ -56,7 +56,9 @@ class FakeAgent(acp.Agent):
             ]
             await self._conn.request_permission(
                 options=options, session_id=session_id,
-                tool_call=ToolCallUpdate(tool_call_id="tc1"))
+                # title carries the real command (like the production agent), so
+                # the client shows "$ <cmd>" not the opaque tool_call_id.
+                tool_call=ToolCallUpdate(tool_call_id="tc1", title="$ echo hello"))
 
         # 3) a normal agent message
         await self._conn.session_update(session_id, update_agent_message_text("done"))
