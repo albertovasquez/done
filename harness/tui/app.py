@@ -78,6 +78,9 @@ class HarnessTui(App):
         self._conn = None
         self._cm = None                       # the spawn_agent_process context manager
         self._session_id = None
+        self._gen = 0                         # session generation; bumped each _connect
+        self._busy = False                    # lifecycle guard (reload/clear/model)
+        self._launch_worker_model_id = worker_model_id  # source of truth for "user switched model?"
         self._pending_perm = None             # the in-flight permission Future, if any
         self._started = False                 # have we left the landing state?
         self._turn_start = 0.0                # monotonic at send, for elapsed meta
@@ -138,24 +141,57 @@ class HarnessTui(App):
 
     # ---- lifecycle ----
 
+    async def _new_session(self) -> None:
+        new = await self._conn.new_session(cwd=self.cwd, mcp_servers=[])
+        self._session_id = new.session_id
+
+    async def _connect(self) -> None:
+        """Spawn the agent subprocess, initialize, open a session, re-apply the
+        preserved model, and bump the generation. Failure-atomic: if anything
+        after __aenter__ raises, tear the half-open context down before re-raising."""
+        self._cm = acp.spawn_agent_process(
+            self._client, self.agent_cmd[0], *self.agent_cmd[1:],
+            env=dict(os.environ), cwd=self.cwd,
+        )
+        self._conn, _proc = await self._cm.__aenter__()
+        try:
+            await self._conn.initialize(
+                protocol_version=acp.PROTOCOL_VERSION,
+                client_capabilities=ClientCapabilities(elicitation=ElicitationCapabilities()),
+            )
+            await self._new_session()
+            await self._reapply_model()
+        except Exception:
+            await self._teardown()            # never leave a half-open _cm
+            raise
+        self._gen += 1
+
+    async def _teardown(self) -> None:
+        """Close the subprocess context (terminates the child). Clears connection
+        state in finally so a raising __aexit__ can't leave a stale _conn."""
+        try:
+            if self._cm is not None:
+                await self._cm.__aexit__(None, None, None)
+        finally:
+            self._cm = self._conn = self._session_id = None
+
+    async def _reapply_model(self) -> None:
+        """After a respawn, re-apply a runtime-selected model. No-op if unchanged
+        from launch; swallow method-not-found for agents without the extension."""
+        if (self._worker_model_id is not None
+                and self._worker_model_id != self._launch_worker_model_id):
+            try:
+                await self._conn.ext_method("harness/set_model", {"model": self._worker_model_id})
+            except Exception:
+                pass
+
     async def on_mount(self) -> None:
         # theme is registered + activated in __init__ (before CSS parse)
         # populate the status bar (left: path:branch, right: version)
         await self._mount_status_contents()
         self.query_one("#landing-input", Input).focus()
         try:
-            self._cm = acp.spawn_agent_process(
-                self._client, self.agent_cmd[0], *self.agent_cmd[1:],
-                env=dict(os.environ),     # VIBEPROXY_* resolved by paths.load_env at startup
-                cwd=self.cwd,             # agent runs in the project dir (anchors .env)
-            )
-            self._conn, _proc = await self._cm.__aenter__()
-            await self._conn.initialize(
-                protocol_version=acp.PROTOCOL_VERSION,
-                client_capabilities=ClientCapabilities(elicitation=ElicitationCapabilities()),
-            )
-            new = await self._conn.new_session(cwd=self.cwd, mcp_servers=[])
-            self._session_id = new.session_id
+            await self._connect()
         except Exception as e:                # startup failure is fatal but must not crash the UI
             self._fatal(f"could not start agent: {e}")
 

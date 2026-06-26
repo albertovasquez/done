@@ -327,3 +327,29 @@ def test_pilot_permission_modal_reject():
         assert "done" in text, f"turn did not complete after reject.\n{text}"
 
     asyncio.run(go())
+
+
+def test_teardown_then_connect_bumps_generation_and_reconnects():
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()                 # on_mount → _connect ran once
+            assert app._gen == 1, f"gen should be 1 after startup, got {app._gen}"
+            assert app._conn is not None and app._session_id is not None
+            await app._teardown()
+            assert app._cm is None and app._conn is None and app._session_id is None
+            await app._connect()
+            assert app._gen == 2, f"gen should bump on reconnect, got {app._gen}"
+            assert app._conn is not None and app._session_id is not None
+    asyncio.run(go())
+
+
+def test_teardown_is_idempotent_when_already_torn_down():
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await app._teardown()
+            await app._teardown()               # second call must not raise
+            assert app._conn is None
+    asyncio.run(go())
