@@ -48,3 +48,29 @@ def test_activity_status_blank_when_idle():
     w = ActivityStatus()
     snap = AgentSnapshot(id="default", name="agent", state=AgentState.IDLE)
     assert w.line_for(snap).strip() == ""
+
+
+from harness.tui.state import TaskItem, ToolView, ToolStatus
+from harness.tui.widgets.task_tree import TaskTree
+from harness.tui.widgets.tool_call_row import ToolCallRow
+
+
+def test_task_tree_glyphs():
+    tt = TaskTree()
+    lines = tt.lines_for((
+        TaskItem("explore", "done"),
+        TaskItem("ask", "in_progress"),
+        TaskItem("plan", "pending"),
+        TaskItem("boom", "failed"),
+    ))
+    assert "✓" in lines[0] and "explore" in lines[0]
+    assert "▣" in lines[1]
+    assert "□" in lines[2]
+    assert "✗" in lines[3]
+
+
+def test_tool_call_row_line():
+    row = ToolCallRow(ToolView(title="$ pytest tests/", status=ToolStatus.ACTIVE, subtype="test"))
+    line = row.line_for(row._tool)
+    assert "⚑" in line                # test subtype glyph
+    assert "pytest" in line
