@@ -46,7 +46,8 @@ tool-call events continue to render as they do today.
 **Explicitly out of scope (YAGNI):**
 - Streaming tool-call *arguments* as they generate (tool start/done events
   already cover this surface).
-- Any new TUI widget or TUI-side change (see §5 — the receiving end is complete).
+- Any *new* TUI widget. (A *scoped* `_stream_message` boundary fix IS in scope —
+  see §5; the earlier "no TUI change" claim was wrong, per Codex finding #1.)
 - A user-facing "streaming on/off" config knob (streaming is implicitly on for
   the real-model path; off for mock/tests via `on_delta is None`).
 - The CLI path (`run_traced.py`) and the chat path (already streams).
@@ -159,30 +160,65 @@ model.query() → _query()  stream=True
                                          ▼
         tool call → on_command → tool_call_start  → TUI kind=="tool"
                                          ▼
-        TUI _end_stream() on the tool line  → next step's prose opens a fresh block
+        TUI _end_stream() on the tool line  → STEP BOUNDARY (see §5)
 ```
 
-## 5. Step boundaries — no TUI change required
+## 5. Step boundaries — a scoped TUI change IS required
 
-The TUI is **already** equipped for per-step prose, because its
-`on_session_update` (`harness/tui/app.py`) closes the streaming block on a tool
-call:
+> **Correction (Codex review, finding #1 — verified against live code).** An
+> earlier draft claimed no TUI change was needed. That is false. The existing
+> `_stream_message` late-delta logic mis-routes per-step prose.
 
-- `kind == "message"` deltas accumulate into one live Markdown widget
-  (`_stream_message`).
-- `kind == "tool"` **already calls `_end_stream()`** (app.py:591), and a
-  `thought` likewise (app.py:585).
+**The verified failure.** Walk a two-step run through `harness/tui/app.py`:
 
-Since every loop step ends with a tool call (the agent acts via `bash`), the
-existing tool-call event that already fires between steps auto-closes step N's
-prose block; step N+1's first delta opens a fresh widget via the existing
-"new answer" branch in `_stream_message`. **Therefore the producing side
-(`StreamingLitellmModel` + the `emit_delta` wiring) is the only thing that
-changes.** No new TUI widget, no new close signal, no renderer edit.
+1. Step 1 prose → opens a live Markdown widget (`_stream_message`, app.py:549).
+2. Tool call → `on_session_update` `kind=="tool"` calls `_end_stream()`
+   (`_stream_closed=True`) and appends the tool line (app.py:590–593). The
+   streaming widget is now **no longer the last child**.
+3. Step 2's first delta re-enters `_stream_message`. With `_stream_closed==True`
+   and the streaming widget not-last, line 545 matches the **late-delta branch**
+   (app.py:545–548 `pass`) → step 2's prose is appended **into step 1's widget**,
+   sitting *above* the tool line — not a fresh block below it.
 
-`render_update` already maps an ACP `message_chunk` to `kind == "message"`
-(proven by the chat path, which emits the same `message_chunk`), so streamed
-agent prose lands in `_stream_message` with no routing change.
+The current logic was built for *one* answer plus trailing late deltas; it cannot
+tell "a genuinely new prose block after a tool line" from "a lagging delta of the
+just-closed answer." Streaming agent prose introduces the first case, which never
+occurred before (the agent path emitted prose only once, at the end).
+
+**The fix (small, localized).** Distinguish the two cases by *what* is currently
+last in the transcript:
+
+- If the last child is a **non-message** widget (a tool line, thought, meta line,
+  or the working indicator) and `_stream_closed`, the next delta is a **new
+  block** → open a fresh widget.
+- The true late-delta case (extend the prior widget in place) only applies when
+  **nothing newer than the streaming widget has been appended** yet the stream was
+  closed by a turn boundary — i.e. the streaming widget is still effectively the
+  tail of the answer.
+
+Concretely this is a change to the branch condition at app.py:545–556 (and
+nothing else): the "late delta → extend in place" branch must additionally
+require that no boundary widget (tool/thought/meta) was appended after the
+streaming widget. A boundary widget after it means "new block." This keeps the
+genuine notification-lag protection the original comment describes while making
+tool-separated steps open distinct blocks.
+
+`render_update` already maps `AgentMessageChunk` → `kind == "message"`
+(render.py:38–43; proven by the chat path), so the *routing* is unchanged — only
+the new-vs-late decision inside `_stream_message` changes.
+
+**FormatError steps (finding #4).** A model response with prose but no parseable
+tool call raises `FormatError`, which `TracingAgent.run` catches and loops on
+*without* emitting any tool/thought ACP event (tracing_agent.py:76–84) — so no
+boundary widget is appended and the next step's prose would merge into the prior
+block. To give every step a boundary regardless of outcome, the agent path emits
+an explicit **step-boundary signal** at the start of each LLM call's streamed
+prose: before the first delta of a step, `emit_delta` sends a zero-width
+boundary (reusing the `thought`/close path the TUI already understands, or a
+dedicated empty `message_chunk` carrying a `_meta` "stream_reset" flag the TUI
+treats as `_end_stream` + fresh-block). The exact wire form is chosen in the plan
+(see §9); the requirement is: **each LLM step's prose begins a fresh TUI block,
+whether or not it ends in a tool call.**
 
 ## 6. Error handling
 
@@ -192,10 +228,34 @@ agent prose lands in `_stream_message` with no routing change.
    = "refusal"`. We do **not** salvage a partial response. Already-streamed text
    stays on screen (it is what the model actually said); the turn ends via the
    existing error path. *(User-confirmed default.)*
-2. **`stream_chunk_builder` returns `None`/unusable**: one blocking
-   `super()._query()` retry (§3.1); if that too fails to parse, upstream's normal
-   `FormatError` machinery handles it as today. Cheap insurance against
-   reassembly edge cases.
+
+   **Transcript semantics on failure (Codex finding #2 — verified).**
+   `flatten_agent_messages` (transcript.py:11–24) joins **every** assistant-role
+   message in `agent.messages`, and `TracingAgent.run` seeds the injected `prior`
+   transcript *before* the current user prompt (tracing_agent.py:67–71). So the
+   `run_engine` failure return `flatten_agent_messages(getattr(agent, "messages",
+   []))` (acp_agent.py:276–278) can fold **prior-turn** assistant prose into the
+   string that acp_agent.py:168–173 then records as **this** turn's assistant —
+   diverging stored transcript from what the user saw streamed.
+   **Required behavior:** on a failed turn, the recorded assistant text for this
+   turn MUST be exactly the prose this turn produced (the accumulated streamed
+   deltas), or empty — never prior-turn content. The plan implements this by
+   accumulating the emitted deltas in `run_engine` (same buffer the chat path
+   keeps) and, on failure, recording **that** buffer as the assistant turn rather
+   than `flatten_agent_messages(all messages)`. This makes streamed-on-screen and
+   stored-transcript identical by construction.
+2. **`stream_chunk_builder` returns `None`/unusable — NO retry after any delta
+   was emitted (Codex finding #3 — verified).** A blocking retry would produce a
+   *different* response than the prose the user already saw stream, so the visible
+   text and the committed actions/transcript would come from two different
+   generations. Therefore:
+   - If **zero** deltas were emitted when reassembly returns `None` (e.g. an
+     empty/garbled stream), fall back to one blocking `super()._query()` — safe,
+     nothing was shown yet.
+   - If **any** delta was emitted, do **not** retry. Treat it as a stream failure
+     per case #1 (propagate → `refusal`), recording the streamed buffer as the
+     turn's assistant per finding #2. The user keeps the text they saw; we never
+     swap in a discarded generation.
 3. **Mock mode / no real model**: `on_delta` unset/ignored ⇒ blocking path ⇒
    identical to today.
 4. **Cost tracking**: `stream_chunk_builder` yields a response
@@ -211,6 +271,18 @@ agent prose lands in `_stream_message` with no routing change.
    per litellm; the post-run cancel check already returns `cancelled`. No new
    cancellation path is introduced. (If mid-stream hard-stop is later desired,
    it is a follow-up — out of scope here.)
+7. **Concurrent prompts on one session (Codex finding #5 — UNVERIFIED
+   assumption, flagged, not a blocker).** `SessionState` (acp_session.py:11–16)
+   has no per-session turn lock, and `prompt()` reads/writes shared state
+   (acp_agent.py:98–107, 166–174). The TUI has a *client-side* busy guard
+   (app.py:491–511) but that is not an ACP-layer invariant. Token-level streaming
+   does not *create* this race — it would already affect interleaved tool events —
+   but it makes interleaving more visible. This spec **does not** add a lock; it
+   records the assumption that **the ACP layer serializes prompts per session.**
+   The plan MUST verify this against `acp.run_agent`'s request handling before
+   implementation; if prompts are not serialized, add a per-session active-turn
+   guard as a prerequisite. (Pushing back on framing this as streaming-specific:
+   it is a pre-existing property we are now relying on more visibly.)
 
 ## 7. Testing
 
@@ -224,30 +296,59 @@ All tests run offline (target `tests/`, per AGENTS.md).
   `bash` tool-call; assert the object returned by `_query` yields, after the
   inherited `query()`, the same `extra.actions` a blocking response would (i.e.
   tool-calls survive `stream_chunk_builder`).
-- **Unit — `stream_chunk_builder` returns None:** assert one blocking retry
-  occurs and its result is returned.
+- **Unit — `stream_chunk_builder` returns None, zero deltas:** assert one
+  blocking `super()._query()` fallback occurs and its result is returned.
+- **Unit — `stream_chunk_builder` returns None, after ≥1 delta:** assert **no**
+  retry; the failure propagates (finding #3).
+- **Unit — TUI step boundary (finding #1):** drive `_stream_message` with
+  delta(s) → a `tool` update → delta(s); assert the second prose run lands in a
+  **new** Markdown widget below the tool line, not appended to the first widget.
+  Also assert the genuine late-delta case (delta, close-by-turn-end, no boundary
+  widget appended, late delta) STILL extends the prior widget in place.
+- **Unit — FormatError step boundary (finding #4):** a step that yields prose but
+  raises `FormatError` (no tool event) followed by a retry step's prose lands in a
+  fresh block (verifies the explicit step-boundary signal, §5).
 - **Integration — acp_agent:** a fake model whose `query` invokes its bound
   `on_delta` twice; assert exactly two `message_chunk` `session_update`s are sent
   in order and the turn completes `end_turn` (mirrors the existing chat-path
   test); assert `on_delta` is cleared after the turn.
+- **Integration — failure transcript (finding #2):** a fake model that emits two
+  deltas then raises mid-stream, run on a session with a non-empty `prior`
+  transcript; assert the recorded assistant turn equals the two streamed deltas
+  (or empty) — NEVER the prior-turn assistant prose.
 - **Regression:** a mock-mode agent run emits no `message_chunk` deltas and
   produces the same final transcript as today.
 
 ## 8. Files touched
 
 - **New:** `harness/streaming_model.py` (`StreamingLitellmModel`).
-- **Edit:** `acp_agent.py` — add `emit_delta` closure in `_run_agent_turn`, set/
-  clear `model.on_delta` around `run_engine`.
+- **Edit:** `acp_agent.py` —
+  - add `emit_delta` closure in `_run_agent_turn` (marshal each delta as a
+    `message_chunk`), accumulating deltas into a per-turn buffer;
+  - emit a per-step boundary signal at each LLM step's first delta (§5/§4 fix);
+  - set/clear `model.on_delta` around `run_engine` (clear in `finally`);
+  - on failure, record the streamed buffer as this turn's assistant text instead
+    of `flatten_agent_messages(all messages)` (finding #2).
+- **Edit (TUI — REQUIRED, was wrongly omitted):** `harness/tui/app.py`
+  `_stream_message` — refine the new-block-vs-late-delta decision so a boundary
+  widget (tool/thought/meta) appended after the streaming widget forces a fresh
+  block (finding #1). Possibly a tiny `on_session_update` handler for the
+  step-boundary signal if a dedicated wire form is chosen (§9).
 - **Edit:** the real-model factory (wherever `_model_factory` builds the vibeproxy
   `LitellmModel`) to construct `StreamingLitellmModel` instead — confirm exact
   location during planning (`run_traced.py::_build_vibeproxy_model` and/or the ACP
   model factory).
-- **New tests:** `tests/test_streaming_model.py`, additions to the acp_agent test
-  module.
-- **No upstream edit. No TUI edit.**
+- **New tests:** `tests/test_streaming_model.py`; TUI `_stream_message` boundary
+  tests; additions to the acp_agent test module.
+- **No upstream edit.** (TUI edit is required — correcting the earlier draft.)
 
 ## 9. Open items for the plan (not blockers)
 
+- **Verify ACP per-session prompt serialization** (finding #5) before coding; add
+  a per-session active-turn guard if prompts are not serialized.
+- **Choose the step-boundary wire form** (§5/§4): reuse the existing
+  thought/close path vs. a dedicated empty `message_chunk` + `_meta`
+  "stream_reset" flag. Pick the one that needs the smallest TUI handler.
 - Confirm the single source of the agent-path model factory and whether the CLI
   (`run_traced.py`) should also adopt the streaming wrapper (it prints joined
   pieces, so streaming there is cosmetic — likely leave as-is).
