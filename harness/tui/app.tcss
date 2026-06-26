@@ -26,7 +26,7 @@ Screen { layout: vertical; background: $background; layers: base overlay; }
    compose box (Claude Code session-banner style). */
 #landing-header { height: auto; padding-bottom: 1; }
 #header-icon { width: auto; padding-right: 2; color: $accent; }
-#header-text { width: 1fr; height: auto; }
+#header-text { width: 1fr; height: auto; padding-top: 1; }
 #hint { color: $muted; content-align: right middle; padding-top: 1; height: auto; }
 
 /* ---- CONVERSATION state ---- */

@@ -14,7 +14,7 @@ BLUE = "#286ce9"
 # half-block ('▀'/'▄'), '━' is a MID-CELL horizontal stroke, so it renders on the
 # text's vertical center and lines up cleanly with each text row — no top/bottom-
 # half offset to fight, and the row gaps keep the three rules distinct (the ≡).
-_ICON_ROWS = ["━━━━", "━━━━", "━━━━"]
+_ICON_ROWS = ["▄▄▄▄▄", "▄▄▄▄▄", "▄▄▄▄▄"]
 
 
 def icon_markup() -> str:
@@ -23,10 +23,14 @@ def icon_markup() -> str:
 
 
 def header_text_markup(title: str, version: str, tagline: str) -> str:
-    """Two-line header text: bold name + dim version / tagline. The mode·model
-    line is intentionally NOT here — it lives on the compose-meta line under the
-    input (and the status bar), so repeating it in the header was redundant."""
+    """Three-line header text: bold name + dim version / tagline + muted rule.
+
+    The mode·model line is intentionally NOT here — it lives on the compose-meta
+    line under the input (and the status bar), so repeating it in the header was
+    redundant."""
+    underline = "─" * max(8, len(tagline))
     return (
         f"[$accent][b]{title}[/b][/] [$muted]v{version}[/]\n"
-        f"[$foreground]{tagline}[/]"
+        f"[$foreground]{tagline}[/]\n"
+        f"[$muted]{underline}[/]"
     )

@@ -110,7 +110,6 @@ class HarnessTui(App):
         with Container(id="landing"):
             with Vertical(id="landing-col"):
                 with Horizontal(id="landing-header"):
-                    yield Static(icon_markup(), id="header-icon", markup=True)
                     yield Static(self._header_markup(), id="header-text", markup=True)
                 with Vertical(id="landing-compose", classes="compose"):
                     yield Input(placeholder='Ask anything... "What is the tech stack of this project?"',
@@ -131,7 +130,7 @@ class HarnessTui(App):
     def _header_markup(self) -> str:
         """Build the landing header text (name + tagline). The mode·model line is
         shown on the compose-meta line under the input, not repeated here."""
-        return header_text_markup("DONE", self._version, "Get Shit Done")
+        return header_text_markup("DON≡", self._version, "Get Shit Done")
 
     def _status_bar(self) -> ComposeResult:
         bar = Container(id="statusbar")
