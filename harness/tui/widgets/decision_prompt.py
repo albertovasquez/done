@@ -100,4 +100,5 @@ class DecisionPrompt(Vertical):
             if 1 <= n <= total:
                 self._cursor = n - 1          # convert 1-indexed to 0-indexed
                 self.select()
+            # Out-of-range digits are intentionally swallowed (event.stop) while the prompt has focus.
             event.stop()

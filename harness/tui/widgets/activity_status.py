@@ -40,16 +40,17 @@ class ActivityStatus(Static):
         return f"[$accent]{glyph}[/] [$foreground]{label}…[/] [$muted]({meta})[/]"
 
     def update_from(self, snap: AgentSnapshot) -> None:
-        was_working = self._snap is not None and self._snap.state in _WORKING
         self._snap = snap
         is_working = snap.state in _WORKING
-        # Pause/resume the timer so it does not fire in idle/terminal states.
+        # Pause/resume the timer to match the current snapshot's working state.
+        # Ensures timer is paused even on the first update if the snapshot is
+        # idle/done/failed (not just on transitions). Idempotent operations.
         # NOTE: timer pause/resume cannot be tested without mounting the widget;
         # unit tests cover display output only.
         if hasattr(self, "_timer"):
-            if is_working and not was_working:
+            if is_working:
                 self._timer.resume()
-            elif not is_working and was_working:
+            else:
                 self._timer.pause()
         self._render()
 
