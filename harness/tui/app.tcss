@@ -59,7 +59,9 @@ PermissionModal #cmd { color: $accent; margin-bottom: 1; text-style: bold; }
 SelectModal { align: center middle; }
 SelectModal #select-box { width: 72; height: auto; max-height: 80%;
     border: round $accent; background: $surface; padding: 1 2; }
-SelectModal #select-title { padding-bottom: 1; }
+/* DoneDone uses heavy section headers — bold the title to echo the brand's
+   tracked-caps style (terminals can't load the brand font; weight is what we have). */
+SelectModal #select-title { padding-bottom: 1; text-style: bold; color: $accent; }
 SelectModal #select-search { background: $surface; border: none; height: 1;
     color: $foreground; margin-bottom: 1; }
 SelectModal #select-list { height: auto; max-height: 14; background: $surface;
