@@ -30,7 +30,7 @@ from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import Input, LoadingIndicator, Markdown, Static
 
 from harness.tui.client import TuiClient
-from harness.tui.commands import build_registry
+from harness.tui.commands import build_registry, resolve_command
 from harness.tui.messages import SessionUpdate, PermissionRequest
 from harness.tui.render import render_update, harness_chips, status_style
 from harness.tui.theme import HARNESS_THEME, COLORS, STATUS_COLOR
@@ -81,6 +81,7 @@ class HarnessTui(App):
         self._gen = 0                         # session generation; bumped each _connect
         self._send_gen = 0                    # generation a prompt worker was launched in
         self._busy = False                    # lifecycle guard (reload/clear/model)
+        self._reexec = False                  # /reload requests a full-process re-exec
         self._launch_worker_model_id = worker_model_id  # source of truth for "user switched model?"
         self._pending_perm = None             # the in-flight permission Future, if any
         self._started = False                 # have we left the landing state?
@@ -317,7 +318,7 @@ class HarnessTui(App):
         cmd = self._slash.highlighted_command() if self._slash is not None else None
         if cmd is None:
             name = text[1:].split()[0] if len(text) > 1 else ""
-            cmd = next((c for c in self._commands if c.name == name), None)
+            cmd = resolve_command(self._commands, name)   # canonical name or exact alias
         self._active_input().value = ""
         await self._close_slash()
         if cmd is None:
@@ -635,8 +636,16 @@ class HarnessTui(App):
             return
         self._busy = True
         try:
+            self._cancel_inflight()
             await self._reset_conversation()
-            await self._new_session()         # same subprocess → fresh empty transcript
+            if self._started:                     # no transcript on the landing screen
+                self._append_line(_c("muted", "— clearing… —"))
+            await self._teardown()
+            try:
+                await self._connect()
+                await self._reset_conversation()  # success → wipe the transient line
+            except Exception as e:
+                self._fatal(f"clear failed: {e}")
         finally:
             self._busy = False
 
@@ -653,22 +662,9 @@ class HarnessTui(App):
     async def action_reload(self) -> None:
         if self._busy:
             return
-        self._busy = True
-        try:
-            self._cancel_inflight()
-            await self._reset_conversation()
-            if self._started:                     # no transcript on the landing screen
-                self._append_line(_c("muted", "— reloading agent… —"))
-            await self._teardown()
-            try:
-                await self._connect()
-                # success → fresh agent = empty conversation; clear the transient
-                # "reloading…" progress line so the scrollback ends wiped.
-                await self._reset_conversation()
-            except Exception as e:
-                self._fatal(f"reload failed: {e}")
-        finally:
-            self._busy = False
+        self._busy = True                         # never released; the process is replaced
+        self._reexec = True                       # main() re-execs after run() returns
+        self.exit()                               # Textual restores the terminal; run() returns
 
     async def on_unmount(self) -> None:
         if self._pending_perm is not None and not self._pending_perm.done():

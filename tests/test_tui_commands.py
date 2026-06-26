@@ -40,7 +40,24 @@ needs_vibeproxy = pytest.mark.skipif(
 
 def test_registry_has_core_commands():
     names = {c.name for c in build_registry()}
-    assert {"models", "exit", "quit", "help"} <= names
+    assert {"models", "exit", "help"} <= names
+
+
+def test_quit_is_an_alias_of_exit_not_a_separate_entry():
+    cmds = build_registry()
+    names = [c.name for c in cmds]
+    assert "quit" not in names, "quit must not be its own menu entry"
+    exit_cmd = next(c for c in cmds if c.name == "exit")
+    assert "quit" in exit_cmd.aliases, "quit must be an alias of exit"
+
+
+def test_resolve_command_matches_name_and_alias():
+    from harness.tui.commands import resolve_command
+    cmds = build_registry()
+    assert resolve_command(cmds, "exit").name == "exit"     # canonical name
+    assert resolve_command(cmds, "quit").name == "exit"     # exact alias → exit
+    assert resolve_command(cmds, "qu") is None              # alias is exact-match only
+    assert resolve_command(cmds, "nope") is None
 
 
 def test_filter_empty_returns_all():
@@ -97,6 +114,23 @@ def test_slash_exit_quits_app():
             await app._run_slash("/exit")
             await pilot.pause()
         # reaching here means the run_test context exited cleanly (app.exit() fired)
+
+    asyncio.run(go())
+
+
+def test_slash_quit_alias_quits_app():
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            inp = app.query_one("#landing-input", Input)
+            inp.focus()
+            inp.value = "/quit"
+            await pilot.pause()
+            await app._run_slash("/quit")        # typed alias resolves to exit
+            await pilot.pause()
+            assert app._exit is True, "/quit must exit the app"
+        # reaching here means the run_test context exited cleanly
 
     asyncio.run(go())
 
@@ -167,6 +201,13 @@ def test_reload_clear_handlers_delegate_to_app_actions():
     asyncio.run(reg["reload"].handler(app))
     asyncio.run(reg["clear"].handler(app))
     assert app.called == ["reload", "clear"]
+
+
+def test_reload_clear_descriptions_match_new_behavior():
+    from harness.tui.commands import build_registry
+    reg = {c.name: c for c in build_registry()}
+    assert reg["reload"].description == "Reload everything (restart the app)"
+    assert reg["clear"].description == "Fresh conversation (restart the agent)"
 
 
 def test_select_modal_search_and_select():

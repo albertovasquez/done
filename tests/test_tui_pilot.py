@@ -376,7 +376,7 @@ def test_reset_conversation_empties_transcript_keeps_started():
     asyncio.run(go())
 
 
-def test_clear_resets_session_without_respawn():
+def test_clear_respawns_agent_and_resets():
     async def go():
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
         async with app.run_test() as pilot:
@@ -389,15 +389,14 @@ def test_clear_resets_session_without_respawn():
             gen_before = app._gen
             await app.action_clear()
             await pilot.pause()
-            assert _transcript_text(app) == "", "clear should empty the transcript"
-            assert app._gen == gen_before, "clear must NOT respawn (generation unchanged)"
-            assert app._conn is not None, "subprocess/connection stays alive"
-            assert app._session_id is not None, "a fresh session exists"
-            assert app._busy is False, "busy flag released"
+            assert app._gen == gen_before + 1, "clear must now RESPAWN the agent (gen bumps)"
+            assert app._conn is not None, "reconnected after respawn"
+            assert _transcript_text(app) == "", "conversation reset"
+            assert app._busy is False, "busy released"
     asyncio.run(go())
 
 
-def test_reload_respawns_and_bumps_generation():
+def test_stale_session_update_after_respawn_is_dropped():
     async def go():
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
         async with app.run_test() as pilot:
@@ -407,27 +406,7 @@ def test_reload_respawns_and_bumps_generation():
                 await pilot.pause()
                 if "done" in _transcript_text(app):
                     break
-            gen_before = app._gen
-            await app.action_reload()
-            await pilot.pause()
-            assert app._gen == gen_before + 1, "reload must respawn (generation bumps)"
-            assert app._conn is not None, "reconnected after reload"
-            assert _transcript_text(app) == "", "scrollback wiped on reload"
-            assert app._busy is False
-    asyncio.run(go())
-
-
-def test_stale_session_update_after_reload_is_dropped():
-    async def go():
-        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await _send_first_prompt(pilot, app, "hello")
-            for _ in range(50):
-                await pilot.pause()
-                if "done" in _transcript_text(app):
-                    break
-            await app.action_reload()           # bumps _gen; transcript wiped
+            await app.action_clear()            # respawns: bumps _gen; transcript wiped
             await pilot.pause()
             live_session = app._session_id
             # 1) generation filter (load-bearing): an update stamped with the OLD
@@ -502,7 +481,7 @@ def test_send_prompt_finally_no_reenable_after_generation_bump():
     asyncio.run(go())
 
 
-def test_reload_starts_a_new_os_process(tmp_path):
+def test_clear_starts_a_new_os_process(tmp_path):
     import os
     marker = tmp_path / "starts.txt"
     cmd = [sys.executable, str(REPO / "tests/fake_agent.py")]
@@ -517,18 +496,18 @@ def test_reload_starts_a_new_os_process(tmp_path):
                     if marker.exists() and marker.read_text().count("start") >= 1:
                         break
                 starts_before = marker.read_text().count("start")
-                await app.action_reload()
+                await app.action_clear()
                 for _ in range(50):
                     await pilot.pause()
                     if marker.read_text().count("start") > starts_before:
                         break
             assert marker.read_text().count("start") == starts_before + 1, (
-                "reload must spawn exactly one new agent process")
+                "clear must spawn exactly one new agent process")
         finally:
             os.environ.pop("FAKE_AGENT_STARTS_FILE", None)
     asyncio.run(go())
 
-def test_reload_failure_keeps_app_alive_and_input_disabled():
+def test_clear_failure_keeps_app_alive_and_input_disabled():
     async def go():
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
         async with app.run_test() as pilot:
@@ -540,12 +519,12 @@ def test_reload_failure_keeps_app_alive_and_input_disabled():
                     break
             # make the next _connect fail
             app.agent_cmd = [sys.executable, "-c", "import sys; sys.exit(3)"]
-            await app.action_reload()
+            await app.action_clear()
             await pilot.pause()
-            assert app._conn is None, "failed reload leaves no live connection"
+            assert app._conn is None, "failed clear leaves no live connection"
             assert app._active_input().disabled is True, "_fatal must disable input"
             assert app._busy is False, "busy released even on failure"
-            assert "reload failed" in _transcript_text(app)
+            assert "clear failed" in _transcript_text(app)
     asyncio.run(go())
 
 def test_reload_is_guarded_against_reentry():
@@ -554,8 +533,21 @@ def test_reload_is_guarded_against_reentry():
         async with app.run_test() as pilot:
             await pilot.pause()
             app._busy = True                     # simulate a reload in progress
-            gen_before = app._gen
             await app.action_reload()            # must early-return
-            assert app._gen == gen_before, "re-entrant reload must be a no-op"
+            assert app._reexec is False, "re-entrant reload must not set _reexec"
+            assert app._exit is False, "re-entrant reload must not call exit()"
             app._busy = False
+    asyncio.run(go())
+
+
+def test_reload_sets_reexec_flag_and_exits():
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert app._reexec is False, "starts un-flagged"
+            await app.action_reload()
+            assert app._reexec is True, "reload must request a re-exec"
+            # exit() was requested (Textual sets _exit); the app is on its way down
+            assert app._exit is True, "reload must call app.exit()"
     asyncio.run(go())
