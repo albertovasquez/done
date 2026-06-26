@@ -1,5 +1,6 @@
 .env
 .DS_Store
+*.pdf
 harness/runs/
 __pycache__/
 *.pyc
