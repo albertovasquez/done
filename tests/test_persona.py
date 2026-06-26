@@ -185,3 +185,12 @@ def test_seed_never_raises_on_oserror(monkeypatch, tmp_path):
     # is safe here. (This is intentional — do not "simplify" it away.)
     monkeypatch.setattr("harness.persona.Path.mkdir", boom)
     seed_default_workspace()   # must not raise — best-effort startup
+
+
+def test_meaningful_and_trim_are_importable_helpers():
+    # Phase B's memory module reuses these; lock them as a stable import surface.
+    from harness.persona import _meaningful, _trim
+    assert _meaningful("real text") is True
+    assert _meaningful("<!-- only a comment -->") is False
+    body, trimmed = _trim("x" * 10, 4)
+    assert body == "xxxx" and trimmed is True
