@@ -10,6 +10,12 @@ streaming-chat merge now on `main`. Ready for implementation plan.
 > (`ChatHandler.answer_stream() -> Iterator[str]`). §4, §6, the agent-capture
 > seam (§2/§3), and Backward compatibility are updated below to match current
 > `main`. The plain-text-transcript core decision is unchanged.
+>
+> **Revision note 2 (2026-06-26):** transcript entries gain an `origin`
+> (`chat`/`agent`/`clarify`) tag so the router preamble (§5) can include prior
+> user turns **plus chat assistant answers** while excluding agent narration —
+> resolving referents that live in a chat reply ("the first one") without leaking
+> tool/pytest noise into triage. Affects §1, §5, §6, and the test list.
 
 ## Problem
 
@@ -57,13 +63,19 @@ tool-call-pairing invariants, and (c) bloat session state with raw API dumps.
 So the transcript holds **only**:
 
 ```python
-list[{"role": "user" | "assistant", "content": str}]
+list[{"role": "user" | "assistant", "content": str, "origin": "chat" | "agent" | "clarify"}]
 ```
 
 Plain conversational text. One shape, every path consumes it directly, no
 structural invariants to maintain, no `extra`. This single decision dissolves the
 tool-call / exit-role / dangling-pair / state-bloat failure modes by
 construction.
+
+The `origin` tag records which dispatch branch produced each entry. It exists for
+**one** consumer — the router preamble (§5), which includes prior user turns plus
+*chat* assistant answers but must exclude *agent* assistant narration (where
+flattened tool/pytest prose lives) so triage stays clean. The chat and agent
+seed paths ignore `origin` and consume `role`/`content` only.
 
 ## Design
 
@@ -72,7 +84,7 @@ construction.
 `SessionState` gains:
 
 ```python
-transcript: list[dict] = field(default_factory=list)  # [{role, content}], plain text
+transcript: list[dict] = field(default_factory=list)  # [{role, content, origin}], plain text
 ```
 
 `history` stays unchanged (feeds `load_session`'s `[resumed]` display; locked by
@@ -80,15 +92,20 @@ transcript: list[dict] = field(default_factory=list)  # [{role, content}], plain
 is.
 
 `SessionStore` gains a helper that stores **fresh, validated** dicts (so a caller
-can't mutate stored state later or insert a malformed role):
+can't mutate stored state later or insert a malformed role/origin):
 
 ```python
 def extend(self, session_id: str, msgs: list[dict]) -> None:
     for m in msgs:
-        assert m["role"] in ("user", "assistant")  # plain-text invariant
+        assert m["role"] in ("user", "assistant")              # plain-text invariant
+        assert m["origin"] in ("chat", "agent", "clarify")     # tag for the router preamble (§5)
         self._sessions[session_id].transcript.append(
-            {"role": m["role"], "content": m["content"]})  # copy, not alias
+            {"role": m["role"], "content": m["content"],
+             "origin": m["origin"]})                            # copy, not alias
 ```
+
+Each dispatch branch in §6 stamps the `origin` of the turns it writes (`"chat"`,
+`"agent"`, or `"clarify"`).
 
 ### 2. Agent capture — the flatten rule + the capture seam (`harness/acp_agent.py`)
 
@@ -203,11 +220,14 @@ def classify(self, prompt: str, history: list[dict] | None = None) -> Classifica
 ```
 
 When `history` is present, the **user** message handed to the cheap model becomes
-a short preamble + the new prompt. The preamble is built from **user turns only**
-(the last few), never assistant prose and never tool output — passing raw agent
-observations (pytest failures, tracebacks) into the triage model would skew
-classification (a "now fix it" after a wall of test output would be forced to
-`code_fix` regardless of intent).
+a short preamble + the new prompt. The preamble includes the last few **user
+turns plus `origin == "chat"` assistant answers**, and **excludes
+`origin == "agent"` assistant narration** (the flattened tool/pytest prose). This
+resolves cross-turn referents that live in a chat reply — e.g. assistant asks
+"Flutter or React Native?" and the user answers "the first one" — while keeping
+agent observations (pytest failures, tracebacks) out of triage, which would
+otherwise force a vague follow-up to `code_fix` regardless of intent. `clarify`
+turns are user-only by construction (§6), so they contribute just the user text.
 
 The classifier requires JSON-only output and currently sends exactly one
 system + one user message (`router.py:47-48`, `:56-59`). The preamble must be
@@ -217,8 +237,9 @@ dominating — e.g.:
 
 ```
 Recent context (for reference only):
-- <prior user turn>
-- <prior user turn>
+- user: Flutter or React Native?
+- assistant: Which do you want to target — Flutter or React Native?
+- user: <prior user turn>
 
 Classify THIS request: <new prompt>
 ```
@@ -243,19 +264,20 @@ first draft missed:
   mislead the next turn's context. The transcript is unchanged on this path.
 - **classify** (success) → `self._router.classify(text, history=transcript)`.
 - **clarify / ambiguous branch** (`acp_agent.py:108-113`) → write **only the user
-  turn**. The clarifying question is router boilerplate, *not* model output, so it
-  is excluded. This is the one **intentional exception** to §2's "two messages per
-  turn": a user turn with no assistant turn is valid here and downstream consumers
-  must tolerate it.
+  turn**, `origin="clarify"`. The clarifying question is router boilerplate, *not*
+  model output, so it is excluded. This is the one **intentional exception** to
+  §2's "two messages per turn": a user turn with no assistant turn is valid here
+  and downstream consumers must tolerate it.
 - **skill_load metadata chunk** (`acp_agent.py:134-138`, `with_meta(message_chunk(
   ""), {...})`) → **never written** to the transcript. It is a metadata-only,
   empty-content chunk for the chips, not assistant prose.
 - **chat branch** → `handler.answer_stream(text, history=transcript)`, accumulate
-  the streamed pieces (§4), then write the user turn + the full assistant answer.
+  the streamed pieces (§4), then write the user turn + the full assistant answer,
+  both `origin="chat"`.
 - **agent branch** → seed `run(text, prior=transcript)`; capture the flattened
   assistant narration from the structured `run_engine()` result (§2), then write
   the user turn + that assistant turn (with the status fallback so the pair is
-  never half-empty).
+  never half-empty), both `origin="agent"`.
 
 ### 7. Bounding
 
@@ -296,16 +318,19 @@ All new parameters are optional and default to today's behavior **byte-for-byte*
 ## Testing
 
 - **`test_acp_session`** — `transcript` accumulates across `extend`; entries are
-  plain `{role, content}`; `history` is left untouched.
+  plain `{role, content, origin}` copies (mutating the input dict afterward does
+  not change stored state); a bad `role`/`origin` is rejected; `history` is left
+  untouched.
 - **`test_tracing_agent`** — `run(prior=[…])` seeds `messages` as
   `[system, *prior, instance]`; `run()` with no `prior` behaves as today.
 - **`test_chat_handler`** — `answer_stream(prompt, history=[…])` prepends prior
   turns to the outgoing `messages`; omitting `history` leaves `:55`'s assertion
   (`messages == [{"role": "user", "content": "hi"}]`) and `:53`'s `stream is True`
   exact.
-- **`test_router`** — passing `history` includes a delimited user-only preamble in
-  the classifier's user message AND keeps the current prompt as the explicit
-  classification target; omitting it is unchanged.
+- **`test_router`** — passing `history` includes a delimited preamble with user
+  turns and `origin="chat"` assistant answers, **excludes** `origin="agent"`
+  assistant narration, AND keeps the current prompt as the explicit classification
+  target; omitting `history` is unchanged.
 - **flatten unit test** (`flatten_agent_messages`) — synthetic `messages` with
   multiple assistant turns + a `None` (tool-only) turn + a terminal `exit` flatten
   to one non-empty prose block joining the assistant turns in order; structural
