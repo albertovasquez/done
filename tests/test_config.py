@@ -135,3 +135,17 @@ def test_save_default_no_partial_file_on_replace(tmp_path):
     config.save_default(config.AgentConfig(backend="mock", model="a"))
     config.save_default(config.AgentConfig(backend="vibeproxy", model="b"))
     assert config.load_default() == config.AgentConfig(backend="vibeproxy", model="b")
+
+
+def test_round_trip_set_model_then_resolve(tmp_path):
+    """ACP persists a model; a later TUI startup resolves it back."""
+    from harness import tui_main
+
+    # 1) Persist as the ACP set_model handler would.
+    config.save_default(config.AgentConfig(backend="vibeproxy", model="claude-opus-4-8"))
+
+    # 2) A fresh launch with NO --model flag picks it up.
+    assert tui_main._resolve_model(None) == ("vibeproxy", "claude-opus-4-8")
+
+    # 3) A launch WITH an explicit flag ignores it.
+    assert tui_main._resolve_model("mock") == ("mock", None)

@@ -56,6 +56,11 @@ Configure VibeProxy by putting your settings in `~/.config/harness/.env`
 from. Add your own skills in `~/.config/harness/skills/` — they override the
 bundled ones of the same name. (`$XDG_CONFIG_HOME` is honored if set.)
 
+The harness remembers your selected model across sessions in
+`~/.config/harness/done.conf` (TOML). Changing the model at runtime saves it
+to the reserved `default` agent there; passing `--model` at launch overrides
+the saved value for that session without erasing it.
+
 Either install puts two commands on your `PATH`:
 
 | Command | What it is |
