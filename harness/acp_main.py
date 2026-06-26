@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+from pathlib import Path
 
 os.environ.setdefault("MSWEA_SILENT_STARTUP", "1")   # MUST be before minisweagent import
 
@@ -71,7 +72,8 @@ async def _main(argv=None) -> None:
                         help="project dir the agent operates on (anchors .env)")
     args = parser.parse_args(argv)
 
-    paths.load_env(args.cwd)          # BEFORE importing engine-touching modules
+    cwd = str(Path(args.cwd).resolve()) if args.cwd else os.getcwd()
+    paths.load_env(cwd)               # BEFORE importing engine-touching modules
 
     from harness.acp_agent import HarnessAgent
     from harness.router import Router, complete

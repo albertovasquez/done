@@ -53,6 +53,16 @@ def test_mini_yaml_path_exists():
     assert p.is_file()
 
 
+def test_load_env_reads_project_env_from_explicit_cwd(monkeypatch, tmp_path):
+    proj = tmp_path / "proj"; proj.mkdir()
+    (proj / ".env").write_text("PROJ_ONLY=yes\n")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "nocfg"))  # no config .env
+    monkeypatch.delenv("PROJ_ONLY", raising=False)
+    paths.load_env(str(proj))
+    import os
+    assert os.environ["PROJ_ONLY"] == "yes"
+
+
 def test_skills_dirs_orders_bundled_then_user(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     (tmp_path / "harness" / "skills").mkdir(parents=True)   # user dir exists

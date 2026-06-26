@@ -137,8 +137,8 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 raise
 
-    skills_dir = REPO_ROOT / "skills"
-    skills_roots = [skills_dir]
+    from harness import paths as _paths
+    skills_roots = _paths.skills_dirs()
     router = Router(complete, catalog=skills.load_catalog(skills_roots))
     try:
         rc = route_and_dispatch(
