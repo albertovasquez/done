@@ -78,6 +78,10 @@ class HarnessTui(App):
         self._conn = None
         self._cm = None                       # the spawn_agent_process context manager
         self._session_id = None
+        self._gen = 0                         # session generation; bumped each _connect
+        self._send_gen = 0                    # generation a prompt worker was launched in
+        self._busy = False                    # lifecycle guard (reload/clear/model)
+        self._launch_worker_model_id = worker_model_id  # source of truth for "user switched model?"
         self._pending_perm = None             # the in-flight permission Future, if any
         self._started = False                 # have we left the landing state?
         self._turn_start = 0.0                # monotonic at send, for elapsed meta
@@ -138,24 +142,57 @@ class HarnessTui(App):
 
     # ---- lifecycle ----
 
+    async def _new_session(self) -> None:
+        new = await self._conn.new_session(cwd=self.cwd, mcp_servers=[])
+        self._session_id = new.session_id
+
+    async def _connect(self) -> None:
+        """Spawn the agent subprocess, initialize, open a session, re-apply the
+        preserved model, and bump the generation. Failure-atomic: if anything
+        after __aenter__ raises, tear the half-open context down before re-raising."""
+        self._cm = acp.spawn_agent_process(
+            self._client, self.agent_cmd[0], *self.agent_cmd[1:],
+            env=dict(os.environ), cwd=self.cwd,
+        )
+        self._conn, _proc = await self._cm.__aenter__()
+        try:
+            await self._conn.initialize(
+                protocol_version=acp.PROTOCOL_VERSION,
+                client_capabilities=ClientCapabilities(elicitation=ElicitationCapabilities()),
+            )
+            await self._new_session()
+            await self._reapply_model()
+        except Exception:
+            await self._teardown()            # never leave a half-open _cm
+            raise
+        self._gen += 1
+
+    async def _teardown(self) -> None:
+        """Close the subprocess context (terminates the child). Clears connection
+        state in finally so a raising __aexit__ can't leave a stale _conn."""
+        try:
+            if self._cm is not None:
+                await self._cm.__aexit__(None, None, None)
+        finally:
+            self._cm = self._conn = self._session_id = None
+
+    async def _reapply_model(self) -> None:
+        """After a respawn, re-apply a runtime-selected model. No-op if unchanged
+        from launch; swallow method-not-found for agents without the extension."""
+        if (self._worker_model_id is not None
+                and self._worker_model_id != self._launch_worker_model_id):
+            try:
+                await self._conn.ext_method("harness/set_model", {"model": self._worker_model_id})
+            except Exception:
+                pass
+
     async def on_mount(self) -> None:
         # theme is registered + activated in __init__ (before CSS parse)
         # populate the status bar (left: path:branch, right: version)
         await self._mount_status_contents()
         self.query_one("#landing-input", Input).focus()
         try:
-            self._cm = acp.spawn_agent_process(
-                self._client, self.agent_cmd[0], *self.agent_cmd[1:],
-                env=dict(os.environ),     # VIBEPROXY_* resolved by paths.load_env at startup
-                cwd=self.cwd,             # agent runs in the project dir (anchors .env)
-            )
-            self._conn, _proc = await self._cm.__aenter__()
-            await self._conn.initialize(
-                protocol_version=acp.PROTOCOL_VERSION,
-                client_capabilities=ClientCapabilities(elicitation=ElicitationCapabilities()),
-            )
-            new = await self._conn.new_session(cwd=self.cwd, mcp_servers=[])
-            self._session_id = new.session_id
+            await self._connect()
         except Exception as e:                # startup failure is fatal but must not crash the UI
             self._fatal(f"could not start agent: {e}")
 
@@ -209,7 +246,7 @@ class HarnessTui(App):
         if text.startswith("/"):
             await self._run_slash(text)
             return
-        if not text or self._conn is None:
+        if not text or self._conn is None or self._busy:
             return
         if not self._started:
             await self._enter_conversation()
@@ -218,6 +255,7 @@ class HarnessTui(App):
         inp.value = ""
         inp.disabled = True
         self._turn_start = time.monotonic()
+        self._send_gen = self._gen            # tag this turn's worker with its generation
         self.run_worker(self._send_prompt(text), thread=False)
 
     # ---- slash menu ----
@@ -302,6 +340,8 @@ class HarnessTui(App):
     # ---- commands: /models, /help, /exit, /quit ----
 
     async def action_select_model(self) -> None:
+        if self._busy:
+            return            # lifecycle guard (§6): no model picker mid-reload
         if self.model != "vibeproxy":
             self._notify_line("model selection requires launching with --model vibeproxy")
             return
@@ -390,6 +430,18 @@ class HarnessTui(App):
         self._refresh_status()
         self.query_one("#conversation-input", Input).focus()
 
+    async def _reset_conversation(self) -> None:
+        """Empty the transcript and reset per-conversation state WITHOUT leaving
+        the conversation view (flipping _started=False would query the removed
+        #landing-input/#header-text and crash). No-op before the first prompt."""
+        if self._started:
+            await self._transcript.remove_children()
+        self._streaming_md = None
+        self._stream_buf = ""
+        self._stream_closed = True
+        self._tokens = 0
+        self._refresh_status()
+
     @property
     def _transcript(self) -> VerticalScroll:
         return self.query_one("#transcript", VerticalScroll)
@@ -439,6 +491,7 @@ class HarnessTui(App):
         # runs before this on a new turn). Closing keeps the widget reference so a
         # late delta from the prior answer extends ITS block in place rather than
         # spawning a stray block under this prompt (see _stream_message).
+        gen = self._send_gen                      # this turn belongs to this generation
         self._show_working()                      # spinner until the first token
         try:
             resp = await self._conn.prompt(
@@ -450,9 +503,10 @@ class HarnessTui(App):
         except Exception as e:
             self._append_line(_c("error", f"agent disconnected — restart to continue ({e})"))
         finally:
-            self._hide_working()
-            self._active_input().disabled = False
-            self._active_input().focus()
+            if gen == self._gen:                  # only the CURRENT generation touches the UI
+                self._hide_working()
+                self._active_input().disabled = False
+                self._active_input().focus()
 
     def _write_meta(self, elapsed: float) -> None:
         model_label = _model_label(self.model, self._worker_model_id)
@@ -506,6 +560,14 @@ class HarnessTui(App):
     def on_session_update(self, msg: SessionUpdate) -> None:
         if not self._started:
             return  # updates before first send (shouldn't happen) are ignored
+        # drop updates from a reloaded-away session: the generation tag is the
+        # load-bearing filter (stamped at post time); a gen-less message falls
+        # through to the session_id check (defense-in-depth).
+        if msg.gen is not None and msg.gen != self._gen:
+            return
+        if msg.session_id is not None and self._session_id is not None \
+                and msg.session_id != self._session_id:
+            return
         # token usage, if the agent surfaced any under _meta
         self._maybe_update_tokens(getattr(msg.update, "field_meta", None))
         for chip in harness_chips(getattr(msg.update, "field_meta", None)):
@@ -571,6 +633,46 @@ class HarnessTui(App):
     async def action_cancel(self) -> None:
         if self._conn is not None and self._session_id is not None:
             await self._conn.cancel(session_id=self._session_id)
+
+    async def action_clear(self) -> None:
+        if self._busy:
+            return
+        self._busy = True
+        try:
+            await self._reset_conversation()
+            await self._new_session()         # same subprocess → fresh empty transcript
+        finally:
+            self._busy = False
+
+    def _cancel_inflight(self) -> None:
+        """Cancel any running prompt/model worker and resolve a pending permission
+        future (the subprocess about to die will never answer it)."""
+        self.workers.cancel_all()
+        if self._pending_perm is not None and not self._pending_perm.done():
+            self._pending_perm.set_result(None)
+            self._pending_perm = None
+        if isinstance(self.screen, PermissionModal):
+            self.pop_screen()
+
+    async def action_reload(self) -> None:
+        if self._busy:
+            return
+        self._busy = True
+        try:
+            self._cancel_inflight()
+            await self._reset_conversation()
+            if self._started:                     # no transcript on the landing screen
+                self._append_line(_c("muted", "— reloading agent… —"))
+            await self._teardown()
+            try:
+                await self._connect()
+                # success → fresh agent = empty conversation; clear the transient
+                # "reloading…" progress line so the scrollback ends wiped.
+                await self._reset_conversation()
+            except Exception as e:
+                self._fatal(f"reload failed: {e}")
+        finally:
+            self._busy = False
 
     async def on_unmount(self) -> None:
         if self._pending_perm is not None and not self._pending_perm.done():

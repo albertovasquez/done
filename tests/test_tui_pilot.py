@@ -286,6 +286,17 @@ def test_pilot_slash_menu_closes_on_resize():
     asyncio.run(go())
 
 
+def test_session_update_message_carries_session_id():
+    from harness.tui.messages import SessionUpdate as SU
+    msg = SU("the-update", session_id="sess-7")
+    assert msg.update == "the-update"
+    assert msg.session_id == "sess-7"
+
+def test_session_update_session_id_defaults_to_none():
+    from harness.tui.messages import SessionUpdate as SU
+    assert SU("u").session_id is None
+
+
 def test_pilot_permission_modal_reject():
     """Optional Smoke: fake agent requests permission; rejecting (esc) resolves
     the Future and the turn completes. The permission modal is the shared
@@ -315,4 +326,236 @@ def test_pilot_permission_modal_reject():
         assert modal_seen, "permission modal never appeared"
         assert "done" in text, f"turn did not complete after reject.\n{text}"
 
+    asyncio.run(go())
+
+
+def test_teardown_then_connect_bumps_generation_and_reconnects():
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()                 # on_mount → _connect ran once
+            assert app._gen == 1, f"gen should be 1 after startup, got {app._gen}"
+            assert app._conn is not None and app._session_id is not None
+            await app._teardown()
+            assert app._cm is None and app._conn is None and app._session_id is None
+            await app._connect()
+            assert app._gen == 2, f"gen should bump on reconnect, got {app._gen}"
+            assert app._conn is not None and app._session_id is not None
+    asyncio.run(go())
+
+
+def test_teardown_is_idempotent_when_already_torn_down():
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await app._teardown()
+            await app._teardown()               # second call must not raise
+            assert app._conn is None
+    asyncio.run(go())
+
+
+def test_reset_conversation_empties_transcript_keeps_started():
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await _send_first_prompt(pilot, app, "hello")
+            for _ in range(50):
+                await pilot.pause()
+                if "done" in _transcript_text(app):
+                    break
+            assert _transcript_text(app).strip(), "precondition: transcript has content"
+            await app._reset_conversation()
+            await pilot.pause()
+            assert _transcript_text(app) == "", "transcript should be emptied"
+            assert app._started is True, "must stay in conversation view, not return to landing"
+            assert app.query("#transcript"), "#transcript widget must remain mounted"
+            assert app._streaming_md is None and app._stream_buf == ""
+            assert app._tokens == 0
+    asyncio.run(go())
+
+
+def test_clear_resets_session_without_respawn():
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await _send_first_prompt(pilot, app, "hello")
+            for _ in range(50):
+                await pilot.pause()
+                if "done" in _transcript_text(app):
+                    break
+            gen_before = app._gen
+            await app.action_clear()
+            await pilot.pause()
+            assert _transcript_text(app) == "", "clear should empty the transcript"
+            assert app._gen == gen_before, "clear must NOT respawn (generation unchanged)"
+            assert app._conn is not None, "subprocess/connection stays alive"
+            assert app._session_id is not None, "a fresh session exists"
+            assert app._busy is False, "busy flag released"
+    asyncio.run(go())
+
+
+def test_reload_respawns_and_bumps_generation():
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await _send_first_prompt(pilot, app, "hello")
+            for _ in range(50):
+                await pilot.pause()
+                if "done" in _transcript_text(app):
+                    break
+            gen_before = app._gen
+            await app.action_reload()
+            await pilot.pause()
+            assert app._gen == gen_before + 1, "reload must respawn (generation bumps)"
+            assert app._conn is not None, "reconnected after reload"
+            assert _transcript_text(app) == "", "scrollback wiped on reload"
+            assert app._busy is False
+    asyncio.run(go())
+
+
+def test_stale_session_update_after_reload_is_dropped():
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await _send_first_prompt(pilot, app, "hello")
+            for _ in range(50):
+                await pilot.pause()
+                if "done" in _transcript_text(app):
+                    break
+            await app.action_reload()           # bumps _gen; transcript wiped
+            await pilot.pause()
+            live_session = app._session_id
+            # 1) generation filter (load-bearing): an update stamped with the OLD
+            #    generation must be dropped even if its session_id matches the live
+            #    session.
+            stale_gen = SessionUpdate(
+                update_agent_message_text("GHOST"),
+                session_id=live_session, gen=app._gen - 1)
+            app.on_session_update(stale_gen)
+            await pilot.pause()
+            assert "GHOST" not in _transcript_text(app), \
+                "stale-generation update must be dropped"
+            # 2) session_id filter (defense-in-depth): an update with the CURRENT
+            #    generation but a session_id from a prior session must also drop.
+            stale_session = SessionUpdate(
+                update_agent_message_text("GHOST"),
+                session_id="OLD-SESSION", gen=app._gen)
+            app.on_session_update(stale_session)
+            await pilot.pause()
+            assert "GHOST" not in _transcript_text(app), \
+                "stale-session_id update must be dropped"
+    asyncio.run(go())
+
+
+def test_busy_guard_blocks_models_picker_and_prompt_send():
+    # Spec §6: while busy (e.g. a reload in flight), /models must not open a
+    # picker and a submitted prompt must not start a worker.
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="vibeproxy")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await app._enter_conversation()
+            class _Conn:
+                async def prompt(self, **kw):
+                    return NS(stop_reason="end_turn")
+            app._conn = _Conn(); app._session_id = "fake-session"
+            app._busy = True
+            # /models is a no-op while busy: no screen pushed, no fetch attempted.
+            screens_before = len(app.screen_stack)
+            await app.action_select_model()
+            await pilot.pause()
+            assert len(app.screen_stack) == screens_before, \
+                "busy /models must not push a model picker"
+            # a prompt submitted while busy must NOT start a worker.
+            workers_before = len(app.workers)
+            inp = app._active_input()
+            inp.value = "hello while busy"
+            await app.on_input_submitted(Input.Submitted(inp, "hello while busy"))
+            await pilot.pause()
+            assert len(app.workers) == workers_before, \
+                "busy prompt-send must not start a worker"
+    asyncio.run(go())
+
+
+def test_send_prompt_finally_no_reenable_after_generation_bump():
+    # An old prompt worker whose generation is stale must NOT re-enable input
+    # (that would undo a _fatal disable after a reload failure).
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await app._enter_conversation()
+            class _Conn:
+                async def prompt(self, **kw):
+                    return NS(stop_reason="end_turn")
+            app._conn = _Conn(); app._session_id = "fake-session"
+            app._send_gen = app._gen
+            app._active_input().disabled = True
+            app._gen += 1                        # simulate a reload happening mid-flight
+            await app._send_prompt("x")          # its captured gen is now stale
+            assert app._active_input().disabled is True, "stale worker must not re-enable input"
+    asyncio.run(go())
+
+
+def test_reload_starts_a_new_os_process(tmp_path):
+    import os
+    marker = tmp_path / "starts.txt"
+    cmd = [sys.executable, str(REPO / "tests/fake_agent.py")]
+    async def go():
+        os.environ["FAKE_AGENT_STARTS_FILE"] = str(marker)
+        try:
+            app = HarnessTui(agent_cmd=cmd, cwd=str(REPO), model="mock")
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                for _ in range(50):
+                    await pilot.pause()
+                    if marker.exists() and marker.read_text().count("start") >= 1:
+                        break
+                starts_before = marker.read_text().count("start")
+                await app.action_reload()
+                for _ in range(50):
+                    await pilot.pause()
+                    if marker.read_text().count("start") > starts_before:
+                        break
+            assert marker.read_text().count("start") == starts_before + 1, (
+                "reload must spawn exactly one new agent process")
+        finally:
+            os.environ.pop("FAKE_AGENT_STARTS_FILE", None)
+    asyncio.run(go())
+
+def test_reload_failure_keeps_app_alive_and_input_disabled():
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await _send_first_prompt(pilot, app, "hello")
+            for _ in range(50):
+                await pilot.pause()
+                if "done" in _transcript_text(app):
+                    break
+            # make the next _connect fail
+            app.agent_cmd = [sys.executable, "-c", "import sys; sys.exit(3)"]
+            await app.action_reload()
+            await pilot.pause()
+            assert app._conn is None, "failed reload leaves no live connection"
+            assert app._active_input().disabled is True, "_fatal must disable input"
+            assert app._busy is False, "busy released even on failure"
+            assert "reload failed" in _transcript_text(app)
+    asyncio.run(go())
+
+def test_reload_is_guarded_against_reentry():
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._busy = True                     # simulate a reload in progress
+            gen_before = app._gen
+            await app.action_reload()            # must early-return
+            assert app._gen == gen_before, "re-entrant reload must be a no-op"
+            app._busy = False
     asyncio.run(go())
