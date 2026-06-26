@@ -10,12 +10,26 @@ Screen { layout: vertical; background: $background; layers: base overlay; }
     padding: 1 2;
     height: auto;
 }
-.compose Input {
+/* PromptArea (a TextArea): grows with content from 1 row up to 3, then scrolls.
+   height: auto sizes to the text; max-height: 3 caps it; scrollbars hidden so a
+   long prompt scrolls cleanly without a gutter. compact=True drops the editor
+   chrome so it reads like the old single-line box. */
+.compose TextArea {
     background: $surface;
     border: none;
-    height: 1;
+    height: auto;
+    min-height: 1;
+    max-height: 3;
     padding: 0;
     color: $foreground;
+    scrollbar-size: 0 0;
+}
+.compose TextArea:focus {
+    background: $surface;
+}
+/* the inner editable surface mirrors the box background in every cursor state */
+.compose TextArea > .text-area--cursor-line {
+    background: $surface;
 }
 .compose-meta { color: $muted; padding-top: 1; }
 

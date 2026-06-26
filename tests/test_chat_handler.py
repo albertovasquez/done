@@ -140,3 +140,53 @@ def test_ordinary_chat_still_streams_from_model_when_catalog_present(monkeypatch
     out = "".join(ChatHandler("gpt-5.4", catalog=CAT).answer_stream("what is python?"))
     assert out == "Python"                       # catalog present but not a meta-question
     assert captured.get("stream") is True
+
+
+def test_persona_block_prepended_as_system_message(monkeypatch):
+    captured = {}
+
+    def fake_completion(**kwargs):
+        captured.update(kwargs)
+        return iter([_Chunk("ok")])
+
+    import litellm
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+
+    list(ChatHandler("gpt-5.4", persona_block="BE TERSE").answer_stream("hi"))
+    assert captured["messages"] == [
+        {"role": "system", "content": "BE TERSE"},
+        {"role": "user", "content": "hi"},
+    ]
+
+
+def test_persona_block_prepended_before_history(monkeypatch):
+    captured = {}
+
+    def fake_completion(**kwargs):
+        captured.update(kwargs)
+        return iter([_Chunk("ok")])
+
+    import litellm
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+
+    history = [{"role": "user", "content": "earlier"}]
+    list(ChatHandler("gpt-5.4", persona_block="BE TERSE").answer_stream("hi", history=history))
+    assert captured["messages"] == [
+        {"role": "system", "content": "BE TERSE"},
+        {"role": "user", "content": "earlier"},
+        {"role": "user", "content": "hi"},
+    ]
+
+
+def test_empty_persona_block_adds_no_system_message(monkeypatch):
+    captured = {}
+
+    def fake_completion(**kwargs):
+        captured.update(kwargs)
+        return iter([_Chunk("ok")])
+
+    import litellm
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+
+    list(ChatHandler("gpt-5.4", persona_block="").answer_stream("hi"))
+    assert captured["messages"] == [{"role": "user", "content": "hi"}]   # byte-identical

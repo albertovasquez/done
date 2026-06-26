@@ -57,3 +57,9 @@ def test_extend_does_not_touch_history(tmp_path):
     store = SessionStore(); sid = store.new(cwd=str(tmp_path))
     store.extend(sid, [{"role": "user", "content": "hi", "origin": "agent"}])
     assert store.get(sid).history == []
+
+
+def test_session_state_persona_block_defaults_none():
+    from harness.acp_session import SessionState
+    s = SessionState(cwd="/tmp")
+    assert s.persona_block is None      # sentinel: not-yet-composed (NOT "")

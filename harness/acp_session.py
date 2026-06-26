@@ -5,7 +5,11 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from harness.persona import PersonaLoad
 
 
 @dataclass
@@ -14,6 +18,9 @@ class SessionState:
     cancel_flag: threading.Event = field(default_factory=threading.Event)
     history: list[dict] = field(default_factory=list)
     transcript: list[dict] = field(default_factory=list)  # [{role, content, origin}], plain text
+    persona_block: str | None = None  # None = not-yet-composed; "" = composed-empty
+    persona_load: "PersonaLoad | None" = None
+    persona_load_emitted: bool = False
 
 
 class SessionStore:

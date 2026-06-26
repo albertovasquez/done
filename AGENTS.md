@@ -72,6 +72,11 @@ The harness is an ACP engine; clients (TUI, editor, future workers) consume it
 over the protocol. New capabilities belong in the engine/agent, surfaced over
 ACP — not baked into one client. Keep that separation.
 
+> Engine capabilities are documented for users and agents in `README.md` and
+> `docs/` — e.g. **personas** (agent identity from `~/.config/harness/agents/`)
+> in [`docs/personas.md`](docs/personas.md). Read those before answering "how
+> does X work?"; verify against live code, since docs can lag a phase behind.
+
 ## 7. Commit message trailer
 
 End commit messages with:

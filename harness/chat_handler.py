@@ -50,12 +50,16 @@ def _format_catalog(catalog: list[tuple[str, str]]) -> str:
 
 class ChatHandler:
     def __init__(self, worker_model_id: str | None,
-                 catalog: list[tuple[str, str]] | None = None):
+                 catalog: list[tuple[str, str]] | None = None,
+                 persona_block: str = ""):
         # None => mock mode (no chat-capable model available)
         self._model_id = worker_model_id
         # The skill catalog (name, description) — used to answer capability
         # questions from data instead of the model. Empty/None => not available.
         self._catalog = catalog or []
+        # Persona context (identity trio). Prepended as a system message on every
+        # turn when non-empty; "" => no system message (byte-identical to before).
+        self._persona_block = persona_block
 
     def answer_stream(self, prompt: str,
                       history: list[dict] | None = None) -> Iterator[str]:
@@ -75,7 +79,9 @@ class ChatHandler:
             model="openai/" + self._model_id,
             api_base=os.getenv("VIBEPROXY_BASE_URL", "http://localhost:8317/v1"),
             api_key=os.getenv("VIBEPROXY_API_KEY", "dummy-not-used"),
-            messages=(history or []) + [{"role": "user", "content": prompt}],
+            messages=(([{"role": "system", "content": self._persona_block}]
+                       if self._persona_block else [])
+                      + (history or []) + [{"role": "user", "content": prompt}]),
             max_tokens=1000,
             stream=True,
         )

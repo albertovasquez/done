@@ -69,3 +69,14 @@ def test_skills_dirs_orders_bundled_then_user(monkeypatch, tmp_path):
     dirs = paths.skills_dirs()
     assert dirs[0] == paths.bundled_skills_dir()            # bundled first (lowest precedence)
     assert dirs[-1] == tmp_path / "harness" / "skills"      # user last (wins)
+
+
+def test_default_workspace_dir_under_config(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    assert paths.default_workspace_dir() == tmp_path / "harness" / "agents" / "default"
+
+
+def test_default_workspace_dir_does_not_create(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    d = paths.default_workspace_dir()
+    assert not d.exists()

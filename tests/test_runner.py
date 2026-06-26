@@ -179,3 +179,25 @@ def test_7_skill_block_accepted_by_runner(tmp_path):
     assert captured_kwargs.get("skill_block") == "\n\nINJECTED_SKILL_MARKER", (
         "skill_block must be passed to TracingAgent ctor, not leaked into agent.run kwargs"
     )
+
+
+def test_runner_passes_persona_block_to_agent(tmp_path, monkeypatch):
+    from harness.runner import MiniSweAgentRunner
+    from harness.models_mock import build_mock_model
+    from minisweagent.environments.local import LocalEnvironment
+    import yaml
+    from pathlib import Path
+
+    captured = {}
+    import harness.runner as rmod
+    real = rmod.TracingAgent
+    def spy(*args, **kwargs):
+        captured.update(kwargs)
+        return real(*args, **kwargs)
+    monkeypatch.setattr(rmod, "TracingAgent", spy)
+
+    cfg = yaml.safe_load(Path("upstream/src/minisweagent/config/mini.yaml").read_text())["agent"]
+    runner = MiniSweAgentRunner(build_mock_model(), LocalEnvironment(cwd=str(tmp_path)), agent_cfg=cfg)
+    list(runner.run("do a thing", skill_block="\n\nSK", persona_block="\n\nPER"))
+    assert captured.get("persona_block") == "\n\nPER"
+    assert captured.get("skill_block") == "\n\nSK"

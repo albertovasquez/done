@@ -11,6 +11,7 @@ from harness.tui.commands import build_registry, filter_commands
 from harness.tui.app import HarnessTui
 from harness.tui.widgets.select_modal import SelectModal, SelectOption
 from textual.widgets import Input, ListView
+from harness.tui.widgets.prompt_area import PromptArea
 
 REPO = Path(__file__).resolve().parent.parent
 # Running interpreter (portable across worktrees / any cwd), not a hardcoded
@@ -84,7 +85,7 @@ def test_slash_menu_opens_filters_closes():
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
         async with app.run_test() as pilot:
             await pilot.pause()
-            inp = app.query_one("#landing-input", Input)
+            inp = app.query_one("#landing-input", PromptArea)
             inp.focus()
             inp.value = "/"
             await pilot.pause(); await pilot.pause()
@@ -107,7 +108,7 @@ def test_slash_exit_quits_app():
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
         async with app.run_test() as pilot:
             await pilot.pause()
-            inp = app.query_one("#landing-input", Input)
+            inp = app.query_one("#landing-input", PromptArea)
             inp.focus()
             inp.value = "/exit"
             await pilot.pause()
@@ -123,7 +124,7 @@ def test_slash_quit_alias_quits_app():
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
         async with app.run_test() as pilot:
             await pilot.pause()
-            inp = app.query_one("#landing-input", Input)
+            inp = app.query_one("#landing-input", PromptArea)
             inp.focus()
             inp.value = "/quit"
             await pilot.pause()

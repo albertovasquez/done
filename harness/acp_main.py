@@ -98,6 +98,7 @@ async def _main(argv=None) -> None:
         worker_model_id=worker_model_id,
         yolo=args.yolo,
         backend=args.model,
+        workspace_dir=paths.default_workspace_dir(),
     )
     await acp.run_agent(agent)
 
