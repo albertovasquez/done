@@ -250,7 +250,8 @@ class HarnessTui(App):
 
     def _tick_elapsed(self) -> None:
         """Quarter-second tick: update the active agent's elapsed time in-snapshot and
-        refresh ActivityStatus while a turn is in flight."""
+        refresh ActivityStatus while a turn is in flight. This 4Hz tick is a no-op
+        while idle (guarded by the early return below), so no need to pause it."""
         from dataclasses import replace as _replace
         a = self._snapshot.active
         if a is None:
@@ -501,7 +502,18 @@ class HarnessTui(App):
         self._stream_closed = True
         self._boundary_after = False
         self._tokens = 0
+        self._tool_rows = {}
+        self._snapshot = initial_snapshot()
         self._refresh_status()
+        # Refresh mounted widgets if they exist (they may not be in all states)
+        try:
+            self.query_one("#activity", ActivityStatus).update_from(self._snapshot.active)
+        except Exception:
+            pass
+        try:
+            self.query_one("#tasktree", TaskTree).update_tasks(self._snapshot.active.tasks if self._snapshot.active else [])
+        except Exception:
+            pass
 
     @property
     def _transcript(self) -> VerticalScroll:

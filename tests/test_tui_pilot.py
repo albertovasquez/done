@@ -532,6 +532,34 @@ def test_clear_failure_keeps_app_alive_and_input_disabled():
             assert "clear failed" in _transcript_text(app)
     asyncio.run(go())
 
+
+def test_reset_conversation_clears_tool_rows_and_snapshot():
+    """After /clear, _reset_conversation must empty tool_rows dict and reset
+    snapshot state, not just the transcript text."""
+    from harness.tui.state import AgentState
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await _send_first_prompt(pilot, app, "hello")
+            for _ in range(50):
+                await pilot.pause()
+                if "done" in _transcript_text(app):
+                    break
+            # Populate tool_rows (or just assert it would be set in a real flow)
+            app._tool_rows["fake-id"] = NS(id="fake-id")
+            assert app._tool_rows, "precondition: tool_rows should have entries"
+            assert app._snapshot.active is not None, "precondition: snapshot.active exists"
+            # Reset the conversation
+            await app._reset_conversation()
+            await pilot.pause()
+            # Both must be cleared/reset
+            assert app._tool_rows == {}, \
+                f"tool_rows should be empty after reset, got {app._tool_rows}"
+            assert app._snapshot.active.state == AgentState.IDLE, \
+                f"snapshot.active.state should be IDLE after reset, got {app._snapshot.active.state}"
+    asyncio.run(go())
+
 def test_reload_is_guarded_against_reentry():
     async def go():
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")

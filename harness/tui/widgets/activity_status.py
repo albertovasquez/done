@@ -26,7 +26,7 @@ def _fmt_tokens(n: int) -> str:
 class ActivityStatus(Static):
     def __init__(self, **kwargs) -> None:
         super().__init__("", markup=True, **kwargs)
-        self._i = -1   # first _tick increments to 0, so cycle starts at frame 0
+        self._i = 0   # glyph starts at frame 0 (◐); each tick advances it to the next frame
         self._snap: AgentSnapshot | None = None
 
     def on_mount(self) -> None:
