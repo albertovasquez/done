@@ -77,3 +77,24 @@ def test_4_malformed_field_types_are_handled(tmp_path=None):
                 catalog=_CATALOG).classify("huh")
     assert c2.needs_clarification is True
     assert "None" not in (c2.clarifying_question or "")
+
+
+def test_5_system_prompt_tells_router_it_runs_in_a_real_project():
+    """The router must know the agent operates IN a project directory it can
+    inspect, so questions about "this app/code/project" route to code_explain
+    (let the agent look) instead of bouncing to ambiguous. We capture the system
+    prompt the router actually sends."""
+    seen = {}
+
+    def capture(system, user):
+        seen["system"] = system
+        return json.dumps({"task_type": "code_explain", "skills": [],
+                           "confidence": 0.9, "reasoning": "x"})
+
+    Router(capture, catalog=_CATALOG).classify("What kind of application is this?")
+    sys_l = seen["system"].lower()
+    # the prompt names the working/project directory and that it can be inspected
+    assert "project" in sys_l or "working directory" in sys_l, seen["system"]
+    assert "inspect" in sys_l or "read" in sys_l, seen["system"]
+    # and explicitly steers project-reference questions to code_explain, not ambiguous
+    assert "code_explain" in seen["system"], seen["system"]
