@@ -13,7 +13,8 @@ dist/
 vendor/
 .venv/
 
-# AGENTS.md is a SHARED, committed operating standard for this repo. The user's
-# global gitignore (~/.config/git/ignore) ignores AGENTS.md everywhere; this
-# negation re-includes it here so the team gets it. (CLAUDE.md stays local.)
-!AGENTS.md
+# The ROOT AGENTS.md is a SHARED, committed operating standard for this repo. The
+# user's global gitignore (~/.config/git/ignore) ignores AGENTS.md everywhere;
+# this negation re-includes ONLY the root one so the team gets it. (CLAUDE.md
+# stays local; upstream/AGENTS.md stays ignored — upstream is vendored, untracked.)
+!/AGENTS.md
