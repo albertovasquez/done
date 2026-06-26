@@ -219,3 +219,38 @@ handles a single turn; (2) the permission hook wired into `AcpEnvironment`;
 (3) filesystem and terminal delegation forwarded as ACP tool events; (4) session
 resume via `SessionStore`, so a client can reconnect to a prior run by ID. Each
 layer had its own test file; all 65 tests pass together.
+
+## Phase 5 — Textual ACP client (TUI)
+
+The engine was already an ACP agent (Phase 4), so the TUI is "the same engine,
+our pixels." The lesson: **a generic client renders our agent but drops what
+makes it ours.** Toad (the Textual/ACP north star) ignores `_meta` entirely —
+every RPC handler accepts `_meta` and never reads it. So we built our own thin
+client whose whole reason to exist is rendering the `_meta["harness"]`
+classify/skill stream. The differentiator lives in the purest, most-tested layer
+(`render.harness_chips`), pinned to the exact shape the agent emits.
+
+Concurrency asymmetry worth remembering: the **agent** side needed a thread
+bridge (the engine is blocking/sync); the **client** side needs none — it is
+async all the way down. `conn.prompt` runs in an async Textual worker
+(`thread=False`) only to keep the input handler responsive while the turn
+streams; the SDK's receive/dispatch already run on the same loop.
+
+Codex pre-impl review caught a CRITICAL: `AllowedOutcome` requires the
+discriminator `outcome="selected"` — omitting it raises `ValidationError`, so
+every Allow would have crashed. And it corrected a false assumption that
+`RichLog.write()` returns an editable line handle (it appends only) → tool
+status is append-only in v1.
+
+The per-task Codex review caught a real permission bug: the client first decided
+allow-vs-reject by the *truthiness* of the resolved option_id, but the agent
+offers a `reject_once` option whose id is a truthy string — so clicking Reject
+would have produced an `AllowedOutcome` and run a rejected command. Fixed by
+deciding from the option's `kind` (allow* → allow, else deny), with a regression
+test.
+
+A latent runtime bug nearly shipped: `CSS_PATH = "tui/app.tcss"` resolves
+relative to the app module's own directory (`trace/tui/`), so it pointed at the
+nonexistent `trace/tui/tui/app.tcss`. The import-smoke test didn't catch it
+because Textual loads CSS lazily at `run()`. Fixed to `"app.tcss"` and proven by
+booting the app headless (44 stylesheet rules loaded).

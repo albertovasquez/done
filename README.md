@@ -55,6 +55,20 @@ prompts, receiving streamed `message_chunk` events, issuing `cancel`, and
 resuming prior sessions by ID. All Phase-1–3 capabilities (tracing, skills,
 permissions, fs/terminal delegation) are available through the ACP interface.
 
+### Phase 5 — Textual ACP client (TUI)
+
+A single-session Textual TUI that is an **ACP client** driving the Phase-4 agent
+as a subprocess. Run it:
+
+    .venv/bin/python trace/tui_main.py --model mock          # or --model vibeproxy
+    .venv/bin/python trace/tui_main.py --model mock --cwd ~/myproject
+
+Type a prompt; watch the streaming session/update render — messages, tool-call
+lines, permission prompts (as a modal), and the harness **chips**
+(`classified: …`, `skills: N loaded`) that generic ACP clients (Toad/Zed) drop.
+The TUI is `render.py` (pure update→display) + `client.py` (`acp.Client`) +
+`app.py` (Textual shell), on the official `acp` SDK both ends.
+
 ## Layout
 - `upstream/` — vendored mini-swe-agent, never edited.
 - `trace/` — the tracer (events, agent overrides, mock model, runner, ACP server).
