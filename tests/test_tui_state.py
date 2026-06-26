@@ -254,3 +254,21 @@ def test_turn_started_resets_tools():
     assert len(fs.active.tools) == 1
     fs = reduce(fs, TurnStarted())
     assert fs.active.tools == (), "TurnStarted must reset tools"
+
+
+def test_tool_update_propagates_body():
+    fs = reduce(initial_snapshot(), TurnStarted())
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="tool", id="t1", title="$ cat f", status="pending")))
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="tool_update", id="t1", status="completed", body="hello\nworld")))
+    a = _active(fs)
+    assert a.tools[0].body == "hello\nworld"
+    assert a.tool.body == "hello\nworld"
+
+
+def test_tool_update_without_body_keeps_prior_body():
+    fs = reduce(initial_snapshot(), TurnStarted())
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="tool", id="t1", title="$ x", status="pending")))
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="tool_update", id="t1", status="active", body="partial")))
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="tool_update", id="t1", status="completed", body="")))
+    a = _active(fs)
+    assert a.tools[0].body == "partial", "a body-less update must not wipe the prior body"

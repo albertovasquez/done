@@ -190,7 +190,9 @@ def _reduce_agent(a: AgentSnapshot, event) -> AgentSnapshot:
             ts = _tool_status(getattr(item, "status", ""))
             uid = getattr(item, "id", "")
             new_tools = tuple(
-                replace(tv, status=ts) if tv.id == uid else tv for tv in a.tools
+                replace(tv, status=ts, body=(getattr(item, "body", "") or tv.body))
+                if tv.id == uid else tv
+                for tv in a.tools
             )
             updated = next((tv for tv in new_tools if tv.id == uid), None)
             new_task_status = _task_status_from_tool(ts)
