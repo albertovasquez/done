@@ -46,6 +46,11 @@ EOF
 dn
 ```
 
+On a fresh install, `~/.config/harness/agents/default/` is seeded for you with
+three template files (`SOUL.md`, `IDENTITY.md`, `USER.md`). They contain only a
+commented hint, so they inject nothing until you replace the comment with real
+text — the agent's behavior is unchanged until you edit one.
+
 Now both a chat question ("what's the weather model here?") and a coding task
 ("fix the failing test") run with that persona baked into the agent's system
 prompt — terse, and calling you "Captain".
