@@ -24,13 +24,15 @@ def _fmt_tokens(n: int) -> str:
 
 
 class ActivityStatus(Static):
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, reduced_motion: bool = False, **kwargs) -> None:
         super().__init__("", markup=True, **kwargs)
         self._i = 0   # glyph starts at frame 0 (◐); each tick advances it to the next frame
         self._snap: AgentSnapshot | None = None
+        self._reduced_motion = reduced_motion
 
     def on_mount(self) -> None:
-        self._timer = self.set_interval(0.15, self._tick)
+        if not self._reduced_motion:
+            self._timer = self.set_interval(0.15, self._tick)
 
     def line_for(self, snap: AgentSnapshot, glyph: str = "◐") -> str:
         if snap.state not in _WORKING:
@@ -64,4 +66,5 @@ class ActivityStatus(Static):
         if self._snap is None:
             self.update("")
             return
-        self.update(self.line_for(self._snap, _CYCLE[self._i]))
+        glyph = "◐" if self._reduced_motion else _CYCLE[self._i]
+        self.update(self.line_for(self._snap, glyph))

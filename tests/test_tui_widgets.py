@@ -57,6 +57,11 @@ def test_activity_status_blank_when_idle():
     assert w.line_for(snap).strip() == ""
 
 
+def test_activity_status_reduced_motion_disables_animation():
+    w = ActivityStatus(reduced_motion=True)
+    assert w._reduced_motion is True
+
+
 from harness.tui.state import TaskItem, ToolView, ToolStatus
 from harness.tui.widgets.task_tree import TaskTree
 from harness.tui.widgets.tool_call_row import ToolCallRow
