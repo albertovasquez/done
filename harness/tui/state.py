@@ -100,3 +100,98 @@ def infer_subtype(command: str) -> str:
     if first in ("cat", "head", "tail", "less", "bat"):
         return "read"
     return "shell"
+
+
+# ---- reducer events ----
+
+@dataclass(frozen=True)
+class TurnStarted: ...
+
+
+@dataclass(frozen=True)
+class TurnEnded:
+    ok: bool = True
+
+
+@dataclass(frozen=True)
+class ItemReceived:
+    item: object              # a render.RenderedItem (duck-typed: .kind/.title/.status/.id)
+
+
+@dataclass(frozen=True)
+class TokensUpdated:
+    total: int
+
+
+@dataclass(frozen=True)
+class PermissionOpened: ...
+
+
+@dataclass(frozen=True)
+class PermissionClosed: ...
+
+
+def _tool_status(raw: str) -> ToolStatus:
+    s = str(raw)
+    if "." in s:
+        s = s.rsplit(".", 1)[-1]
+    return {
+        "pending": ToolStatus.PENDING,
+        "in_progress": ToolStatus.ACTIVE,
+        "active": ToolStatus.ACTIVE,
+        "completed": ToolStatus.DONE,
+        "failed": ToolStatus.FAILED,
+    }.get(s, ToolStatus.ACTIVE)
+
+
+def _task_status_from_tool(ts: ToolStatus) -> str:
+    return {ToolStatus.DONE: "done", ToolStatus.FAILED: "failed"}.get(ts, "in_progress")
+
+
+def _reduce_agent(a: AgentSnapshot, event) -> AgentSnapshot:
+    if isinstance(event, TurnStarted):
+        return replace(a, state=AgentState.THINKING, activity_label="Thinking…",
+                       tool=None, decision=None, tasks=(), elapsed=0.0)
+    if isinstance(event, TokensUpdated):
+        return replace(a, tokens=event.total)
+    if isinstance(event, PermissionOpened):
+        return replace(a, state=AgentState.AWAITING_PERMISSION)
+    if isinstance(event, PermissionClosed):
+        nxt = AgentState.RUNNING_TOOL if a.tool is not None else AgentState.RESPONDING
+        return replace(a, state=nxt)
+    if isinstance(event, TurnEnded):
+        return replace(a, state=AgentState.DONE if event.ok else AgentState.FAILED,
+                       tool=None, activity_label="")
+    if isinstance(event, ItemReceived):
+        item = event.item
+        kind = getattr(item, "kind", "")
+        if kind == "message":
+            return replace(a, state=AgentState.RESPONDING, activity_label="Responding…")
+        if kind == "tool":
+            ts = _tool_status(getattr(item, "status", ""))
+            title = getattr(item, "title", "")
+            subtype = infer_subtype(title)
+            tool = ToolView(title=title, status=ts, subtype=subtype)
+            tasks = a.tasks + (TaskItem(label=title, status="in_progress"),)
+            return replace(a, state=AgentState.RUNNING_TOOL, tool=tool, tasks=tasks,
+                           activity_label=f"Running {subtype}")
+        if kind == "tool_update":
+            ts = _tool_status(getattr(item, "status", ""))
+            tool = replace(a.tool, status=ts) if a.tool is not None else None
+            new_task_status = _task_status_from_tool(ts)
+            tasks = tuple(
+                replace(t, status=new_task_status) if i == len(a.tasks) - 1 else t
+                for i, t in enumerate(a.tasks)
+            ) if a.tasks else a.tasks
+            return replace(a, tool=tool, tasks=tasks)
+    return a
+
+
+def reduce(snapshot: FleetSnapshot, event) -> FleetSnapshot:
+    """Pure: fold one event into the snapshot, updating the ACTIVE agent only
+    (single-agent today; fleet fan-out later targets event.agent_id)."""
+    agents = tuple(
+        _reduce_agent(a, event) if a.id == snapshot.active_id else a
+        for a in snapshot.agents
+    )
+    return FleetSnapshot(agents=agents, active_id=snapshot.active_id)
