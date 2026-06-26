@@ -120,6 +120,7 @@ class HarnessAgent(acp.Agent):
             persona_first_load = await loop.run_in_executor(
                 None, persona.resolve_persona, self._workspace_dir)
             state.persona_block = persona_first_load.block
+            state.persona_load = persona_first_load
 
         # 1) classify in the executor (sync litellm call must not block the loop)
         try:
@@ -135,16 +136,18 @@ class HarnessAgent(acp.Agent):
         await self._conn.session_update(session_id,
             with_meta(message_chunk(""), {"task_classified": meta}))
 
-        # Deferred persona_load emit: after task_classified, only on the FIRST turn
-        # that composed a NON-EMPTY persona AND only on personalized dispatch paths
+        # Deferred persona_load emit: after task_classified, only once per session
+        # for a NON-EMPTY persona AND only on personalized dispatch paths
         # (chat/agent — never clarify/ambiguous). GATED on injected so the empty
         # default emits nothing (the byte-identical no-op guarantee).
         personalized = not (cls.needs_clarification or cls.task_type == "ambiguous")
-        if persona_first_load and persona_first_load.injected and personalized:
+        if (not state.persona_load_emitted and state.persona_load
+                and state.persona_load.injected and personalized):
             await self._conn.session_update(session_id,
                 with_meta(message_chunk(""),
-                          {"persona_load": {"injected": persona_first_load.injected,
-                                            "skipped": persona_first_load.skipped}}))
+                          {"persona_load": {"injected": state.persona_load.injected,
+                                            "skipped": state.persona_load.skipped}}))
+            state.persona_load_emitted = True
 
         if cls.needs_clarification or cls.task_type == "ambiguous":
             q = cls.clarifying_question or "Could you clarify the task?"

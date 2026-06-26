@@ -235,3 +235,34 @@ def test_11_skill_load_emitted_and_block_passed(tmp_path):
     assert len(sl) == 1 and sl[0]["data"]["injected"] == ["systematic-debugging"]
     assert received["block"] == "\n\nPOKER"                 # block reached run_agent
     assert any("injected" in line for line in out)          # console showed it
+
+
+def test_main_threads_persona_to_chat_path(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    ws = tmp_path / "harness" / "agents" / "default"
+    ws.mkdir(parents=True)
+    (ws / "SOUL.md").write_text("BE TERSE", encoding="utf-8")
+
+    monkeypatch.setattr(rt, "_run_id", lambda: "pytest-persona-chat")
+
+    class FakeRouter:
+        def __init__(self, *_a, **_kw):
+            self.catalog = []
+
+        def classify(self, _prompt):
+            return _cls("chat_question", confidence=1.0)
+
+    captured = {}
+
+    class FakeChatHandler:
+        def __init__(self, worker_model_id, catalog=None, persona_block=""):
+            captured["persona_block"] = persona_block
+
+        def answer_stream(self, _prompt):
+            return iter(["ok"])
+
+    monkeypatch.setattr(rt, "Router", FakeRouter)
+    monkeypatch.setattr(rt, "ChatHandler", FakeChatHandler)
+
+    assert rt.main(["--model", "mock", "--task", "hello", "--cwd", str(tmp_path)]) == 0
+    assert "BE TERSE" in captured["persona_block"]

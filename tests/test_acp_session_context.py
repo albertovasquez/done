@@ -302,3 +302,19 @@ def test_persona_load_not_emitted_on_clarify_turn(tmp_path):
     # the same session reuses it without re-reading disk) — compose is not skipped,
     # only the telemetry emit is.
     assert "BE TERSE" in agent._store.get(sid).persona_block
+
+
+def test_persona_load_emits_on_first_personalized_turn_after_clarify(tmp_path):
+    ws = tmp_path / "ws"; ws.mkdir()
+    (ws / "SOUL.md").write_text("BE TERSE", encoding="utf-8")
+    agent = _build(_ScriptedRouter([_ambiguous(), _agent_fix()]), worker_model_id=None)
+    agent._workspace_dir = ws
+    sid = asyncio.run(agent.new_session(cwd=".")).session_id
+
+    _prompt(agent, sid, "uh")
+    assert "persona_load" not in _meta_keys_in_order(agent)
+
+    _prompt(agent, sid, "fix the bug")
+    keys = _meta_keys_in_order(agent)
+    assert keys.count("persona_load") == 1
+    assert keys.index("task_classified", 1) < keys.index("persona_load")

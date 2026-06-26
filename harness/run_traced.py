@@ -123,10 +123,9 @@ def main(argv: list[str] | None = None) -> int:
     agent_cfg = _load_agent_config()
     agent_cfg["output_path"] = str(run_dir / "traj.json")
     emitter = Emitter(run_dir / "events.jsonl", clock=lambda: 0.0, console=True)
+    persona_block = _persona.resolve_persona(_paths_persona.default_workspace_dir()).block
 
     def run_agent(prompt, skill_block=""):
-        persona_block = _persona.resolve_persona(
-            _paths_persona.default_workspace_dir()).block
         runner = MiniSweAgentRunner(model, env, agent_cfg=agent_cfg)
         try:
             for event in runner.run(prompt, skill_block=skill_block,
@@ -148,7 +147,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         rc = route_and_dispatch(
             args.task, router=router, emitter=emitter,
-            make_chat_handler=lambda: ChatHandler(worker_model_id, catalog=router.catalog),
+            make_chat_handler=lambda: ChatHandler(worker_model_id, catalog=router.catalog,
+                                                  persona_block=persona_block),
             run_agent=run_agent, ask_user=input, echo=print,
             worker_model_id=worker_model_id,
             load_skills=lambda names: skills.compose(skills_roots, names))
