@@ -6,8 +6,22 @@ from __future__ import annotations
 
 from textual.widgets import Static
 
-from harness.tui.state import AgentState
+from harness.tui.state import AgentState, ToolStatus
 from harness.tui.tokens import GLYPH, STATUS_LABEL
+
+# Shared ToolStatus → display mappings; imported by ToolCallRow to avoid duplication.
+TOOL_STATUS_TOKEN: dict[ToolStatus, str] = {
+    ToolStatus.PENDING: "scheduled",
+    ToolStatus.ACTIVE: "accent",
+    ToolStatus.DONE: "success",
+    ToolStatus.FAILED: "error",
+}
+TOOL_STATUS_LABEL: dict[ToolStatus, str] = {
+    ToolStatus.PENDING: "QUEUED",
+    ToolStatus.ACTIVE: "RUNNING",
+    ToolStatus.DONE: "COMPLETED",
+    ToolStatus.FAILED: "FAILED",
+}
 
 _STATE_TOKEN = {
     AgentState.IDLE: "muted",
@@ -66,10 +80,10 @@ class ActivityGlyph(Static):
     def __init__(self, reduced_motion: bool = False) -> None:
         super().__init__(markup=True)
         self._frames_static = reduced_motion
-        self._i = 0
+        self._i = -1   # first _tick increments to 0, so cycle starts at frame 0
 
     def on_mount(self) -> None:
-        self.update("[$accent]◐[/]")
+        self.update(f"[$accent]{self._CYCLE[0]}[/]")
         if not self._frames_static:
             self.set_interval(0.15, self._tick)
 

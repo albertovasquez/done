@@ -5,13 +5,9 @@ from __future__ import annotations
 
 from textual.widgets import Static
 
-from harness.tui.state import ToolView, ToolStatus
+from harness.tui.state import ToolView
 from harness.tui.tokens import GLYPH
-
-_STATUS_TOKEN = {ToolStatus.PENDING: "scheduled", ToolStatus.ACTIVE: "accent",
-                 ToolStatus.DONE: "success", ToolStatus.FAILED: "error"}
-_STATUS_LABEL = {ToolStatus.PENDING: "QUEUED", ToolStatus.ACTIVE: "RUNNING",
-                 ToolStatus.DONE: "COMPLETED", ToolStatus.FAILED: "FAILED"}
+from harness.tui.widgets.status_chip import TOOL_STATUS_TOKEN, TOOL_STATUS_LABEL
 
 
 class ToolCallRow(Static):
@@ -23,7 +19,7 @@ class ToolCallRow(Static):
     def line_for(self, tool: ToolView) -> str:
         glyph = GLYPH.get(tool.subtype, GLYPH["shell"])
         title = tool.title[2:] if tool.title.startswith("$ ") else tool.title
-        token = _STATUS_TOKEN.get(tool.status, "muted")
-        label = _STATUS_LABEL.get(tool.status, "")
+        token = TOOL_STATUS_TOKEN.get(tool.status, "muted")
+        label = TOOL_STATUS_LABEL.get(tool.status, "")
         return (f"[${token}]{glyph}[/] [$foreground]{title}[/]   "
                 f"[${token}][b]{label}[/b][/]")

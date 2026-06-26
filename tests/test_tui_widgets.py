@@ -21,11 +21,18 @@ def test_state_color_token_mapping():
 
 def test_status_chip_renders_uppercase_label():
     chip = StatusChip.from_state(AgentState.RUNNING_TOOL)
-    # the rendered markup contains the uppercase chip label
+    # assert on the markup string passed to update() — stored as _Static__content
+    markup = chip._Static__content
+    assert "RUNNING" in markup
+    assert "[b]" in markup          # bold marker is present in the markup
     assert "RUNNING" in chip._label
 
 
 def test_activity_glyph_reduced_motion_is_static():
+    # Attribute-level assertion is the unit-test ceiling here: on_mount (which
+    # sets up the timer and initial display) only runs inside a mounted Textual
+    # app, which requires async infrastructure. We verify the flag is recorded
+    # so that on_mount will skip the timer branch.
     g = ActivityGlyph(reduced_motion=True)
     assert g._frames_static is True
 
@@ -77,7 +84,9 @@ def test_tool_call_row_line():
 
 
 from harness.tui.state import DecisionView
-from harness.tui.widgets.decision_prompt import DecisionPrompt
+from harness.tui.widgets.decision_prompt import (
+    DecisionPrompt, TYPE_SOMETHING, CHAT_ABOUT_IT,
+)
 
 
 def test_decision_prompt_option_lines():
@@ -91,3 +100,111 @@ def test_decision_prompt_option_lines():
     assert any("isolated" in ln for ln in lines)
     assert any("Type something" in ln for ln in lines)
     assert any("Chat about this" in ln for ln in lines)
+
+
+# --- Finding (1): DecisionPrompt cursor + option_lines ---
+
+def _make_dp(n: int = 2) -> DecisionPrompt:
+    options = tuple((f"Opt{i}", f"rationale {i}") for i in range(n))
+    dv = DecisionView(question="Q?", options=options)
+    return DecisionPrompt(dv)
+
+
+def test_decision_prompt_cursor_marker_at_start():
+    dp = _make_dp(2)
+    # cursor starts at 0; first option line should have the › prefix
+    lines = dp.option_lines()
+    assert any("› " in ln and "Opt0" in ln for ln in lines)
+    # other rows should not have › prefix on their title lines
+    assert not any("› " in ln and "Opt1" in ln for ln in lines)
+
+
+def test_decision_prompt_move_updates_cursor():
+    dp = _make_dp(2)
+    dp.move(1)
+    assert dp._cursor == 1
+    lines = dp.option_lines()
+    assert any("› " in ln and "Opt1" in ln for ln in lines)
+    assert not any("› " in ln and "Opt0" in ln for ln in lines)
+
+
+def test_decision_prompt_move_clamps_at_bottom():
+    dp = _make_dp(2)
+    # n=2, total=4; clamp at 3
+    dp.move(100)
+    assert dp._cursor == 3
+
+
+def test_decision_prompt_move_clamps_at_top():
+    dp = _make_dp(2)
+    dp.move(-100)
+    assert dp._cursor == 0
+
+
+def test_decision_prompt_select_cursor_0():
+    """cursor at 0 → Selected(0)"""
+    dp = _make_dp(2)
+    dp._cursor = 0
+    messages: list = []
+    dp.post_message = lambda m: messages.append(m)
+    dp.select()
+    assert len(messages) == 1
+    assert messages[0].index == 0
+
+
+def test_decision_prompt_select_cursor_at_n():
+    """cursor at n (first fallback) → Selected(TYPE_SOMETHING)"""
+    dp = _make_dp(2)
+    dp._cursor = dp._n  # == 2
+    messages: list = []
+    dp.post_message = lambda m: messages.append(m)
+    dp.select()
+    assert messages[0].index == TYPE_SOMETHING
+
+
+def test_decision_prompt_select_cursor_at_n_plus_1():
+    """cursor at n+1 (second fallback) → Selected(CHAT_ABOUT_IT)"""
+    dp = _make_dp(2)
+    dp._cursor = dp._n + 1  # == 3
+    messages: list = []
+    dp.post_message = lambda m: messages.append(m)
+    dp.select()
+    assert messages[0].index == CHAT_ABOUT_IT
+
+
+def test_decision_prompt_fallback_cursor_markers():
+    dp = _make_dp(2)
+    # Move to Type something (index n=2)
+    dp.move(dp._n)
+    lines = dp.option_lines()
+    assert any("› " in ln and "Type something" in ln for ln in lines)
+    # Move to Chat about this
+    dp.move(1)
+    lines = dp.option_lines()
+    assert any("› " in ln and "Chat about this" in ln for ln in lines)
+
+
+# --- Finding (5): StateDot tests ---
+
+def test_state_dot_constructs_without_keyerror():
+    from harness.tui.tokens import GLYPH
+    for state in AgentState:
+        dot = StateDot(state)   # must not raise KeyError
+        # _Static__content holds the markup string passed to update()
+        markup = dot._Static__content
+        assert any(g in markup for g in GLYPH.values()), \
+            f"No known glyph found in StateDot markup for {state}"
+
+
+# --- Finding (4): TOOL_STATUS_TOKEN / TOOL_STATUS_LABEL exported from status_chip ---
+
+def test_tool_status_dicts_exported():
+    from harness.tui.widgets.status_chip import TOOL_STATUS_TOKEN, TOOL_STATUS_LABEL
+    assert TOOL_STATUS_TOKEN[ToolStatus.PENDING] == "scheduled"
+    assert TOOL_STATUS_TOKEN[ToolStatus.ACTIVE] == "accent"
+    assert TOOL_STATUS_TOKEN[ToolStatus.DONE] == "success"
+    assert TOOL_STATUS_TOKEN[ToolStatus.FAILED] == "error"
+    assert TOOL_STATUS_LABEL[ToolStatus.PENDING] == "QUEUED"
+    assert TOOL_STATUS_LABEL[ToolStatus.ACTIVE] == "RUNNING"
+    assert TOOL_STATUS_LABEL[ToolStatus.DONE] == "COMPLETED"
+    assert TOOL_STATUS_LABEL[ToolStatus.FAILED] == "FAILED"

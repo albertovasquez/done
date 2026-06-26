@@ -26,11 +26,11 @@ def _fmt_tokens(n: int) -> str:
 class ActivityStatus(Static):
     def __init__(self) -> None:
         super().__init__(markup=True)
-        self._i = 0
+        self._i = -1   # first _tick increments to 0, so cycle starts at frame 0
         self._snap: AgentSnapshot | None = None
 
     def on_mount(self) -> None:
-        self.set_interval(0.15, self._tick)
+        self._timer = self.set_interval(0.15, self._tick)
 
     def line_for(self, snap: AgentSnapshot, glyph: str = "◐") -> str:
         if snap.state not in _WORKING:
@@ -40,7 +40,17 @@ class ActivityStatus(Static):
         return f"[$accent]{glyph}[/] [$foreground]{label}…[/] [$muted]({meta})[/]"
 
     def update_from(self, snap: AgentSnapshot) -> None:
+        was_working = self._snap is not None and self._snap.state in _WORKING
         self._snap = snap
+        is_working = snap.state in _WORKING
+        # Pause/resume the timer so it does not fire in idle/terminal states.
+        # NOTE: timer pause/resume cannot be tested without mounting the widget;
+        # unit tests cover display output only.
+        if hasattr(self, "_timer"):
+            if is_working and not was_working:
+                self._timer.resume()
+            elif not is_working and was_working:
+                self._timer.pause()
         self._render()
 
     def _tick(self) -> None:

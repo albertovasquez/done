@@ -6,9 +6,15 @@ from __future__ import annotations
 from textual.widgets import Static
 
 from harness.tui.state import TaskItem
+from harness.tui.tokens import GLYPH
 
-_GLYPH = {"done": ("✓", "success"), "in_progress": ("▣", "accent"),
-          "pending": ("□", "muted"), "failed": ("✗", "error")}
+# GLYPH has no task-status glyph for "in_progress" or "pending"; keep literals.
+_GLYPH = {
+    "done": (GLYPH["done"], "success"),
+    "failed": (GLYPH["failed"], "error"),
+    "in_progress": ("▣", "accent"),
+    "pending": ("□", "muted"),
+}
 
 
 class TaskTree(Static):
