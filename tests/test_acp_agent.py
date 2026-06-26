@@ -53,6 +53,51 @@ def test_set_model_survives_save_failure(monkeypatch):
     assert result == {"ok": True, "model": "x"}  # swap still succeeds
 
 
+def test_set_yolo_active_true_sets_gate_no_persist():
+    agent = _make_agent()
+    agent._yolo = False
+    result = asyncio.run(agent.ext_method("harness/set_yolo", {"active": True}))
+    assert agent._yolo is True
+    assert result["ok"] is True and result["active"] is True
+    assert config.load_default() is None      # active alone never persists
+
+
+def test_set_yolo_active_false_turns_gate_off():
+    agent = _make_agent()
+    agent._yolo = True
+    asyncio.run(agent.ext_method("harness/set_yolo", {"active": False}))
+    assert agent._yolo is False
+
+
+def test_set_yolo_pin_true_persists():
+    agent = _make_agent()
+    asyncio.run(agent.ext_method("harness/set_yolo", {"active": True, "pin": True}))
+    assert config.yolo_pinned() is True
+
+
+def test_set_yolo_pin_false_unpins():
+    config.update_default(backend="vibeproxy", model="gpt-5.4", yolo_pinned=True)
+    agent = _make_agent()
+    asyncio.run(agent.ext_method("harness/set_yolo", {"pin": False}))
+    assert config.yolo_pinned() is False
+
+
+def test_set_yolo_omitted_pin_does_not_touch_persistence():
+    config.update_default(backend="vibeproxy", model="gpt-5.4", yolo_pinned=True)
+    agent = _make_agent()
+    asyncio.run(agent.ext_method("harness/set_yolo", {"active": False}))
+    assert config.yolo_pinned() is True       # pin untouched by a live-only toggle
+
+
+def test_set_yolo_survives_persist_failure(monkeypatch):
+    def boom(**kw):
+        raise OSError("disk full")
+    monkeypatch.setattr(config, "update_default", boom)
+    agent = _make_agent()
+    result = asyncio.run(agent.ext_method("harness/set_yolo", {"active": True, "pin": True}))
+    assert result["ok"] is True and agent._yolo is True   # live toggle still succeeds
+
+
 def test_acp_main_wires_default_workspace(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setenv("HARNESS_ROUTER_STUB", "1")

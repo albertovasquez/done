@@ -64,6 +64,23 @@ class HarnessAgent(acp.Agent):
                 except Exception:
                     pass
             return {"ok": True, "model": self._worker_model_id}
+        if method == "harness/set_yolo":
+            # Live auto-allow toggle (+ optional persisted pin). The ACP process
+            # owns the permission gate, so it owns both the flip and the write.
+            params = params or {}
+            if "active" in params:
+                self._yolo = bool(params["active"])
+            pin = params.get("pin")
+            if pin is not None:
+                try:                       # best-effort: a failed write never breaks the toggle
+                    config.update_default(yolo_pinned=bool(pin))
+                except Exception:
+                    pass
+            try:
+                pinned = config.yolo_pinned()
+            except Exception:
+                pinned = False
+            return {"ok": True, "active": self._yolo, "pinned": pinned}
         return {}
 
     async def initialize(self, protocol_version, client_capabilities=None,
