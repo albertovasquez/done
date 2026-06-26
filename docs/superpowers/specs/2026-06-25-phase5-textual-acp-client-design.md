@@ -226,8 +226,12 @@ callbacks and the app.
   later iteration; not worth a custom widget now.)
 - **`on_permission_request`:** `push_screen(PermissionModal(options, tool_call),
   callback=lambda chosen: fut.set_result(chosen))`.
-- **`PermissionModal(ModalScreen)`:** shows `$ <cmd>` + `[Allow once] [Reject]`;
-  a button press `dismiss(option_id_or_None)`.
+- **`PermissionModal(ModalScreen)`:** renders **all** ACP-provided permission
+  `options` (each becomes a button labeled by `option.name`, returning its
+  `option.option_id`), **plus** an explicit Reject/Cancel path (returns `None`).
+  Do **not** hardcode exactly two buttons — for the current agent the options
+  usually are Allow once / Reject, but the UI must not assume a fixed count or
+  set. A button press `dismiss(option_id_or_None)`; `None` → `DeniedOutcome`.
 - **Cancel:** an `esc` binding → `await conn.cancel(session_id)` (agent's
   best-effort, command-boundary cancel from Phase 4).
 
@@ -365,6 +369,18 @@ stream-pair helper is an optional optimization, not the plan.
   Future resolves and the agent receives a denial. Include if stable; drop to the
   render assertion if pilot timing is flaky.
 
+### `tests/test_tui_capabilities.py` — the None-stubs must be provably unused
+The `read_text_file`/`write_text_file`/`create_terminal`/… stubs return `None`,
+which is safe **only if those methods are never called** under v1's
+elicitation-only capabilities. Make that an assertion, not a belief: drive the
+real agent subprocess with a `TuiClient` whose fs/terminal stubs **raise** if
+invoked, advertising `ClientCapabilities(elicitation=ElicitationCapabilities())`
+(no fs, no terminal), through a command-running turn. The turn must complete
+**without** any stub raising — proving the agent took the `LocalEnvironment`
+fallback and never delegated fs/terminal. (`@needs_vibeproxy`: a real command-
+running turn needs classification. This is the one TUI test that may gate on
+VibeProxy; the render and pilot tests do not.)
+
 ### Not automated
 Visual layout/colors (manual `tui_main.py --model mock`); real-model turns (the
 agent side's `@needs_vibeproxy` tests already cover them; manual `--model
@@ -387,6 +403,7 @@ vibeproxy` on a temp fixture copy during the demo).
 | `trace/tui_main.py` | new | entrypoint (`--model`, `--cwd`) |
 | `tests/test_tui_render.py` | new | pure render unit tests |
 | `tests/test_tui_pilot.py` | new | 1–2 Textual pilot smokes (fake agent) |
+| `tests/test_tui_capabilities.py` | new | proves fs/terminal stubs are never called under elicitation-only caps |
 | `README.md` / `docs/learning-log.md` | mod | Phase 5 entry |
 
 ## Success Criteria
@@ -399,3 +416,51 @@ vibeproxy` on a temp fixture copy during the demo).
 4. ≥1 pilot smoke proves an end-to-end turn renders the harness chip.
 5. Full suite green via `.venv/bin/python -m pytest tests/`; agent side unchanged.
 6. A turn failure (kill the agent) degrades to a transcript line, not a crash.
+7. A capability test proves fs/terminal stubs are never called under
+   elicitation-only caps (the `None` stubs are safe *by test*, not by belief).
+8. The permission modal renders ACP-provided options generically (no hardcoded
+   two-button assumption).
+
+---
+
+## Later Phases / Explicit Backlog
+
+Phase 5 intentionally proves the **ACP client vertical slice**:
+Textual TUI → ACP client → harness agent subprocess → stream updates → render
+harness chips. It is **not** the final Toad/OpenCode-style workbench. The
+following are deferred by design (a reviewer must NOT flag their absence as a
+Phase-5 failure):
+
+- session tabs / concurrent agent sessions
+- real shell pane
+- `@` file picker
+- diff review and apply UI
+- transcript persistence / event replay
+- command palette
+- GitHub async PR worker integration (its own phase)
+- agent picker / provider registry
+- richer tool cards with keyed in-place status updates (replaces the v1
+  append-only tool status lines)
+
+These should be designed only after the Phase-5 client proves the TUI can drive
+the Phase-4 ACP agent and render harness metadata end-to-end.
+
+---
+
+## Codex Review Gates
+
+Codex review is required before Phase 5 is considered complete for each of:
+
+1. ACP client / session lifecycle implementation.
+2. Permission request round-trip.
+3. Async / Textual worker design.
+4. Harness `_meta["harness"]` rendering contract.
+5. Pilot smoke test design.
+
+For each gate, record: what Codex reviewed; whether it agreed or disagreed; any
+changes made because of the review; and the final consensus if there was
+disagreement. (Recorded in the durable ledger `.superpowers/sdd/progress.md`
+and surfaced in the learning log.)
+
+Do **not** block indefinitely on stylistic disagreement. **Do** block on
+protocol, async, lifecycle, or test-correctness issues.
