@@ -80,6 +80,7 @@ class HarnessTui(App):
         self._turn_start = 0.0                # monotonic at send, for elapsed meta
         self._streaming_md = None             # the live Markdown widget for the current answer, else None
         self._stream_buf = ""                 # accumulated text for _streaming_md
+        self._stream_closed = True            # True => the next message delta starts a fresh widget
         self._tokens = 0                      # last-known token count from usage updates
         self._commands = build_registry()     # slash-command registry
         self._slash = None                    # the SlashMenu widget while open, else None
@@ -395,12 +396,18 @@ class HarnessTui(App):
             ind.remove()
 
     def _end_stream(self) -> None:
-        """Finalize the current live Markdown block so the next message starts fresh
-        (called at turn end and when a tool call interleaves)."""
-        self._streaming_md = None
-        self._stream_buf = ""
+        """Close the current live Markdown block: the NEXT message delta starts a
+        fresh widget. The widget reference is KEPT (not nulled) so that a late
+        delta belonging to the just-closed answer (notification-delivery can lag
+        prompt() returning) still appends to ITS block, in place — rather than
+        spawning a stray block under the next user prompt. Called when a tool call
+        or thought interleaves, and when a new user turn begins."""
+        self._stream_closed = True
 
     def _add_user_message(self, text: str) -> None:
+        # A new user turn: close the prior answer's stream first so its widget is
+        # finalized and any late delta lands in it, not under this message.
+        self._end_stream()
         # accent bar glyph + bold text (the bordered-box look, inline).
         self._append_line(f"{_c('accent', '▌')} [b]{self._escape(text)}[/b]")
 
@@ -409,13 +416,10 @@ class HarnessTui(App):
         return s.replace("[", "\\[")
 
     async def _send_prompt(self, text: str) -> None:
-        # A new user turn finalizes any prior answer's streaming block. We reset
-        # HERE (turn start) rather than at the previous turn's end because
-        # prompt() can return before its trailing session_update notifications are
-        # pumped through the client — finalizing on return would let a late
-        # message delta spawn a second Markdown widget. Resetting at the next turn
-        # start is race-free: by then all of the prior turn's deltas have arrived.
-        self._end_stream()
+        # The prior answer's stream was already closed by _add_user_message (which
+        # runs before this on a new turn). Closing keeps the widget reference so a
+        # late delta from the prior answer extends ITS block in place rather than
+        # spawning a stray block under this prompt (see _stream_message).
         self._show_working()                      # spinner until the first token
         try:
             resp = await self._conn.prompt(
@@ -440,17 +444,41 @@ class HarnessTui(App):
     # ---- streaming session updates → themed transcript ----
 
     def _stream_message(self, text: str) -> None:
-        """Accumulate an agent message delta into a single live Markdown widget,
-        creating it (and clearing the working spinner) on the first delta.
+        """Accumulate an agent message delta into a single live Markdown widget.
+
+        Routing is POSITION-based, which is unambiguous and matches the visual
+        intent: a delta extends the streaming widget only while that widget is
+        still the LAST child of the transcript. Once anything newer is appended
+        (a user message, meta line, tool call, or the working indicator), the
+        streaming widget is no longer last:
+          - a NEW answer (its first delta) opens a fresh widget at the bottom;
+          - a LATE delta for the just-finished answer (notification lag) finds its
+            own widget is no longer last AND no new answer has opened, so it
+            extends that widget in place — never a stray block under the next
+            prompt.
+        We distinguish the two by `_stream_closed`: set when a user message / tool
+        / thought finalizes the answer. A delta while closed, with the prior
+        widget no longer last, is a late delta → extend the prior widget. A delta
+        while closed with the prior widget still last (or none) is a new answer.
 
         Markdown.update() is a no-op until the widget is mounted, so the render is
-        scheduled via call_after_refresh — by the next refresh the mount (queued
-        on the first delta) has completed and the accumulated buffer renders."""
-        if self._streaming_md is None:
+        scheduled via call_after_refresh — by the next refresh the mount has
+        completed and the accumulated buffer renders."""
+        kids = list(self._transcript.children)
+        prior_is_last = self._streaming_md is not None and kids and kids[-1] is self._streaming_md
+
+        if self._stream_closed and self._streaming_md is not None and not prior_is_last:
+            # late delta for the just-closed answer → extend its widget in place;
+            # the stream stays CLOSED (this delta does not begin a new answer).
+            pass
+        elif self._streaming_md is None or self._stream_closed:
+            # new answer → fresh widget at the bottom; stream is now OPEN.
             self._hide_working()
             self._streaming_md = Markdown("")
             self._append(self._streaming_md)
             self._stream_buf = ""
+            self._stream_closed = False
+        # else: stream already open → keep extending it.
         self._stream_buf += text
         md, buf = self._streaming_md, self._stream_buf
         self.call_after_refresh(md.update, buf)

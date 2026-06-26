@@ -3,9 +3,13 @@ sys.path.insert(0, "upstream/src")
 sys.path.insert(0, ".")
 
 import asyncio
+import time
 from pathlib import Path
+from types import SimpleNamespace as NS
 
+from acp import update_agent_message_text
 from harness.tui.app import HarnessTui, PermissionModal
+from harness.tui.messages import SessionUpdate
 from textual.containers import VerticalScroll
 from textual.widgets import Markdown, Static, Input
 
@@ -121,6 +125,58 @@ def test_pilot_streams_deltas_into_one_markdown_widget():
         # all three deltas accumulated into the one widget, in order
         assert md_src == "Hello **world** done", f"deltas not accumulated: {md_src!r}"
         assert not working_after, "working indicator should be gone after the turn"
+
+    asyncio.run(go())
+
+
+def test_late_prior_turn_delta_does_not_start_block_under_next_prompt():
+    """A prompt response may return before the client has processed trailing
+    session_update notifications. Starting the next turn must not let a late
+    prior-turn delta create a new Markdown block below the next user message."""
+    class ControlledConn:
+        def __init__(self):
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def prompt(self, **kwargs):
+            self.started.set()
+            await self.release.wait()
+            return NS(stop_reason="end_turn")
+
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await app._enter_conversation()
+            conn = ControlledConn()
+            app._conn = conn
+            app._session_id = "fake-session"
+
+            app._add_user_message("first")
+            app.on_session_update(SessionUpdate(update_agent_message_text("first complete")))
+            await pilot.pause()
+            app._write_meta(0.1)
+
+            app._add_user_message("second")
+            app._turn_start = time.monotonic()
+            task = asyncio.create_task(app._send_prompt("second"))
+            try:
+                await conn.started.wait()
+                await pilot.pause()
+                assert app.query("#working"), "second turn should still be in flight"
+
+                app.on_session_update(SessionUpdate(update_agent_message_text(" late")))
+                await pilot.pause()
+
+                scroll = app.query_one("#transcript", VerticalScroll)
+                md_sources = [_md_source(md) for md in scroll.query(Markdown)]
+            finally:
+                conn.release.set()
+                await task
+
+        assert md_sources == ["first complete late"], (
+            "late prior-turn delta was rendered as a new answer block under the next prompt: "
+            f"{md_sources!r}")
 
     asyncio.run(go())
 
