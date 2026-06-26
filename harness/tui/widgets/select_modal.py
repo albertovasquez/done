@@ -34,19 +34,23 @@ class SelectModal(ModalScreen):
 
     def __init__(self, title: str, options: list[SelectOption],
                  current: str | None = None, footer: str = "",
-                 searchable: bool = True) -> None:
+                 searchable: bool = True, body: str = "") -> None:
         super().__init__()
         self._title = title
         self._options = options
         self._current = current
         self._footer = footer
         self._searchable = searchable
+        self._body = body
 
     def compose(self) -> ComposeResult:
         with Vertical(id="select-box"):
             with Vertical(id="select-header"):
                 yield Static(f"[b]{self._title}[/b]   [$muted]esc[/]",
                              id="select-title", markup=True)
+                if self._body:
+                    yield Static(self._body, id="select-body",
+                                 markup=False, classes="select-body-code")
             if self._searchable:
                 yield Input(placeholder="Search", id="select-search")
             yield ListView(id="select-list")

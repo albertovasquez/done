@@ -18,8 +18,8 @@ _GLYPH = {
 
 
 class TaskTree(Static):
-    def __init__(self) -> None:
-        super().__init__(markup=True)
+    def __init__(self, **kwargs) -> None:
+        super().__init__("", markup=True, **kwargs)
 
     def lines_for(self, tasks: tuple[TaskItem, ...]) -> list[str]:
         out = []

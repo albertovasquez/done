@@ -7,10 +7,12 @@ import time
 from pathlib import Path
 from types import SimpleNamespace as NS
 
+import acp
 from acp import update_agent_message_text, start_tool_call
 from harness.tui.app import HarnessTui, PermissionModal
 from harness.tui.messages import SessionUpdate
 from harness.tui.widgets.prompt_area import PromptArea
+from harness.tui.widgets.tool_call_row import ToolCallRow
 from textual.containers import VerticalScroll
 from textual.widgets import Markdown, Static, Input
 
@@ -313,10 +315,12 @@ def test_pilot_permission_modal_reject():
                 await pilot.pause()
                 if isinstance(app.screen, PermissionModal):
                     modal_seen = True
-                    # the modal shows the REAL command (from tool_call.title),
-                    # not the opaque tool_call_id
-                    assert app.screen._title == "$ echo hello", (
-                        f"modal title should be the command, got {app.screen._title!r}")
+                    # title is now the short "Run command?" prompt; the actual
+                    # command is in the body slot (_body), not the title.
+                    assert app.screen._title == "Run command?", (
+                        f"modal title should be 'Run command?', got {app.screen._title!r}")
+                    assert app.screen._body == "echo hello", (
+                        f"modal body should be the command, got {app.screen._body!r}")
                     await pilot.press("escape")          # esc = reject
                     break
             for _ in range(50):
@@ -759,4 +763,83 @@ def test_pilot_compose_box_grows_then_caps_at_three_rows():
             assert inp.size.height == 3, \
                 f"box must cap at 3 rows (max-height), got {inp.size.height}"
 
+    asyncio.run(go())
+
+
+def test_pilot_snapshot_tracks_turn_lifecycle():
+    """After sending a prompt, the app's snapshot leaves IDLE; after the turn
+    completes it reaches a terminal state. Proves on_session_update routes
+    through the reducer."""
+    from harness.tui.state import AgentState
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert app._snapshot.active.state == AgentState.IDLE, (
+                f"snapshot should start IDLE, got {app._snapshot.active.state}")
+            await _send_first_prompt(pilot, app, "hello")
+            for _ in range(50):
+                await pilot.pause()
+                if "done" in _transcript_text(app):
+                    break
+            assert app._snapshot.active.state in (AgentState.DONE, AgentState.RESPONDING), \
+                f"snapshot did not advance: {app._snapshot.active.state}"
+    asyncio.run(go())
+
+
+def test_pilot_tool_call_renders_as_tool_call_row():
+    """A ToolCallStart update in the session stream mounts a ToolCallRow widget
+    in the transcript — NOT a flat '$ ...' Static line."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await app._enter_conversation()
+            # Inject a fake ToolCallStart directly (the fake agent doesn't emit tools)
+            tool_start = acp.start_tool_call("tc-test", title="$ echo hello",
+                                             status="in_progress")
+            app.on_session_update(SessionUpdate(tool_start))
+            await pilot.pause()
+            scroll = app.query_one("#transcript", VerticalScroll)
+            rows = [w for w in scroll.children if isinstance(w, ToolCallRow)]
+            assert len(rows) == 1, (
+                f"expected one ToolCallRow in transcript, got {len(rows)}. "
+                f"Children: {[type(w).__name__ for w in scroll.children]}")
+            # It should NOT be a plain flat Static starting with "$ "
+            flat_tool_lines = [
+                str(w.content) for w in scroll.children
+                if type(w) is Static and str(w.content).startswith("$ ")
+            ]
+            assert flat_tool_lines == [], (
+                f"flat '$ ...' tool lines still present: {flat_tool_lines}")
+    asyncio.run(go())
+
+
+def test_pilot_permission_modal_shows_command_in_body():
+    """The permission modal exposes the command in its body (not crammed into
+    the title). Title is 'Run command?'; body is the command text."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await _send_first_prompt(pilot, app, "please PERMISSION now")
+            modal_seen = False
+            for _ in range(50):
+                await pilot.pause()
+                if isinstance(app.screen, PermissionModal):
+                    modal_seen = True
+                    assert app.screen._title == "Run command?", (
+                        f"expected title 'Run command?', got {app.screen._title!r}")
+                    assert "echo hello" in app.screen._body, (
+                        f"command not in body: {app.screen._body!r}")
+                    # The body should be a plain non-markup string (command, no "$ ")
+                    assert not app.screen._body.startswith("$ "), (
+                        f"body should not start with '$ ', got {app.screen._body!r}")
+                    await pilot.press("escape")
+                    break
+            for _ in range(50):
+                await pilot.pause()
+                if "done" in _transcript_text(app):
+                    break
+        assert modal_seen, "permission modal never appeared"
     asyncio.run(go())

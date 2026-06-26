@@ -24,8 +24,8 @@ def _fmt_tokens(n: int) -> str:
 
 
 class ActivityStatus(Static):
-    def __init__(self) -> None:
-        super().__init__(markup=True)
+    def __init__(self, **kwargs) -> None:
+        super().__init__("", markup=True, **kwargs)
         self._i = -1   # first _tick increments to 0, so cycle starts at frame 0
         self._snap: AgentSnapshot | None = None
 
@@ -52,15 +52,15 @@ class ActivityStatus(Static):
                 self._timer.resume()
             else:
                 self._timer.pause()
-        self._render()
+        self._refresh_display()
 
     def _tick(self) -> None:
         if self._snap is None or self._snap.state not in _WORKING:
             return
         self._i = (self._i + 1) % len(_CYCLE)
-        self._render()
+        self._refresh_display()
 
-    def _render(self) -> None:
+    def _refresh_display(self) -> None:
         if self._snap is None:
             self.update("")
             return
