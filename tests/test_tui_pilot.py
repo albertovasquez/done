@@ -551,3 +551,29 @@ def test_reload_sets_reexec_flag_and_exits():
             # exit() was requested (Textual sets _exit); the app is on its way down
             assert app._exit is True, "reload must call app.exit()"
     asyncio.run(go())
+
+
+def test_pilot_escape_clears_input_text():
+    """Esc with text in the box (and no slash menu open) clears the box rather
+    than cancelling the turn. A second Esc on the now-empty box falls through to
+    the global cancel binding (no error)."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            inp = app.query_one("#landing-input", Input)
+            inp.focus()
+            inp.value = "some half-typed text"
+            await pilot.pause()
+            assert app._slash is None, "no slash menu for plain text"
+
+            await pilot.press("escape")
+            await pilot.pause()
+            assert inp.value == "", "esc should clear the box when it has text"
+
+            # empty box: esc falls through to action_cancel without raising
+            await pilot.press("escape")
+            await pilot.pause()
+            assert inp.value == ""
+
+    asyncio.run(go())

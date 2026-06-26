@@ -304,6 +304,11 @@ class HarnessTui(App):
     async def on_key(self, event) -> None:
         # while the slash menu is open, ↑/↓ move the selection; esc closes it
         if self._slash is None:
+            # menu closed: esc with text in the box clears it; empty box falls
+            # through to action_cancel (the global "Cancel turn" binding).
+            if event.key == "escape" and self._active_input().value:
+                self._active_input().value = ""
+                event.stop()
             return
         if event.key == "down":
             self._slash.move(1); event.stop()
