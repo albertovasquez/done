@@ -121,3 +121,42 @@ def test_resolve_uses_config_when_flag_absent(isolated_config):
 
 def test_resolve_falls_back_to_hardcoded_when_no_config(isolated_config):
     assert tui_main._resolve_model(None) == ("vibeproxy", None)
+
+
+# --- effective worker model id (the label the TUI footer shows) ---
+
+def test_effective_worker_model_id_mock_is_none():
+    assert tui_main._effective_worker_model_id("mock") is None
+
+
+def test_effective_worker_model_id_vibeproxy_uses_env(monkeypatch):
+    monkeypatch.setenv("VIBEPROXY_MODEL", "claude-opus-4-8")
+    assert tui_main._effective_worker_model_id("vibeproxy") == "claude-opus-4-8"
+
+
+def test_effective_worker_model_id_vibeproxy_default_when_env_unset(monkeypatch):
+    monkeypatch.delenv("VIBEPROXY_MODEL", raising=False)
+    assert tui_main._effective_worker_model_id("vibeproxy") == "gpt-5.4"
+
+
+def test_main_seeds_worker_model_id_from_persisted_model(isolated_config, monkeypatch):
+    """A fresh launch with no --model flag seeds HarnessTui.worker_model_id from
+    the persisted done.conf model, so the footer shows the real id (not the
+    'default model' fallback) after logout/login."""
+    monkeypatch.delenv("VIBEPROXY_MODEL", raising=False)
+    _write_default(isolated_config, "vibeproxy", "claude-opus-4-8")
+    captured = {}
+
+    class _FakeApp:
+        def __init__(self, **kw):
+            captured.update(kw)
+        def run(self):
+            pass
+
+    monkeypatch.setattr(tui_main, "HarnessTui", _FakeApp)
+    monkeypatch.setattr(tui_main.paths, "load_env", lambda cwd: None)
+
+    tui_main.main(["--cwd", str(isolated_config)])  # no --model -> use persisted
+
+    assert captured["model"] == "vibeproxy"
+    assert captured["worker_model_id"] == "claude-opus-4-8"
