@@ -74,3 +74,20 @@ def test_tool_call_row_line():
     line = row.line_for(row._tool)
     assert "⚑" in line                # test subtype glyph
     assert "pytest" in line
+
+
+from harness.tui.state import DecisionView
+from harness.tui.widgets.decision_prompt import DecisionPrompt
+
+
+def test_decision_prompt_option_lines():
+    dv = DecisionView(question="Where should the seam live?",
+                      options=(("Wrapper", "isolated, recommended"),
+                               ("Patch upstream", "violates zero-edits")))
+    dp = DecisionPrompt(dv)
+    lines = dp.option_lines()
+    # numbered options + 2 fallbacks
+    assert any("1." in ln and "Wrapper" in ln for ln in lines)
+    assert any("isolated" in ln for ln in lines)
+    assert any("Type something" in ln for ln in lines)
+    assert any("Chat about this" in ln for ln in lines)
