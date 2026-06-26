@@ -21,7 +21,6 @@ class SessionState:
     persona_block: str | None = None  # None = not-yet-composed; "" = composed-empty
     persona_load: "PersonaLoad | None" = None
     persona_load_emitted: bool = False
-    last_tc_id: str = "tc0"  # most-recent tool-call id; command callbacks pair start/done on it
 
 
 class SessionStore:

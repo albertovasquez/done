@@ -215,7 +215,10 @@ class HarnessAgent(acp.Agent):
 
     async def _run_agent_turn(self, loop, session_id, state, text, skill_block, prior,
                               persona_block="") -> dict:
-        tc_counter = {"n": 0}
+        # Tool-call ids are TURN-LOCAL: the counter resets each turn and the
+        # "current id" lives here (not on SessionState), so the start/done/permission
+        # handshake within this turn pairs correctly and ids restart at tc1 per turn.
+        tc = {"n": 0, "id": "tc0"}
 
         # --- streaming: marshal each prose delta to the TUI, accumulate into a
         # buffer (the failure-case transcript), and signal a per-step boundary so
@@ -247,13 +250,13 @@ class HarnessAgent(acp.Agent):
         def on_command(phase: str, command: str, out: dict | None) -> None:
             # runs on the worker thread → marshal to the loop and block until sent
             if phase == "start":
-                tc_counter["n"] += 1
-                state.last_tc_id = f"tc{tc_counter['n']}"
-                upd = tool_call_start(state.last_tc_id, command)
+                tc["n"] += 1
+                tc["id"] = f"tc{tc['n']}"
+                upd = tool_call_start(tc["id"], command)
             elif phase in ("done", "rejected"):
                 result = out if out is not None else {"output": "permission denied",
                                                       "returncode": -1, "exception_info": ""}
-                upd = tool_call_done(state.last_tc_id, result)
+                upd = tool_call_done(tc["id"], result)
             else:
                 return
             fut = asyncio.run_coroutine_threadsafe(
@@ -271,7 +274,7 @@ class HarnessAgent(acp.Agent):
             # prompt it can't service.
             if self._client_caps is None or getattr(self._client_caps, "elicitation", None) is None:
                 return True
-            tc_id = state.last_tc_id
+            tc_id = tc["id"]
             options = [
                 PermissionOption(kind="allow_once", name="Allow once", option_id="allow_once"),
                 PermissionOption(kind="reject_once", name="Reject", option_id="reject_once"),
