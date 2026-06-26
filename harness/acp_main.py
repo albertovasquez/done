@@ -97,6 +97,7 @@ async def _main(argv=None) -> None:
         router=Router(complete_fn, catalog=skills.load_catalog(roots)),
         worker_model_id=worker_model_id,
         yolo=args.yolo,
+        backend=args.model,
     )
     await acp.run_agent(agent)
 

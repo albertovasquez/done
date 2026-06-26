@@ -16,6 +16,7 @@ from acp.schema import (
     ToolCallUpdate,
 )
 
+from harness import config
 from harness import skills
 from harness.acp_emit import tool_call_start, tool_call_done, message_chunk, with_meta
 from harness.acp_env import AcpEnvironment
@@ -27,13 +28,14 @@ from harness.transcript import flatten_agent_messages
 
 class HarnessAgent(acp.Agent):
     def __init__(self, *, model_factory, agent_cfg, skills_dir: list[Path], router: Router,
-                 worker_model_id, yolo: bool = False):
+                 worker_model_id, yolo: bool = False, backend: str = "vibeproxy"):
         self._model_factory = model_factory
         self._agent_cfg = agent_cfg
         self._skills_dir = skills_dir
         self._router = router
         self._worker_model_id = worker_model_id
         self._yolo = yolo                 # --yolo: auto-allow every command, no prompts
+        self._backend = backend           # launch backend; paired with model on persist
         self._store = SessionStore()
         self._conn = None
 
@@ -54,6 +56,10 @@ class HarnessAgent(acp.Agent):
             model = (params or {}).get("model")
             if model:
                 self._worker_model_id = model
+                try:                       # best-effort: a failed write never breaks the swap
+                    config.save_default(config.AgentConfig(backend=self._backend, model=model))
+                except Exception:
+                    pass
             return {"ok": True, "model": self._worker_model_id}
         return {}
 
