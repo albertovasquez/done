@@ -13,54 +13,85 @@ FAKE_CMD = [str(REPO / ".venv/bin/python"), str(REPO / "tests/fake_agent.py")]
 
 
 def _transcript_text(app) -> str:
-    from textual.widgets import RichLog
-    log = app.query_one("#transcript", RichLog)
+    """The conversation transcript only exists AFTER the first send (the UI starts
+    on the centered landing screen). Returns '' until then."""
+    try:
+        log = app.query_one("#transcript", RichLog)
+    except Exception:
+        return ""
     return "\n".join(strip.text for strip in log.lines)
 
 
-def test_pilot_renders_harness_chip_end_to_end():
-    """Boot app against the fake agent, type a prompt, assert the harness chip and
-    the agent message both land in the transcript."""
+async def _send_first_prompt(pilot, app, text: str) -> None:
+    """Type into the landing compose box and submit — this transitions the app
+    from the landing state to the conversation state."""
+    app.query_one("#landing-input", Input).focus()
+    app.query_one("#landing-input", Input).value = text
+    await pilot.press("enter")
+
+
+def test_pilot_starts_on_landing_then_switches_to_conversation():
+    """The app boots on the centered landing screen (wordmark + compose, no
+    transcript) and switches to the conversation view after the first send."""
     async def go():
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
         async with app.run_test() as pilot:
-            await pilot.pause()                      # let on_mount finish (spawn+init+session)
-            await pilot.click("#prompt")             # focus the Input before typing
-            app.query_one("#prompt", Input).value = "hello"
-            await pilot.press("enter")
-            # wait for the worker turn + posted updates to render
+            await pilot.pause()
+            # landing state: wordmark + landing input present, no transcript yet
+            assert app.query("#landing"), "landing container should exist at boot"
+            assert app.query("#landing-input"), "landing input should exist at boot"
+            assert not app.query("#transcript"), "transcript must NOT exist before first send"
+            assert app.theme == "harness", f"harness theme not active: {app.theme}"
+
+            await _send_first_prompt(pilot, app, "hello")
+            for _ in range(50):
+                await pilot.pause()
+                if app._started and app.query("#transcript"):
+                    break
+            # conversation state: landing gone, transcript + bottom composer present
+            assert app._started, "did not transition to conversation state"
+            assert not app.query("#landing"), "landing should be removed after first send"
+            assert app.query("#conversation-input"), "conversation input should exist"
+
+    asyncio.run(go())
+
+
+def test_pilot_renders_harness_chip_end_to_end():
+    """Boot, send a prompt, and assert the harness _meta chip, the agent reply,
+    and the per-turn meta line all render in the transcript end-to-end."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()                      # on_mount: spawn+init+session
+            await _send_first_prompt(pilot, app, "hello")
             for _ in range(50):
                 await pilot.pause()
                 if "classified: chat_question" in _transcript_text(app):
                     break
             text = _transcript_text(app)
-        assert "classified: chat_question" in text, f"chip missing.\n{text}"
-        assert "agent:" in text and "done" in text, f"agent message missing.\n{text}"
+        assert "classified: chat_question" in text, f"harness chip missing.\n{text}"
+        assert "hello" in text, f"user message missing.\n{text}"      # rendered as '▌ hello'
+        assert "done" in text, f"agent reply missing.\n{text}"
+        assert "▣ Build" in text, f"per-turn meta line missing.\n{text}"
 
     asyncio.run(go())
 
 
 def test_pilot_permission_modal_reject():
-    """Optional Smoke 2: fake agent requests permission; rejecting resolves the
-    Future and the turn completes. If this proves flaky, it may be removed in
-    review — the render smoke above is the required one."""
+    """Optional Smoke: fake agent requests permission; rejecting resolves the
+    Future and the turn completes."""
     async def go():
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
         async with app.run_test() as pilot:
             await pilot.pause()
-            await pilot.click("#prompt")             # focus the Input before typing
-            app.query_one("#prompt", Input).value = "please PERMISSION now"
-            await pilot.press("enter")
-            # wait for the modal to appear, then reject
+            await _send_first_prompt(pilot, app, "please PERMISSION now")
             modal_seen = False
             for _ in range(50):
                 await pilot.pause()
                 if isinstance(app.screen, PermissionModal):
                     modal_seen = True
-                    # press the Reject button
                     await pilot.click("#opt-__reject__")
                     break
-            # let the turn finish
             for _ in range(50):
                 await pilot.pause()
                 if "done" in _transcript_text(app):
