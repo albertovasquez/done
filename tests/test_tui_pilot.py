@@ -353,3 +353,24 @@ def test_teardown_is_idempotent_when_already_torn_down():
             await app._teardown()               # second call must not raise
             assert app._conn is None
     asyncio.run(go())
+
+
+def test_reset_conversation_empties_transcript_keeps_started():
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await _send_first_prompt(pilot, app, "hello")
+            for _ in range(50):
+                await pilot.pause()
+                if "done" in _transcript_text(app):
+                    break
+            assert _transcript_text(app).strip(), "precondition: transcript has content"
+            await app._reset_conversation()
+            await pilot.pause()
+            assert _transcript_text(app) == "", "transcript should be emptied"
+            assert app._started is True, "must stay in conversation view, not return to landing"
+            assert app.query("#transcript"), "#transcript widget must remain mounted"
+            assert app._streaming_md is None and app._stream_buf == ""
+            assert app._tokens == 0
+    asyncio.run(go())

@@ -426,6 +426,18 @@ class HarnessTui(App):
         self._refresh_status()
         self.query_one("#conversation-input", Input).focus()
 
+    async def _reset_conversation(self) -> None:
+        """Empty the transcript and reset per-conversation state WITHOUT leaving
+        the conversation view (flipping _started=False would query the removed
+        #landing-input/#header-text and crash). No-op before the first prompt."""
+        if self._started:
+            await self._transcript.remove_children()
+        self._streaming_md = None
+        self._stream_buf = ""
+        self._stream_closed = True
+        self._tokens = 0
+        self._refresh_status()
+
     @property
     def _transcript(self) -> VerticalScroll:
         return self.query_one("#transcript", VerticalScroll)
