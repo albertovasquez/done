@@ -17,6 +17,7 @@ from acp.schema import (
 )
 
 from harness import config
+from harness import persona
 from harness import skills
 from harness.acp_emit import tool_call_start, tool_call_done, message_chunk, with_meta
 from harness.acp_env import AcpEnvironment
@@ -28,10 +29,12 @@ from harness.transcript import flatten_agent_messages
 
 class HarnessAgent(acp.Agent):
     def __init__(self, *, model_factory, agent_cfg, skills_dir: list[Path], router: Router,
-                 worker_model_id, yolo: bool = False, backend: str = "vibeproxy"):
+                 worker_model_id, yolo: bool = False, backend: str = "vibeproxy",
+                 workspace_dir: Path | None = None):
         self._model_factory = model_factory
         self._agent_cfg = agent_cfg
         self._skills_dir = skills_dir
+        self._workspace_dir = workspace_dir     # None => no persona (byte-identical)
         self._router = router
         self._worker_model_id = worker_model_id
         self._yolo = yolo                 # --yolo: auto-allow every command, no prompts
@@ -106,6 +109,19 @@ class HarnessAgent(acp.Agent):
         text = "".join(getattr(b, "text", "") for b in prompt)
         transcript = state.transcript           # read once; every branch writes back per §6
 
+        # Persona: compose once per session (cached). None => not-yet-read. Both the
+        # chat and agent dispatch paths read state.persona_block, so the COMPOSE
+        # must happen before routing; the telemetry EMIT is deferred until after
+        # classification (below) so the persona_load event is ordered after
+        # task_classified and is skipped on the unpersonalized clarify/ambiguous
+        # branches — mirroring how skill_load only fires on the agent path.
+        persona_first_load = None
+        if state.persona_block is None:
+            persona_first_load = await loop.run_in_executor(
+                None, persona.resolve_persona, self._workspace_dir)
+            state.persona_block = persona_first_load.block
+            state.persona_load = persona_first_load
+
         # 1) classify in the executor (sync litellm call must not block the loop)
         try:
             cls: Classification = await loop.run_in_executor(
@@ -119,6 +135,19 @@ class HarnessAgent(acp.Agent):
                 "confidence": cls.confidence}
         await self._conn.session_update(session_id,
             with_meta(message_chunk(""), {"task_classified": meta}))
+
+        # Deferred persona_load emit: after task_classified, only once per session
+        # for a NON-EMPTY persona AND only on personalized dispatch paths
+        # (chat/agent — never clarify/ambiguous). GATED on injected so the empty
+        # default emits nothing (the byte-identical no-op guarantee).
+        personalized = not (cls.needs_clarification or cls.task_type == "ambiguous")
+        if (not state.persona_load_emitted and state.persona_load
+                and state.persona_load.injected and personalized):
+            await self._conn.session_update(session_id,
+                with_meta(message_chunk(""),
+                          {"persona_load": {"injected": state.persona_load.injected,
+                                            "skipped": state.persona_load.skipped}}))
+            state.persona_load_emitted = True
 
         if cls.needs_clarification or cls.task_type == "ambiguous":
             q = cls.clarifying_question or "Could you clarify the task?"
@@ -134,7 +163,8 @@ class HarnessAgent(acp.Agent):
         if cls.task_type == "chat_question":
             # hand the router's catalog so "what skills do we have?" is answered
             # from data, not the model (see ChatHandler.is_capability_question)
-            handler = ChatHandler(self._worker_model_id, catalog=self._router.catalog)
+            handler = ChatHandler(self._worker_model_id, catalog=self._router.catalog,
+                                  persona_block=state.persona_block or "")
             pieces: list[str] = []
 
             def pump() -> None:
@@ -158,12 +188,16 @@ class HarnessAgent(acp.Agent):
             return acp.PromptResponse(stop_reason="end_turn")
 
         # agent path
-        # offload skills.compose: it does filesystem I/O; keep the event loop free
-        load = await loop.run_in_executor(None, skills.compose, self._skills_dir, cls.skills)
+        # offload compose_context: it does filesystem I/O (skills); keep the event loop free
+        ctx = await loop.run_in_executor(
+            None, persona.compose_context, state.persona_block or "",
+            self._skills_dir, cls.skills)
         await self._conn.session_update(session_id,
             with_meta(message_chunk(""),
-                      {"skill_load": {"injected": load.injected, "skipped": load.skipped}}))
-        engine = await self._run_agent_turn(loop, session_id, state, text, load.block, transcript)
+                      {"skill_load": {"injected": ctx.skills.injected,
+                                      "skipped": ctx.skills.skipped}}))
+        engine = await self._run_agent_turn(loop, session_id, state, text, ctx.skill_block,
+                                            transcript, ctx.persona_block)
         stop_reason = engine["stop_reason"]
         assistant = engine["assistant"] or engine["exit_status"] or stop_reason   # never empty
         self._store.record(session_id, {"prompt": text, "stop_reason": stop_reason,
@@ -173,7 +207,8 @@ class HarnessAgent(acp.Agent):
             {"role": "assistant", "content": assistant, "origin": "agent"}])
         return acp.PromptResponse(stop_reason=stop_reason)
 
-    async def _run_agent_turn(self, loop, session_id, state, text, skill_block, prior) -> dict:
+    async def _run_agent_turn(self, loop, session_id, state, text, skill_block, prior,
+                              persona_block="") -> dict:
         tc_counter = {"n": 0}
 
         def on_command(phase: str, command: str, out: dict | None) -> None:
@@ -268,7 +303,8 @@ class HarnessAgent(acp.Agent):
                 # pass the CURRENT worker model so /models hot-swaps the agent path
                 # too; the factory ignores the arg in mock mode.
                 agent = TracingAgent(self._model_factory(self._worker_model_id), env,
-                                     emitter=emitter, skill_block=skill_block, **cfg)
+                                     emitter=emitter, skill_block=skill_block,
+                                     persona_block=persona_block, **cfg)
                 result = agent.run(text, prior=prior)
                 return {"stop_reason": "end_turn",
                         "exit_status": result.get("exit_status", "end_turn"),
@@ -286,7 +322,8 @@ class HarnessAgent(acp.Agent):
 
 
 def build_harness_agent(*, model_factory, agent_cfg, skills_dir: list[Path],
-                        router: Router, worker_model_id=None) -> HarnessAgent:
+                        router: Router, worker_model_id=None,
+                        workspace_dir: Path | None = None) -> HarnessAgent:
     """Factory: wire the agent from resolved dependencies."""
     return HarnessAgent(
         model_factory=model_factory,
@@ -294,4 +331,5 @@ def build_harness_agent(*, model_factory, agent_cfg, skills_dir: list[Path],
         skills_dir=skills_dir,
         router=router,
         worker_model_id=worker_model_id,
+        workspace_dir=workspace_dir,
     )

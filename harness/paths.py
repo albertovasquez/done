@@ -48,6 +48,12 @@ def skills_dirs() -> list[Path]:
     return [bundled_skills_dir(), config_dir() / "skills"]
 
 
+def default_workspace_dir() -> Path:
+    """The built-in 'default' persona workspace at config_dir()/agents/default/.
+    Does NOT create the directory; an absent dir is a valid empty persona."""
+    return config_dir() / "agents" / "default"
+
+
 def mini_yaml_path() -> Path:
     """Locate the engine's config/mini.yaml WITHOUT importing minisweagent
     (its __init__ runs dotenv/global-config side effects). Uses find_spec, which

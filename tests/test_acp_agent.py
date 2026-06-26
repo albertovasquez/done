@@ -51,3 +51,23 @@ def test_set_model_survives_save_failure(monkeypatch):
     agent = _make_agent()
     result = asyncio.run(agent.ext_method("harness/set_model", {"model": "x"}))
     assert result == {"ok": True, "model": "x"}  # swap still succeeds
+
+
+def test_acp_main_wires_default_workspace(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("HARNESS_ROUTER_STUB", "1")
+    from harness import acp_agent, paths
+
+    captured = {}
+    real_init = acp_agent.HarnessAgent.__init__
+    def spy_init(self, **kw):
+        captured.update(kw)
+        real_init(self, **kw)
+    monkeypatch.setattr(acp_agent.HarnessAgent, "__init__", spy_init)
+
+    # run _main far enough to construct the agent, then stop at run_agent
+    import acp
+    monkeypatch.setattr(acp, "run_agent", lambda agent: asyncio.sleep(0))
+    from harness import acp_main
+    asyncio.run(acp_main._main(["--model", "mock"]))
+    assert captured["workspace_dir"] == paths.default_workspace_dir()
