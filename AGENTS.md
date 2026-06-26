@@ -27,9 +27,10 @@ cd .worktrees/<short-task-name>
 - **Never merge into or commit on the primary checkout.** Assume another branch
   (e.g. one an agent or automation left checked out) may be live there; touching it
   collides with in-flight work.
-- **Only exception:** a truly trivial, single-file change (a typo, a one-line doc
-  tweak) may still skip the worktree, but it must reach `main` the same way — via a
-  branch + PR, never a direct push to `main`. When in doubt, use a worktree.
+- **No exceptions — not even one-line changes.** A typo fix, a single CSS value, a
+  doc tweak: all go in a worktree. "It's trivial" is not a reason to skip it;
+  triviality is exactly when the habit slips and two agents collide in the primary
+  checkout. Always a worktree, every time.
 
 Rationale: isolates in-progress work, keeps `main` green and review-gated, and
 lets several agents run at once without stepping on each other.
