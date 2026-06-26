@@ -1,0 +1,20 @@
+import sys
+sys.path.insert(0, "upstream/src")
+sys.path.insert(0, ".")
+
+from harness.tui.tokens import GLYPH, STATUS_LABEL
+
+
+def test_glyph_has_all_state_and_subtype_keys():
+    for key in ("idle", "active", "responding", "tool", "done", "failed",
+                "scheduled", "awaiting", "edit", "test", "read", "shell", "search"):
+        assert key in GLYPH, f"missing glyph: {key}"
+        assert GLYPH[key], f"empty glyph: {key}"
+
+
+def test_status_label_is_uppercase():
+    assert STATUS_LABEL["running"] == "RUNNING"
+    assert STATUS_LABEL["completed"] == "COMPLETED"
+    assert STATUS_LABEL["scheduled"] == "SCHEDULED"
+    assert STATUS_LABEL["failed"] == "FAILED"
+    assert STATUS_LABEL["queued"] == "QUEUED"
