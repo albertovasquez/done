@@ -55,6 +55,13 @@ def _system_prompt(catalog: list[tuple[str, str]]) -> str:
     return (
         "You are a fast TRIAGE router for a coding agent harness. Read the user's "
         "request and classify it. You do NOT answer or chat; you only classify. "
+        "The agent runs IN a real project directory (the user's current working "
+        "directory) and CAN inspect it — list files, read source, run commands. "
+        "So a question about THIS project, code, app, repo, or directory (e.g. "
+        "\"what kind of application is this?\", \"how does X work?\", \"what's the "
+        "tech stack?\") is NOT ambiguous: classify it as code_explain and let the "
+        "agent look. Reserve 'ambiguous' for requests that name no task AND give "
+        "no project referent the agent could investigate. "
         "Respond with ONLY a JSON object, no prose, with keys: "
         f"task_type (one of {TASK_TYPES}), skills (list of skill NAMES from the "
         "catalog that apply, may be empty), confidence (0.0-1.0), "
