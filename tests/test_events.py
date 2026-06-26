@@ -7,7 +7,7 @@ import sys
 sys.path.insert(0, "upstream/src")  # for any transitive import; events.py itself has none
 sys.path.insert(0, ".")
 
-from trace.events import Event, Emitter
+from harness.events import Event, Emitter
 
 
 def test_event_to_dict_roundtrips():

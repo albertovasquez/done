@@ -3,7 +3,7 @@ sys.path.insert(0, "upstream/src")
 sys.path.insert(0, ".")
 
 from pathlib import Path
-from trace.skills import SkillLoad, load_catalog, compose
+from harness.skills import SkillLoad, load_catalog, compose
 
 
 def _write_skill(root: Path, name: str, description: str, body: str, *, dirname=None):

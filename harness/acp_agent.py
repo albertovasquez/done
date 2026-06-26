@@ -16,12 +16,12 @@ from acp.schema import (
     ToolCallUpdate,
 )
 
-from trace import skills
-from trace.acp_emit import tool_call_start, tool_call_done, message_chunk, with_meta
-from trace.acp_env import AcpEnvironment
-from trace.acp_session import SessionStore
-from trace.router import Router, Classification
-from trace.chat_handler import ChatHandler
+from harness import skills
+from harness.acp_emit import tool_call_start, tool_call_done, message_chunk, with_meta
+from harness.acp_env import AcpEnvironment
+from harness.acp_session import SessionStore
+from harness.router import Router, Classification
+from harness.chat_handler import ChatHandler
 
 
 class HarnessAgent(acp.Agent):
@@ -200,8 +200,8 @@ class HarnessAgent(acp.Agent):
                              client_terminal=client_terminal)
 
         def run_engine() -> str:
-            from trace.tracing_agent import TracingAgent
-            from trace.events import Emitter
+            from harness.tracing_agent import TracingAgent
+            from harness.events import Emitter
             emitter = Emitter("/dev/null", clock=lambda: 0.0, console=False)  # ACP carries the stream
             cfg = dict(self._agent_cfg)
             agent = TracingAgent(self._model_factory(), env, emitter=emitter,

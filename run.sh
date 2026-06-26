@@ -8,4 +8,4 @@ PY="${PYTHON:-.venv/bin/python}"
 [ -x "$PY" ] || PY="python3"   # fall back if venv missing
 export PYTHONPATH="upstream/src:${PYTHONPATH:-}"  # harmless with editable install; helps without venv
 export MSWEA_SILENT_STARTUP=1   # suppress mini's startup banner
-exec "$PY" trace/run_traced.py "$@"
+exec "$PY" harness/run_traced.py "$@"

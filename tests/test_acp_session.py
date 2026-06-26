@@ -3,7 +3,7 @@ sys.path.insert(0, "upstream/src")
 sys.path.insert(0, ".")
 
 import pytest
-from trace.acp_session import SessionStore, SessionState
+from harness.acp_session import SessionStore, SessionState
 
 
 def test_new_and_get_roundtrip(tmp_path):

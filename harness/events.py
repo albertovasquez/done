@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-logger = logging.getLogger("trace.events")
+logger = logging.getLogger("harness.events")
 
 
 @dataclass

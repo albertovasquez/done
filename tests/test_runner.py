@@ -13,7 +13,7 @@ from pathlib import Path
 from minisweagent.environments.local import LocalEnvironment
 from minisweagent.models.test_models import DeterministicToolcallModel, make_toolcall_output
 
-from trace.runner import MiniSweAgentRunner, RunResult
+from harness.runner import MiniSweAgentRunner, RunResult
 
 
 def _agent_cfg() -> dict:
@@ -159,7 +159,7 @@ def test_7_skill_block_accepted_by_runner(tmp_path):
     covered by Task 2's tests; this test asserts the runner's contract only.
     """
     from unittest.mock import patch
-    from trace.tracing_agent import TracingAgent
+    from harness.tracing_agent import TracingAgent
 
     model = _tc_model([("done", ["echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"])])
     runner = _runner(model, tmp_path)

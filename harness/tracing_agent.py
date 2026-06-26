@@ -19,7 +19,7 @@ import time
 from minisweagent.agents.default import DefaultAgent
 from minisweagent.exceptions import LimitsExceeded, Submitted, TimeExceeded
 
-from trace.events import Emitter
+from harness.events import Emitter
 
 
 class TracingAgent(DefaultAgent):
