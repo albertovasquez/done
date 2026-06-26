@@ -23,12 +23,21 @@ from textual.widgets import TextArea
 class PromptArea(TextArea):
     """Auto-growing compose box. Enter submits; Shift+Enter inserts a newline."""
 
-    # Shift+Enter reaches Textual under several key names depending on how the
-    # terminal encodes it: "shift+enter" (Kitty CSI-u form) and "shift+\r" /
-    # "shift+\n" (the modifyOtherKeys form some terminals — e.g. cmux/libghostty,
-    # Ghostty — emit). Match them all so Shift+Enter inserts a newline rather than
-    # silently submitting/doing nothing.
-    _NEWLINE_KEYS = frozenset({"shift+enter", "shift+\r", "shift+\n"})
+    # A *modified* Enter (Shift/Alt/Ctrl/…+Enter) must insert a newline; only a
+    # bare Enter submits. Terminals encode modified Enter in several ways and
+    # Textual surfaces each under a different event.key:
+    #   Kitty CSI-u form        -> "shift+enter", "alt+enter", "ctrl+enter", …
+    #   modifyOtherKeys form    -> "shift+\r", "ctrl+\r", "ctrl+shift+\r", …
+    #   (cmux/libghostty + Ghostty use the modifyOtherKeys form.)
+    # Rather than enumerate every combination, match structurally: a key with a
+    # modifier prefix ("<mods>+") whose final segment is enter / \r / \n.
+    _ENTER_SEGMENTS = frozenset({"enter", "return", "\r", "\n"})
+
+    @classmethod
+    def _is_modified_enter(cls, key: str) -> bool:
+        if "+" not in key:                 # bare key (e.g. "enter") -> not modified
+            return False
+        return key.rsplit("+", 1)[-1] in cls._ENTER_SEGMENTS
 
     class Submitted(Message):
         """Posted when the user presses Enter. Carries the current text."""
@@ -74,12 +83,11 @@ class PromptArea(TextArea):
         ):
             return
 
-        # Shift+Enter inserts a newline. TextArea's own _on_key only maps plain
-        # "enter" to "\n" — it ignores the shifted variants — so we insert it
-        # ourselves. Requires a terminal that reports Shift+Enter distinctly from
-        # Enter (any modern keyboard protocol); plain legacy terminals send the
-        # same bytes for both, where it falls through to the Enter→submit branch.
-        if event.key in self._NEWLINE_KEYS:
+        # Modified Enter (Shift/Alt/Ctrl+Enter) inserts a newline. TextArea's own
+        # _on_key only maps bare "enter" to "\n" and ignores modified variants, so
+        # we handle them. On legacy terminals that can't distinguish the keys, the
+        # press arrives as bare "enter" and falls through to the submit branch.
+        if self._is_modified_enter(event.key):
             event.stop()
             event.prevent_default()
             self.insert("\n")

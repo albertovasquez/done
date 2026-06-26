@@ -610,11 +610,24 @@ def test_pilot_enter_submits_shift_enter_newlines():
     asyncio.run(go())
 
 
-def test_pilot_shift_enter_modifyotherkeys_form_inserts_newline():
-    """Some terminals (e.g. cmux/libghostty, Ghostty modifyOtherKeys) send
-    Shift+Enter in a form Textual reports as key='shift+\\r' (or 'shift+\\n'),
-    NOT 'shift+enter'. The box must still insert a newline and NOT submit for
-    these variants — otherwise Shift+Enter silently submits."""
+def test_prompt_area_modified_enter_classifier():
+    """The structural matcher: any modifier+Enter (Kitty 'shift+enter' form OR
+    modifyOtherKeys 'shift+\\r' form, any modifier combo) is a newline; bare
+    Enter and unrelated keys are not. Fast unit test, no Pilot."""
+    nl = PromptArea._is_modified_enter
+    for k in ("shift+enter", "alt+enter", "ctrl+enter", "alt+shift+enter",
+              "ctrl+shift+enter", "super+enter", "shift+return",
+              "shift+\r", "ctrl+\r", "ctrl+shift+\r", "shift+\n"):
+        assert nl(k), f"{k!r} should be treated as a newline"
+    for k in ("enter", "ctrl+j", "a", "shift+a", "ctrl+c", "escape",
+              "tab", "shift+tab"):
+        assert not nl(k), f"{k!r} must NOT be treated as a newline"
+
+
+def test_pilot_modified_enter_encodings_insert_newline():
+    """Drive the actual widget with the key strings Textual emits for Shift+Enter
+    across terminal encodings (Kitty 'shift+enter' + modifyOtherKeys 'shift+\\r'/
+    'shift+\\n' + a ctrl variant). Each must insert a newline and NOT submit."""
     from textual import events
 
     async def go():
@@ -624,14 +637,14 @@ def test_pilot_shift_enter_modifyotherkeys_form_inserts_newline():
             inp = app.query_one("#landing-input", PromptArea)
             inp.focus()
             await pilot.press("a")
-            for variant in ("shift+\r", "shift+\n"):
+            for variant in ("shift+enter", "shift+\r", "shift+\n", "ctrl+\r"):
                 inp.post_message(events.Key(variant, "\r"))
                 await pilot.pause()
             await pilot.press("b")
             await pilot.pause()
-            assert inp.value == "a\n\nb", \
-                f"modifyOtherKeys shift+enter should insert newlines: {inp.value!r}"
-            assert not app._started, "shift+enter variants must NOT submit"
+            assert inp.value == "a\n\n\n\nb", \
+                f"all modified-enter encodings should insert newlines: {inp.value!r}"
+            assert not app._started, "modified-enter variants must NOT submit"
 
     asyncio.run(go())
 
