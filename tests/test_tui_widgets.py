@@ -322,3 +322,25 @@ def test_activity_region_mounts_and_shows_tool_when_working():
             from harness.tui.widgets.tool_call_row import ToolCallRow
             assert region.query(ToolCallRow), "ToolCallRow should appear when expanded"
     asyncio.run(go())
+
+
+def test_cap_body_caps_lines():
+    body = "\n".join(f"line{i}" for i in range(20))
+    assert cap_body(body, "read").count("\n") <= 6
+    assert cap_body(body, "shell").count("\n") <= 10
+    assert cap_body("", "shell") == ""
+
+
+def test_tool_call_row_detail_includes_body():
+    tool = ToolView(title="$ cat f.py", status=ToolStatus.DONE, subtype="read",
+                    body="alpha\nbeta", id="t1")
+    row = ToolCallRow(tool, expanded=True)
+    detail = row.detail_for(tool)
+    assert "f.py" in detail
+    assert "alpha" in detail and "beta" in detail
+
+
+def test_tool_call_row_collapsed_line_unchanged():
+    tool = ToolView(title="$ pytest", status=ToolStatus.ACTIVE, subtype="test", id="t1")
+    row = ToolCallRow(tool)
+    assert "⚑" in row.line_for(tool) and "pytest" in row.line_for(tool)

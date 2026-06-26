@@ -71,4 +71,4 @@ class ActivityRegion(Vertical):
         else:
             tools_container.remove_children()
             for tv in snap.tools:
-                tools_container.mount(ToolCallRow(tv))
+                tools_container.mount(ToolCallRow(tv, expanded=True))
