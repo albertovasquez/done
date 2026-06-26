@@ -33,6 +33,15 @@ Screen { layout: vertical; background: $background; layers: base overlay; }
 #transcript { height: 1fr; padding: 1 2; background: $background; }
 #composer { dock: bottom; height: auto; margin: 0 2 1 2; }
 
+/* streamed agent answer: a live Markdown widget. Sit flush in the transcript
+   (Textual's Markdown adds its own block margins; trim the outer ones so it
+   reads as one answer block rather than a boxed document). */
+#transcript Markdown { height: auto; margin: 0; padding: 0; background: $background; }
+#transcript Markdown .code_inline { color: $code; }
+
+/* "model is working" indicator — compact, themed, left-aligned */
+#working { height: 1; color: $accent; content-align: left middle; padding: 0; }
+
 /* user message block in the transcript */
 .user-msg {
     border-left: thick $accent;

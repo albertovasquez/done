@@ -60,7 +60,18 @@ class FakeAgent(acp.Agent):
                 # the client shows "$ <cmd>" not the opaque tool_call_id.
                 tool_call=ToolCallUpdate(tool_call_id="tc1", title="$ echo hello"))
 
-        # 3) a normal agent message
+        # 3) optionally stream several message deltas for ONE turn (so the client
+        # can be tested accumulating them into a single live Markdown widget).
+        if "STREAM" in text:
+            # a small pre-token delay so the client's "working" indicator is
+            # observable (a real turn has latency before the first token).
+            await asyncio.sleep(0.15)
+            for piece in ("Hello ", "**world** ", "done"):
+                await self._conn.session_update(
+                    session_id, update_agent_message_text(piece))
+            return acp.PromptResponse(stop_reason="end_turn")
+
+        # 4) a normal agent message
         await self._conn.session_update(session_id, update_agent_message_text("done"))
         return acp.PromptResponse(stop_reason="end_turn")
 

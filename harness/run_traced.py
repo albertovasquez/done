@@ -84,7 +84,9 @@ def route_and_dispatch(prompt, *, router, emitter, make_chat_handler, run_agent,
     if cls.suggested_model and cls.suggested_model != worker_model_id:
         echo(f"(router suggests model '{cls.suggested_model}'; using your '{worker_model_id}')")
     if cls.task_type == "chat_question":
-        echo(make_chat_handler().answer(prompt))
+        # this CLI prints to a plain console (not the streaming TUI), so join the
+        # streamed pieces into one string.
+        echo("".join(make_chat_handler().answer_stream(prompt)))
         return 0
     if cls.task_type == "ambiguous":
         echo("still unclear after clarification — not running the agent; please rephrase.")

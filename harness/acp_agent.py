@@ -114,8 +114,17 @@ class HarnessAgent(acp.Agent):
 
         if cls.task_type == "chat_question":
             handler = ChatHandler(self._worker_model_id)
-            answer = await loop.run_in_executor(None, handler.answer, text)
-            await self._conn.session_update(session_id, message_chunk(answer))
+
+            def pump() -> None:
+                # answer_stream is a blocking generator (litellm); run it on the
+                # worker thread and marshal each piece back to the loop as its own
+                # message_chunk — same idiom as the tool-call path above.
+                for piece in handler.answer_stream(text):
+                    asyncio.run_coroutine_threadsafe(
+                        self._conn.session_update(session_id, message_chunk(piece)),
+                        loop).result()
+
+            await loop.run_in_executor(None, pump)
             self._store.record(session_id, {"prompt": text, "stop_reason": "end_turn",
                                             "kind": "chat"})
             return acp.PromptResponse(stop_reason="end_turn")

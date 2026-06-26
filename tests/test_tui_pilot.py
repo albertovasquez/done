@@ -3,10 +3,15 @@ sys.path.insert(0, "upstream/src")
 sys.path.insert(0, ".")
 
 import asyncio
+import time
 from pathlib import Path
+from types import SimpleNamespace as NS
 
+from acp import update_agent_message_text
 from harness.tui.app import HarnessTui, PermissionModal
-from textual.widgets import RichLog, Input
+from harness.tui.messages import SessionUpdate
+from textual.containers import VerticalScroll
+from textual.widgets import Markdown, Static, Input
 
 REPO = Path(__file__).resolve().parent.parent
 # Running interpreter (portable across worktrees / any cwd), not a hardcoded
@@ -14,14 +19,27 @@ REPO = Path(__file__).resolve().parent.parent
 FAKE_CMD = [sys.executable, str(REPO / "tests/fake_agent.py")]
 
 
+def _md_source(md: Markdown) -> str:
+    """The accumulated markdown source of a streaming answer widget (the public
+    `source` property; falls back to the private store across Textual versions)."""
+    return getattr(md, "source", None) or getattr(md, "_markdown", "") or ""
+
+
 def _transcript_text(app) -> str:
     """The conversation transcript only exists AFTER the first send (the UI starts
-    on the centered landing screen). Returns '' until then."""
+    on the centered landing screen). Returns the concatenated text of every
+    transcript widget — Static lines (rendered markup) and Markdown sources."""
     try:
-        log = app.query_one("#transcript", RichLog)
+        scroll = app.query_one("#transcript", VerticalScroll)
     except Exception:
         return ""
-    return "\n".join(strip.text for strip in log.lines)
+    parts = []
+    for w in scroll.children:
+        if isinstance(w, Markdown):
+            parts.append(_md_source(w))
+        elif isinstance(w, Static):
+            parts.append(str(w.content))      # the raw markup string
+    return "\n".join(parts)
 
 
 async def _send_first_prompt(pilot, app, text: str) -> None:
@@ -75,6 +93,90 @@ def test_pilot_renders_harness_chip_end_to_end():
         assert "hello" in text, f"user message missing.\n{text}"      # rendered as '▌ hello'
         assert "done" in text, f"agent reply missing.\n{text}"
         assert "▣ Build" in text, f"per-turn meta line missing.\n{text}"
+
+    asyncio.run(go())
+
+
+def test_pilot_streams_deltas_into_one_markdown_widget():
+    """Multiple message deltas for one turn accumulate into a SINGLE live Markdown
+    widget (not one line per delta), and the 'model is working' indicator appears
+    after sending and is gone once the turn completes."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await _send_first_prompt(pilot, app, "STREAM please")
+            # working indicator should appear while the turn is in flight
+            saw_working = False
+            for _ in range(50):
+                await pilot.pause()
+                if app.query("#working"):
+                    saw_working = True
+                if app._started and app.query("#transcript"):
+                    mds = app.query_one("#transcript", VerticalScroll).query(Markdown)
+                    if mds and "done" in _md_source(mds.first()):
+                        break
+            scroll = app.query_one("#transcript", VerticalScroll)
+            mds = list(scroll.query(Markdown))
+            md_src = _md_source(mds[0]) if mds else ""
+            working_after = bool(app.query("#working"))
+        assert saw_working, "working indicator never appeared after send"
+        assert len(mds) == 1, f"expected ONE markdown widget, got {len(mds)}"
+        # all three deltas accumulated into the one widget, in order
+        assert md_src == "Hello **world** done", f"deltas not accumulated: {md_src!r}"
+        assert not working_after, "working indicator should be gone after the turn"
+
+    asyncio.run(go())
+
+
+def test_late_prior_turn_delta_does_not_start_block_under_next_prompt():
+    """A prompt response may return before the client has processed trailing
+    session_update notifications. Starting the next turn must not let a late
+    prior-turn delta create a new Markdown block below the next user message."""
+    class ControlledConn:
+        def __init__(self):
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def prompt(self, **kwargs):
+            self.started.set()
+            await self.release.wait()
+            return NS(stop_reason="end_turn")
+
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await app._enter_conversation()
+            conn = ControlledConn()
+            app._conn = conn
+            app._session_id = "fake-session"
+
+            app._add_user_message("first")
+            app.on_session_update(SessionUpdate(update_agent_message_text("first complete")))
+            await pilot.pause()
+            app._write_meta(0.1)
+
+            app._add_user_message("second")
+            app._turn_start = time.monotonic()
+            task = asyncio.create_task(app._send_prompt("second"))
+            try:
+                await conn.started.wait()
+                await pilot.pause()
+                assert app.query("#working"), "second turn should still be in flight"
+
+                app.on_session_update(SessionUpdate(update_agent_message_text(" late")))
+                await pilot.pause()
+
+                scroll = app.query_one("#transcript", VerticalScroll)
+                md_sources = [_md_source(md) for md in scroll.query(Markdown)]
+            finally:
+                conn.release.set()
+                await task
+
+        assert md_sources == ["first complete late"], (
+            "late prior-turn delta was rendered as a new answer block under the next prompt: "
+            f"{md_sources!r}")
 
     asyncio.run(go())
 

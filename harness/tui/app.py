@@ -11,7 +11,11 @@ agent messages, tool calls, and the harness _meta chips — plus a per-turn meta
 line (mode · model · elapsed). Permission requests surface as a modal whose button
 resolves the Future the TuiClient awaits.
 
-RichLog.write() only appends (no line handle), so tool status is append-only."""
+The transcript is a VerticalScroll of widgets (not an append-only RichLog): each
+streamed agent answer is a live Markdown widget that accumulates deltas and is
+.update()-ed per token, so answers render formatted AND stream as they arrive.
+Discrete items (user message, chips, tool calls, meta) are themed Static lines.
+A LoadingIndicator shows while the model is working (between send and first token)."""
 
 from __future__ import annotations
 
@@ -22,8 +26,8 @@ from typing import Any
 import acp
 from acp.schema import ClientCapabilities, ElicitationCapabilities
 from textual.app import App, ComposeResult
-from textual.containers import Container, Horizontal, Vertical
-from textual.widgets import Input, RichLog, Static
+from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.widgets import Input, LoadingIndicator, Markdown, Static
 
 from harness.tui.client import TuiClient
 from harness.tui.commands import build_registry
@@ -74,6 +78,9 @@ class HarnessTui(App):
         self._pending_perm = None             # the in-flight permission Future, if any
         self._started = False                 # have we left the landing state?
         self._turn_start = 0.0                # monotonic at send, for elapsed meta
+        self._streaming_md = None             # the live Markdown widget for the current answer, else None
+        self._stream_buf = ""                 # accumulated text for _streaming_md
+        self._stream_closed = True            # True => the next message delta starts a fresh widget
         self._tokens = 0                      # last-known token count from usage updates
         self._commands = build_registry()     # slash-command registry
         self._slash = None                    # the SlashMenu widget while open, else None
@@ -175,7 +182,7 @@ class HarnessTui(App):
         except Exception:
             pass
         if self._started:
-            self._transcript.write(_c("error", message))
+            self._append_line(_c("error", message))
         else:
             # the header-text Static is rendered with Textual markup → $error resolves
             self.query_one("#header-text", Static).update(f"[$error]{message}[/]")
@@ -278,7 +285,7 @@ class HarnessTui(App):
         """Show a one-off informational line (in transcript if started, else in
         the landing header's text column, leaving the icon in place)."""
         if self._started:
-            self._transcript.write(_c("muted", message))
+            self._append_line(_c("muted", message))
         else:
             self.query_one("#header-text", Static).update(f"[$muted]{message}[/]")
 
@@ -354,7 +361,7 @@ class HarnessTui(App):
         msg = "\n".join(lines)
         if self._started:
             for ln in lines:
-                self._transcript.write(ln)
+                self._append_line(ln)
         else:
             self.query_one("#header-text", Static).update(msg)
 
@@ -362,8 +369,7 @@ class HarnessTui(App):
         """Tear down the landing view, build the transcript + bottom composer."""
         self._started = True
         await self.query_one("#landing", Container).remove()
-        await self.mount(RichLog(id="transcript", highlight=False, markup=True, wrap=True),
-                         before="#statusbar")
+        await self.mount(VerticalScroll(id="transcript"), before="#statusbar")
         composer = Vertical(id="composer", classes="compose")
         await self.mount(composer, before="#statusbar")
         await composer.mount(Input(placeholder="Reply…", id="conversation-input"))
@@ -371,72 +377,149 @@ class HarnessTui(App):
         self.query_one("#conversation-input", Input).focus()
 
     @property
-    def _transcript(self) -> RichLog:
-        return self.query_one("#transcript", RichLog)
+    def _transcript(self) -> VerticalScroll:
+        return self.query_one("#transcript", VerticalScroll)
+
+    def _append(self, widget) -> None:
+        """Mount a widget into the transcript and keep the view pinned to the end."""
+        self._transcript.mount(widget)
+        self._transcript.scroll_end(animate=False)
+
+    def _append_line(self, markup: str) -> None:
+        """Append a discrete themed line (chips, user msg, tool calls, meta, errors)."""
+        self._append(Static(markup, markup=True))
+
+    # ---- "model is working" indicator ----
+
+    def _show_working(self) -> None:
+        if self._transcript.query("#working"):
+            return                                  # idempotent
+        self._append(LoadingIndicator(id="working"))
+
+    def _hide_working(self) -> None:
+        for ind in self._transcript.query("#working"):
+            ind.remove()
+
+    def _end_stream(self) -> None:
+        """Close the current live Markdown block: the NEXT message delta starts a
+        fresh widget. The widget reference is KEPT (not nulled) so that a late
+        delta belonging to the just-closed answer (notification-delivery can lag
+        prompt() returning) still appends to ITS block, in place — rather than
+        spawning a stray block under the next user prompt. Called when a tool call
+        or thought interleaves, and when a new user turn begins."""
+        self._stream_closed = True
 
     def _add_user_message(self, text: str) -> None:
-        # RichLog can't host child widgets, so render the user message as a styled
-        # line: an accent bar glyph + bold text (the bordered-box look, inline).
-        self._transcript.write("")  # spacer
-        self._transcript.write(f"{_c('accent', '▌')} [b]{self._escape(text)}[/b]")
+        # A new user turn: close the prior answer's stream first so its widget is
+        # finalized and any late delta lands in it, not under this message.
+        self._end_stream()
+        # accent bar glyph + bold text (the bordered-box look, inline).
+        self._append_line(f"{_c('accent', '▌')} [b]{self._escape(text)}[/b]")
 
     @staticmethod
     def _escape(s: str) -> str:
         return s.replace("[", "\\[")
 
     async def _send_prompt(self, text: str) -> None:
-        log = self._transcript
+        # The prior answer's stream was already closed by _add_user_message (which
+        # runs before this on a new turn). Closing keeps the widget reference so a
+        # late delta from the prior answer extends ITS block in place rather than
+        # spawning a stray block under this prompt (see _stream_message).
+        self._show_working()                      # spinner until the first token
         try:
             resp = await self._conn.prompt(
                 prompt=[acp.text_block(text)], session_id=self._session_id)
             elapsed = time.monotonic() - self._turn_start
             self._write_meta(elapsed)
             if getattr(resp, "stop_reason", "end_turn") != "end_turn":
-                log.write(_c("muted", f"— turn ended: {resp.stop_reason} —"))
+                self._append_line(_c("muted", f"— turn ended: {resp.stop_reason} —"))
         except Exception as e:
-            log.write(_c("error", f"agent disconnected — restart to continue ({e})"))
+            self._append_line(_c("error", f"agent disconnected — restart to continue ({e})"))
         finally:
+            self._hide_working()
             self._active_input().disabled = False
             self._active_input().focus()
 
     def _write_meta(self, elapsed: float) -> None:
         model_label = _model_label(self.model, self._worker_model_id)
-        self._transcript.write(
+        self._append_line(
             f"{_c('accent', '▣ ' + _MODE)} {_c('muted', f'· {model_label} · {elapsed:.1f}s')}")
         self._refresh_status()
 
     # ---- streaming session updates → themed transcript ----
 
+    def _stream_message(self, text: str) -> None:
+        """Accumulate an agent message delta into a single live Markdown widget.
+
+        Routing is POSITION-based, which is unambiguous and matches the visual
+        intent: a delta extends the streaming widget only while that widget is
+        still the LAST child of the transcript. Once anything newer is appended
+        (a user message, meta line, tool call, or the working indicator), the
+        streaming widget is no longer last:
+          - a NEW answer (its first delta) opens a fresh widget at the bottom;
+          - a LATE delta for the just-finished answer (notification lag) finds its
+            own widget is no longer last AND no new answer has opened, so it
+            extends that widget in place — never a stray block under the next
+            prompt.
+        We distinguish the two by `_stream_closed`: set when a user message / tool
+        / thought finalizes the answer. A delta while closed, with the prior
+        widget no longer last, is a late delta → extend the prior widget. A delta
+        while closed with the prior widget still last (or none) is a new answer.
+
+        Markdown.update() is a no-op until the widget is mounted, so the render is
+        scheduled via call_after_refresh — by the next refresh the mount has
+        completed and the accumulated buffer renders."""
+        kids = list(self._transcript.children)
+        prior_is_last = self._streaming_md is not None and kids and kids[-1] is self._streaming_md
+
+        if self._stream_closed and self._streaming_md is not None and not prior_is_last:
+            # late delta for the just-closed answer → extend its widget in place;
+            # the stream stays CLOSED (this delta does not begin a new answer).
+            pass
+        elif self._streaming_md is None or self._stream_closed:
+            # new answer → fresh widget at the bottom; stream is now OPEN.
+            self._hide_working()
+            self._streaming_md = Markdown("")
+            self._append(self._streaming_md)
+            self._stream_buf = ""
+            self._stream_closed = False
+        # else: stream already open → keep extending it.
+        self._stream_buf += text
+        md, buf = self._streaming_md, self._stream_buf
+        self.call_after_refresh(md.update, buf)
+        self._transcript.scroll_end(animate=False)
+
     def on_session_update(self, msg: SessionUpdate) -> None:
         if not self._started:
             return  # updates before first send (shouldn't happen) are ignored
-        log = self._transcript
         # token usage, if the agent surfaced any under _meta
         self._maybe_update_tokens(getattr(msg.update, "field_meta", None))
         for chip in harness_chips(getattr(msg.update, "field_meta", None)):
-            log.write(_c("muted", f"\\[{chip}]"))
+            self._append_line(_c("muted", f"\\[{chip}]"))
         item = render_update(msg.update)
         if item is None:
             return
         if item.kind == "message":
             if item.text:
-                log.write(_c("foreground", self._escape(item.text)))
+                self._stream_message(item.text)
         elif item.kind == "thought":
             if item.text:
-                log.write(f"[{COLORS['muted']} italic]{self._escape(item.text)}[/]")
+                self._end_stream()  # a thought ends the current answer block
+                self._append_line(f"[{COLORS['muted']} italic]{self._escape(item.text)}[/]")
         elif item.kind == "user":
             if item.text:
-                log.write(f"{_c('accent', '▌')} [b]{self._escape(item.text)}[/b]")
+                self._append_line(f"{_c('accent', '▌')} [b]{self._escape(item.text)}[/b]")
         elif item.kind == "tool":
+            self._end_stream()  # a tool call finalizes the current Markdown block
             color = self._status_hex(item.status)
-            log.write(f"[{color}]{self._escape(item.title)}[/]")
+            self._append_line(f"[{color}]{self._escape(item.title)}[/]")
         elif item.kind == "tool_update":
             color = self._status_hex(item.status)
             glyph = _GLYPH.get(item.status, "")
             line = f"  [{color}]→ {item.status} {glyph}[/]"
             if item.body:
                 line += f"  {self._escape(item.body.splitlines()[0][:120])}"
-            log.write(line)
+            self._append_line(line)
 
     @staticmethod
     def _status_hex(status: str) -> str:
