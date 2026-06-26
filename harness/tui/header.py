@@ -11,12 +11,12 @@ from __future__ import annotations
 BLUE = "#286ce9"
 
 # Three blue bars (the brand ≡ mark), one per row aligned to the three text
-# lines. Each bar is a FULL block '█' filling its whole cell, so it visually
-# centers on the text row — the midpoint between '▀' (top of cell, floats above
-# the text) and '▄' (bottom of cell, sits a touch low). The ≡ separation comes
-# from the line gap between the three single-row Static lines, not from empty
-# half-cells.
-_ICON_ROWS = ["█████", "█████", "█████"]
+# lines. Each bar is a LOWER-half block '▄': it fills the BOTTOM of its cell, so
+# (a) the bar sits low/centered against its text row rather than floating high
+# like '▀', and (b) the empty TOP half of each cell keeps the bars VISUALLY
+# SEPARATE — three distinct bars (the ≡ mark), not one merged block as a full
+# '█' produces.
+_ICON_ROWS = ["▄▄▄▄▄", "▄▄▄▄▄", "▄▄▄▄▄"]
 
 
 def icon_markup() -> str:
