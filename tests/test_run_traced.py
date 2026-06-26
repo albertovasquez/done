@@ -7,11 +7,11 @@ from pathlib import Path
 sys.path.insert(0, "upstream/src")
 sys.path.insert(0, ".")
 
-import trace.run_traced as rt
+import harness.run_traced as rt
 
 import json as _json
-from trace.router import Router, Classification
-from trace.run_traced import route_and_dispatch
+from harness.router import Router, Classification
+from harness.run_traced import route_and_dispatch
 
 
 class _FixedRouter:
@@ -33,7 +33,7 @@ def _spy_agent():
 
 
 def _emitter(tmp_path):
-    from trace.events import Emitter
+    from harness.events import Emitter
     return Emitter(tmp_path / "events.jsonl", clock=lambda: 0.0, console=False)
 
 
@@ -80,7 +80,7 @@ def test_5_suggested_model_not_applied(tmp_path):
 def test_6_mock_mode_chat_is_honest(tmp_path):
     out = []
     spy = _spy_agent()
-    from trace.chat_handler import ChatHandler
+    from harness.chat_handler import ChatHandler
     route_and_dispatch(
         "what is 1+1",
         router=_FixedRouter(_cls("chat_question", confidence=0.97)),
@@ -125,7 +125,7 @@ def test_8_eof_and_empty_clarification_fail_safe(tmp_path):
 
 
 def test_9_event_seq_contiguous_with_classified_first(tmp_path):
-    from trace.events import Emitter, Event
+    from harness.events import Emitter, Event
     em = Emitter(tmp_path / "events.jsonl", clock=lambda: 0.0, console=False)
     def run_agent(prompt, skill_block=""):
         # simulate runner events arriving pre-built with their OWN seq 0,1
@@ -192,7 +192,7 @@ def test_4b_client_uses_runner_not_agent_directly():
 def test_10_reclassification_is_re_emitted(tmp_path):
     """After a clarification round, a second task.classified must be emitted so the
     trace matches the dispatched decision (not the pre-clarification guess)."""
-    from trace.events import Emitter
+    from harness.events import Emitter
     import json as _j
     em = Emitter(tmp_path / "events.jsonl", clock=lambda: 0.0, console=False)
     spy = _spy_agent()
@@ -214,8 +214,8 @@ def test_10_reclassification_is_re_emitted(tmp_path):
 
 
 def test_11_skill_load_emitted_and_block_passed(tmp_path):
-    from trace.events import Emitter
-    from trace.skills import SkillLoad
+    from harness.events import Emitter
+    from harness.skills import SkillLoad
     import json as _j
     em = Emitter(tmp_path / "events.jsonl", clock=lambda: 0.0, console=False)
     received = {}

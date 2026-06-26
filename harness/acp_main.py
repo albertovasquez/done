@@ -3,7 +3,7 @@
 
 STDOUT IS THE WIRE — MSWEA_SILENT_STARTUP is set before any minisweagent import
 and nothing is ever printed to stdout. Usage (a client launches this):
-  .venv/bin/python trace/acp_main.py [--model mock|vibeproxy]
+  .venv/bin/python harness/acp_main.py [--model mock|vibeproxy]
 """
 
 from __future__ import annotations
@@ -23,9 +23,9 @@ sys.path.insert(0, str(REPO_ROOT))
 import acp  # noqa: E402
 from dotenv import load_dotenv  # noqa: E402
 
-from trace.acp_agent import HarnessAgent  # noqa: E402
-from trace.router import Router, complete  # noqa: E402
-from trace import skills  # noqa: E402
+from harness.acp_agent import HarnessAgent  # noqa: E402
+from harness.router import Router, complete  # noqa: E402
+from harness import skills  # noqa: E402
 
 
 def _load_agent_cfg() -> dict:
@@ -38,7 +38,7 @@ def _load_agent_cfg() -> dict:
 
 def _model_factory(model_choice: str):
     if model_choice == "mock":
-        from trace.models_mock import build_mock_model
+        from harness.models_mock import build_mock_model
         return build_mock_model
     # vibeproxy path — api_base/api_key live in model_kwargs (LitellmModelConfig has
     # no top-level api_base/api_key fields); mirror run_traced.py's proven wiring.
@@ -74,5 +74,11 @@ async def _main(argv=None) -> None:
     await acp.run_agent(agent)
 
 
+def main(argv=None) -> None:
+    """Sync entrypoint so the agent is runnable as `python -m harness.acp_main`
+    (the TUI launches it this way via sys.executable)."""
+    asyncio.run(_main(argv))
+
+
 if __name__ == "__main__":
-    asyncio.run(_main())
+    main()

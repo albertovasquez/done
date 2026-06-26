@@ -7,7 +7,7 @@ import threading
 import pytest
 from minisweagent.exceptions import Submitted
 
-from trace.acp_env import AcpEnvironment
+from harness.acp_env import AcpEnvironment
 
 
 def _env(tmp_path, **kw):

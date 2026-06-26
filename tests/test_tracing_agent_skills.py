@@ -2,9 +2,9 @@ import sys
 sys.path.insert(0, "upstream/src")
 sys.path.insert(0, ".")
 
-from trace.events import Emitter
-from trace.tracing_agent import TracingAgent
-from trace.models_mock import build_mock_model
+from harness.events import Emitter
+from harness.tracing_agent import TracingAgent
+from harness.models_mock import build_mock_model
 from minisweagent.environments.local import LocalEnvironment
 
 

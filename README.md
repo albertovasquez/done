@@ -20,7 +20,7 @@ For the ACP agent (Phase 4), also install the ACP SDK:
 ./run.sh --model mock
 ```
 
-Streams events to the console and writes `trace/runs/<ts>/events.jsonl` and
+Streams events to the console and writes `harness/runs/<ts>/events.jsonl` and
 `traj.json`. The mock model fixes the failing test in `examples/sample-repo`.
 Reset between runs with `git checkout examples/sample-repo/calculator.py`.
 
@@ -61,18 +61,29 @@ A single-session Textual TUI that is an **ACP client**. It launches the Phase-4
 agent (`trace/acp_main.py`) as a subprocess and drives it over ACP — so the TUI
 talks to the engine exactly the way Zed would, not by importing it.
 
+**Install the `done` command (global):**
+
+```bash
+uv tool install --editable .        # → `done` on your PATH, from anywhere
+# or, into the project venv:  .venv/bin/pip install -e .
+```
+
+This installs the harness as a package (with the vendored `mini-swe-agent` as a
+dependency) and creates two console scripts: `done` (the TUI) and `done-agent`
+(the raw ACP server for editor clients like Zed).
+
 **Run it:**
 
 ```bash
-# mock LLM (zero cost, no VibeProxy needed)
-.venv/bin/python trace/tui_main.py
-
-# real LLM through VibeProxy
-.venv/bin/python trace/tui_main.py --model vibeproxy
-
-# point it at a different project directory (default: current dir)
-.venv/bin/python trace/tui_main.py --model vibeproxy --cwd ~/myproject
+done                       # mock LLM (zero cost); operates on the current dir
+done --model vibeproxy     # real LLM through VibeProxy
+done --cwd ~/myproject     # operate on a specific project instead of the cwd
 ```
+
+`done` operates on **whatever directory you launch it from** — like `git`. The
+harness's own assets (skills, config) resolve from the install location, not your
+project. From a source checkout you can also run it without installing:
+`.venv/bin/python -m harness.tui_main`.
 
 **Flags:**
 

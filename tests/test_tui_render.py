@@ -4,7 +4,7 @@ sys.path.insert(0, ".")
 
 from types import SimpleNamespace as NS
 
-from trace.tui.render import render_update, harness_chips, status_style, RenderedItem
+from harness.tui.render import render_update, harness_chips, status_style, RenderedItem
 
 
 # --- helpers: build stub update objects that duck-type the acp ones ---

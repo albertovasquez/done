@@ -19,9 +19,9 @@ from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, RichLog
 
-from trace.tui.client import TuiClient
-from trace.tui.messages import SessionUpdate, PermissionRequest
-from trace.tui.render import render_update, harness_chips, status_style
+from harness.tui.client import TuiClient
+from harness.tui.messages import SessionUpdate, PermissionRequest
+from harness.tui.render import render_update, harness_chips, status_style
 
 _GLYPH = {"completed": "✓", "failed": "✗"}
 
@@ -50,7 +50,7 @@ class PermissionModal(ModalScreen):
 
 
 class HarnessTui(App):
-    CSS_PATH = "app.tcss"  # relative to this module's dir (trace/tui/)
+    CSS_PATH = "app.tcss"  # relative to this module's dir (harness/tui/)
     BINDINGS = [("escape", "cancel", "Cancel turn")]
 
     def __init__(self, agent_cmd: list[str], cwd: str, model: str) -> None:

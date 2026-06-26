@@ -7,8 +7,8 @@ from types import SimpleNamespace as NS
 
 from acp.schema import AllowedOutcome, DeniedOutcome, PermissionOption
 
-from trace.tui.client import TuiClient
-from trace.tui.messages import SessionUpdate, PermissionRequest
+from harness.tui.client import TuiClient
+from harness.tui.messages import SessionUpdate, PermissionRequest
 
 
 class _FakeApp:

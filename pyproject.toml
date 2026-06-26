@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quiubo-harness"
+version = "0.5.0"
+description = "Learning-first coding harness: a traced fork of mini-swe-agent with a Router, skills layer, an ACP agent, and a Textual ACP client (TUI)."
+readme = "README.md"
+requires-python = ">=3.10,<3.15"
+dependencies = [
+    "mini-swe-agent",            # the vendored engine (see [tool.uv.sources] below)
+    "agent-client-protocol>=0.10.1,<0.11",
+    "textual>=8,<9",
+    "python-dotenv>=1",
+    "pyyaml>=6",
+    "python-frontmatter>=1",
+    "litellm>=1.75.5",
+]
+
+[project.scripts]
+# Type `done` from any directory to launch the Textual ACP client (the TUI).
+# It operates on YOUR current working directory as the project.
+done = "harness.tui_main:main"
+# The raw ACP agent server (for editor clients like Zed); also used internally
+# by the TUI, which launches it via `python -m harness.acp_main`.
+done-agent = "harness.acp_main:main"
+
+# The engine is the vendored, unmodified mini-swe-agent under upstream/. We
+# install it as a real, editable dependency instead of sys.path-hacking it —
+# this is what lets `import minisweagent` work in any environment the harness is
+# installed into (editable .venv or a global `uv tool install`), while keeping
+# the zero-upstream-edits constraint (uv installs it in place from the path).
+[tool.uv.sources]
+mini-swe-agent = { path = "upstream", editable = true }
+
+[tool.setuptools]
+# The harness lives in the `harness` package (and `harness.tui`). upstream/ is
+# NOT part of this package — it's a separate dependency declared above.
+# (The package was renamed from `trace`, which shadowed Python's stdlib `trace`
+# module and broke imports for an installed console script.)
+packages = ["harness", "harness.tui"]
+
+[tool.setuptools.package-data]
+# skills/ and the agent config are resolved at runtime via __file__ (the install
+# dir), so an EDITABLE install keeps them reachable in the checkout. They are not
+# bundled here; `done` is intended to be installed editable.
+"harness" = []

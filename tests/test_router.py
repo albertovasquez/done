@@ -3,7 +3,7 @@ sys.path.insert(0, "upstream/src")
 sys.path.insert(0, ".")
 
 import json
-from trace.router import Router, Classification
+from harness.router import Router, Classification
 
 _CATALOG = [
     ("poker-domain-rules", "Poker rake/rakeback math and PPPoker domain logic"),

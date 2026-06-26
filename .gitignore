@@ -1,7 +1,8 @@
 .env
-trace/runs/
+harness/runs/
 __pycache__/
 *.pyc
+*.egg-info/
 .pytest_cache/
 .superpowers/
 vendor/

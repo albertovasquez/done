@@ -12,8 +12,8 @@ import yaml
 from minisweagent.environments.local import LocalEnvironment
 from minisweagent.models.test_models import DeterministicToolcallModel, make_toolcall_output
 
-from trace.events import Emitter
-from trace.tracing_agent import TracingAgent
+from harness.events import Emitter
+from harness.tracing_agent import TracingAgent
 
 
 def _agent_config() -> dict:

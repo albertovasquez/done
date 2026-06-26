@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Phase-0 entrypoint: run the vendored agent under the live tracer.
 
-  python3 trace/run_traced.py                 # mock (default), zero cost
-  python3 trace/run_traced.py --model vibeproxy --task "fix the add bug"
+  python3 harness/run_traced.py                 # mock (default), zero cost
+  python3 harness/run_traced.py --model vibeproxy --task "fix the add bug"
 
 Run via ./run.sh so PYTHONPATH includes upstream/src.
 """
@@ -24,12 +24,12 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from minisweagent.environments.local import LocalEnvironment  # noqa: E402
 
-from trace.events import Emitter  # noqa: E402
-from trace.models_mock import build_mock_model  # noqa: E402
-from trace.runner import MiniSweAgentRunner  # noqa: E402
-from trace.router import Router, complete  # noqa: E402
-from trace import skills  # noqa: E402
-from trace.chat_handler import ChatHandler  # noqa: E402
+from harness.events import Emitter  # noqa: E402
+from harness.models_mock import build_mock_model  # noqa: E402
+from harness.runner import MiniSweAgentRunner  # noqa: E402
+from harness.router import Router, complete  # noqa: E402
+from harness import skills  # noqa: E402
+from harness.chat_handler import ChatHandler  # noqa: E402
 
 DEFAULT_TASK = "Fix the failing test in examples/sample-repo so that add(2, 3) == 5."
 DEFAULT_VIBEPROXY_MODEL = "gpt-5.4"  # single source of truth; gpt-5.1-codex does not exist on this proxy

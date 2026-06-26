@@ -2,7 +2,7 @@ import sys
 sys.path.insert(0, "upstream/src")
 sys.path.insert(0, ".")
 
-from trace.models_mock import build_mock_model
+from harness.models_mock import build_mock_model
 
 
 def test_mock_model_sequence_shape():

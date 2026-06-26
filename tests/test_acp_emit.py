@@ -2,7 +2,7 @@ import sys
 sys.path.insert(0, "upstream/src")
 sys.path.insert(0, ".")
 
-from trace.acp_emit import tool_call_start, tool_call_done, message_chunk, with_meta
+from harness.acp_emit import tool_call_start, tool_call_done, message_chunk, with_meta
 
 
 def test_tool_call_start_is_pending_execute():

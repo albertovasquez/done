@@ -24,8 +24,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Callable, Iterator
 
-from trace.events import Event, _EventSource
-from trace.tracing_agent import TracingAgent
+from harness.events import Event, _EventSource
+from harness.tracing_agent import TracingAgent
 
 
 @dataclass

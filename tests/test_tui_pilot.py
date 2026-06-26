@@ -5,7 +5,7 @@ sys.path.insert(0, ".")
 import asyncio
 from pathlib import Path
 
-from trace.tui.app import HarnessTui, PermissionModal
+from harness.tui.app import HarnessTui, PermissionModal
 from textual.widgets import RichLog, Input
 
 REPO = Path(__file__).resolve().parent.parent

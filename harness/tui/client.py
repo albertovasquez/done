@@ -16,7 +16,7 @@ from acp.schema import (
     RequestPermissionResponse,
 )
 
-from trace.tui.messages import SessionUpdate, PermissionRequest
+from harness.tui.messages import SessionUpdate, PermissionRequest
 
 
 class TuiClient:                      # implements the acp.Client Protocol

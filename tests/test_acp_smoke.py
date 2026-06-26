@@ -31,7 +31,7 @@ from acp.schema import (
 REPO = Path(__file__).resolve().parent.parent
 AGENT_CMD = [
     str(REPO / ".venv/bin/python"),
-    str(REPO / "trace/acp_main.py"),
+    str(REPO / "harness/acp_main.py"),
     "--model", "mock",
 ]
 
