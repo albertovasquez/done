@@ -183,12 +183,13 @@ def test_tool_update_targets_live_tool_not_last_index():
 
     # Build a synthetic state: two tasks, but live tool title = first task's label
     # (simulates a task added for a different reason after the tool was set)
-    live_tool = ToolView(title="$ echo one", status=ToolStatus.PENDING, subtype="shell")
+    live_tool = ToolView(title="$ echo one", status=ToolStatus.PENDING, subtype="shell", id="t1")
     synthetic_agent = AgentSnapshot(
         id="default",
         name="agent",
         state=AgentState.RUNNING_TOOL,
         tool=live_tool,
+        tools=(live_tool,),
         tasks=(
             TaskItem(label="$ echo one", status="in_progress"),   # index 0 — matches live tool
             TaskItem(label="$ other task", status="in_progress"),  # index 1 — does NOT match
@@ -230,3 +231,26 @@ def test_permission_closed_restores_responding_when_no_live_tool():
     assert _active(fs).state == AgentState.AWAITING_PERMISSION
     fs = reduce(fs, PermissionClosed())
     assert _active(fs).state == AgentState.RESPONDING
+
+
+def test_reducer_tracks_multiple_tools_by_id():
+    fs = reduce(initial_snapshot(), TurnStarted())
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="tool", id="t1", title="$ echo one", status="pending")))
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="tool", id="t2", title="$ pytest two", status="pending")))
+    a = fs.active
+    assert len(a.tools) == 2
+    assert a.tools[0].id == "t1" and a.tools[1].id == "t2"
+    # update the FIRST tool — must update t1, NOT the latest (t2)
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="tool_update", id="t1", status="completed", body="hi")))
+    a = fs.active
+    by_id = {tv.id: tv for tv in a.tools}
+    assert by_id["t1"].status == ToolStatus.DONE, "t1 should be DONE"
+    assert by_id["t2"].status == ToolStatus.PENDING, "t2 must stay PENDING (not clobbered)"
+
+
+def test_turn_started_resets_tools():
+    fs = reduce(initial_snapshot(), TurnStarted())
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="tool", id="t1", title="$ x", status="pending")))
+    assert len(fs.active.tools) == 1
+    fs = reduce(fs, TurnStarted())
+    assert fs.active.tools == (), "TurnStarted must reset tools"
