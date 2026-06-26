@@ -14,7 +14,7 @@ BLUE = "#286ce9"
 # half-block ('▀'/'▄'), '━' is a MID-CELL horizontal stroke, so it renders on the
 # text's vertical center and lines up cleanly with each text row — no top/bottom-
 # half offset to fight, and the row gaps keep the three rules distinct (the ≡).
-_ICON_ROWS = ["━━━━", "━━━━", "━━━━"]
+_ICON_ROWS = ["▄▄▄▄▄", "▄▄▄▄▄", "▄▄▄▄▄"]
 
 
 def icon_markup() -> str:

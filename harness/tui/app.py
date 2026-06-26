@@ -129,7 +129,7 @@ class HarnessTui(App):
         label = _model_label(self.model, self._worker_model_id)
         provider = _provider_label(self.model)
         return header_text_markup(
-            "DoneDone", self._version, "Get Shit Done",
+            "DONE", self._version, "Get Shit Done",
             self._compose_meta_markup(label, provider))
 
     def _status_bar(self) -> ComposeResult:
