@@ -91,3 +91,33 @@ def test_main_reexec_oserror_exits_nonzero(monkeypatch, tmp_path, capsys):
         tui_main.main(["--model", "mock", "--cwd", str(tmp_path)])
     assert ei.value.code == 1
     assert "reload failed to re-exec" in capsys.readouterr().err
+
+
+@pytest.fixture
+def isolated_config(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    return tmp_path
+
+
+def _write_default(xdg, backend, model):
+    cfg = xdg / "harness"
+    cfg.mkdir(parents=True, exist_ok=True)
+    (cfg / "done.conf").write_text(
+        f'[agents.default]\nbackend = "{backend}"\nmodel = "{model}"\n'
+    )
+
+
+def test_resolve_explicit_flag_wins_over_config(isolated_config):
+    from harness import config  # noqa: F401  (ensures import even if not at top)
+    _write_default(isolated_config, "mock", "from-config")
+    # User typed --model vibeproxy -> config is ignored, no model override.
+    assert tui_main._resolve_model("vibeproxy") == ("vibeproxy", None)
+
+
+def test_resolve_uses_config_when_flag_absent(isolated_config):
+    _write_default(isolated_config, "mock", "from-config")
+    assert tui_main._resolve_model(None) == ("mock", "from-config")
+
+
+def test_resolve_falls_back_to_hardcoded_when_no_config(isolated_config):
+    assert tui_main._resolve_model(None) == ("vibeproxy", None)
