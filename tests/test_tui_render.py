@@ -1,0 +1,98 @@
+import sys
+sys.path.insert(0, "upstream/src")
+sys.path.insert(0, ".")
+
+from types import SimpleNamespace as NS
+
+from trace.tui.render import render_update, harness_chips, status_style, RenderedItem
+
+
+# --- helpers: build stub update objects that duck-type the acp ones ---
+def _msg(text):
+    return NS(__class__=type("AgentMessageChunk", (), {}), content=NS(text=text))
+
+# render_update dispatches on type(update).__name__, so name the stub classes.
+def _named(name, **attrs):
+    cls = type(name, (), {})
+    obj = cls()
+    for k, v in attrs.items():
+        setattr(obj, k, v)
+    return obj
+
+
+def test_render_agent_message_chunk():
+    u = _named("AgentMessageChunk", content=NS(text="hello"), field_meta=None)
+    item = render_update(u)
+    assert item == RenderedItem(kind="message", text="hello")
+
+
+def test_render_user_message_chunk():
+    u = _named("UserMessageChunk", content=NS(text="hi"), field_meta=None)
+    assert render_update(u) == RenderedItem(kind="user", text="hi")
+
+
+def test_render_agent_thought_chunk():
+    u = _named("AgentThoughtChunk", content=NS(text="thinking"), field_meta=None)
+    assert render_update(u) == RenderedItem(kind="thought", text="thinking")
+
+
+def test_render_tool_call_start():
+    u = _named("ToolCallStart", tool_call_id="tc1", title="$ echo hi", status="pending")
+    assert render_update(u) == RenderedItem(kind="tool", id="tc1", title="$ echo hi", status="pending")
+
+
+def test_render_tool_call_progress_with_body():
+    content = [NS(content=NS(text="output here"))]
+    u = _named("ToolCallProgress", tool_call_id="tc1", status="completed", content=content)
+    assert render_update(u) == RenderedItem(kind="tool_update", id="tc1", status="completed", body="output here")
+
+
+def test_render_tool_call_progress_no_content():
+    u = _named("ToolCallProgress", tool_call_id="tc1", status="failed", content=None)
+    assert render_update(u) == RenderedItem(kind="tool_update", id="tc1", status="failed", body="")
+
+
+def test_render_unknown_returns_none():
+    assert render_update(_named("AgentPlanUpdate", plan=[])) is None
+
+
+def test_status_style_all_str_forms():
+    assert status_style("pending") == "yellow"
+    assert status_style("in_progress") == "blue"
+    assert status_style("completed") == "green"
+    assert status_style("failed") == "red"
+    assert status_style("something-else") == "white"
+
+
+def test_status_style_stringified_enum_forms():
+    # the smoke tests showed status can arrive as "ToolCallStatus.failed"
+    assert status_style("ToolCallStatus.failed") == "red"
+    assert status_style("ToolCallStatus.completed") == "green"
+
+
+def test_harness_chips_task_classified():
+    fm = {"harness": {"task_classified": {"task_type": "code_fix", "skills": ["debugging"], "confidence": 0.9}}}
+    assert harness_chips(fm) == ["classified: code_fix · skills: debugging · conf: 0.90"]
+
+
+def test_harness_chips_task_classified_no_skills():
+    fm = {"harness": {"task_classified": {"task_type": "chat_question", "skills": [], "confidence": 0.5}}}
+    assert harness_chips(fm) == ["classified: chat_question · skills: — · conf: 0.50"]
+
+
+def test_harness_chips_skill_load():
+    fm = {"harness": {"skill_load": {"injected": ["a", "b"], "skipped": ["c"]}}}
+    assert harness_chips(fm) == ["skills: 2 loaded, 1 skipped"]
+
+
+def test_harness_chips_none_and_empty():
+    assert harness_chips(None) == []
+    assert harness_chips({}) == []
+    assert harness_chips({"harness": {}}) == []
+
+
+def test_harness_chips_malformed_never_raises():
+    # missing nested keys must yield [], not raise
+    assert harness_chips({"harness": {"task_classified": {}}}) == ["classified: ? · skills: — · conf: 0.00"]
+    assert harness_chips({"harness": {"skill_load": {}}}) == ["skills: 0 loaded, 0 skipped"]
+    assert harness_chips({"harness": "not-a-dict"}) == []
