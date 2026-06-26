@@ -27,8 +27,9 @@ event tracer, a request router, a skills layer, and the ACP interface.
   `git`. Point it at another project with `--cwd`.
 - **Editor-ready.** The same engine speaks ACP over stdio, so editors like Zed can
   drive it directly — no separate integration.
-- **Skills.** Relevant skills are injected into the agent's context per turn
-  (e.g. project conventions, testing patterns, PR flow).
+- **Skills.** The router picks relevant engineering-methodology skills per request
+  and injects them into the agent's context — test-driven development, systematic
+  debugging, verification-before-completion, and more (see *System skills* below).
 - **You're in control.** The agent asks permission before running commands, and
   you can cancel an in-flight turn at any time.
 - **Fully traceable.** Every run is recorded as structured `events.jsonl` and
@@ -76,6 +77,23 @@ dn --cwd ~/myproject     # operate on a specific project instead of the cwd
 | `--model` | `mock`, `vibeproxy` | `mock` | which LLM the agent uses |
 | `--cwd` | a path | `.` | the working directory the agent operates in |
 | `--yolo` | flag | off | auto-allow every command — never prompt for permission |
+
+## System skills
+
+DoneDone ships with a curated set of engineering-methodology skills (imported from
+[obra/superpowers](https://github.com/obra/superpowers), MIT). The router
+auto-selects the relevant ones per request and injects them into the agent's
+context:
+
+| Skill | When the router picks it |
+|---|---|
+| `test-driven-development` | implementing a feature or bugfix — write the failing test first |
+| `systematic-debugging` | a bug, test failure, or unexpected behavior — root-cause before fixing |
+| `verification-before-completion` | before declaring work done — prove it actually works |
+| `receiving-code-review` | responding to code-review feedback |
+
+Add your own skills in `~/.config/harness/skills/<name>/SKILL.md`; a user skill
+with the same name as a bundled one overrides it.
 
 ## Using the TUI
 
@@ -150,7 +168,7 @@ vendored agent:
 | `harness/` | the DoneDone package — tracer, router, skills, mock model, runner, ACP server |
 | `harness/tui/` | the Textual ACP client (render core, `acp.Client`, app); entrypoint `harness/tui_main.py` |
 | `upstream/` | vendored mini-swe-agent — never edited |
-| `skills/` | bundled skills the router can inject |
+| `harness/skills/` | bundled system skills the router can inject (+ `NOTICE.md` attribution) |
 | `examples/sample-repo/` | a tiny repo with one failing test, for demos |
 | `docs/` | spec, plan, and learning log |
 
