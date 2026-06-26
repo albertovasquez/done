@@ -610,6 +610,32 @@ def test_pilot_enter_submits_shift_enter_newlines():
     asyncio.run(go())
 
 
+def test_pilot_shift_enter_modifyotherkeys_form_inserts_newline():
+    """Some terminals (e.g. cmux/libghostty, Ghostty modifyOtherKeys) send
+    Shift+Enter in a form Textual reports as key='shift+\\r' (or 'shift+\\n'),
+    NOT 'shift+enter'. The box must still insert a newline and NOT submit for
+    these variants — otherwise Shift+Enter silently submits."""
+    from textual import events
+
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            inp = app.query_one("#landing-input", PromptArea)
+            inp.focus()
+            await pilot.press("a")
+            for variant in ("shift+\r", "shift+\n"):
+                inp.post_message(events.Key(variant, "\r"))
+                await pilot.pause()
+            await pilot.press("b")
+            await pilot.pause()
+            assert inp.value == "a\n\nb", \
+                f"modifyOtherKeys shift+enter should insert newlines: {inp.value!r}"
+            assert not app._started, "shift+enter variants must NOT submit"
+
+    asyncio.run(go())
+
+
 def test_pilot_compose_box_grows_then_caps_at_three_rows():
     """The compose box starts one row tall, grows as lines are added, and is
     capped at three rows (max-height: 3 in app.tcss); a fourth line scrolls
