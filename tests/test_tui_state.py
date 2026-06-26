@@ -166,3 +166,57 @@ def test_decision_opened_sets_state():
     a = fs.active
     assert a.state == AgentState.AWAITING_DECISION
     assert a.decision == dv
+
+
+def test_tool_update_targets_live_tool_not_last_index():
+    """tool_update must update the task matching the CURRENT live tool (a.tool.title),
+    not the last task by index.
+
+    This test constructs a state where the live tool (a.tool) is NOT the last task
+    by index: two tool tasks exist, but the live tool corresponds to the FIRST task
+    (index 0), while an extra in_progress task sits at the end (index 1).
+    The buggy index-based code would update index 1 (wrong); the correct label-based
+    code must update only the task whose label matches a.tool.title.
+    """
+    from harness.tui.state import ToolView, _reduce_agent, AgentSnapshot
+    from dataclasses import replace as dc_replace
+
+    # Build a synthetic state: two tasks, but live tool title = first task's label
+    # (simulates a task added for a different reason after the tool was set)
+    live_tool = ToolView(title="$ echo one", status=ToolStatus.PENDING, subtype="shell")
+    synthetic_agent = AgentSnapshot(
+        id="default",
+        name="agent",
+        state=AgentState.RUNNING_TOOL,
+        tool=live_tool,
+        tasks=(
+            TaskItem(label="$ echo one", status="in_progress"),   # index 0 — matches live tool
+            TaskItem(label="$ other task", status="in_progress"),  # index 1 — does NOT match
+        ),
+    )
+    synthetic_fs = FleetSnapshot(agents=(synthetic_agent,), active_id="default")
+
+    # tool_update: completed for the LIVE tool ("$ echo one")
+    fs2 = reduce(synthetic_fs, ItemReceived(RenderedItem(kind="tool_update", id="t1",
+                                                          status="completed", body="")))
+    a = _active(fs2)
+    # Task matching the live tool (index 0, "$ echo one") must be done
+    assert a.tasks[0].status == "done", (
+        f"expected tasks[0] (live tool match) to be done, got {a.tasks[0].status!r}"
+    )
+    # Task at last index (index 1, "$ other task") must remain in_progress
+    assert a.tasks[1].status == "in_progress", (
+        f"expected tasks[1] (non-live-tool) to remain in_progress, got {a.tasks[1].status!r}"
+    )
+
+
+def test_permission_closed_restores_responding_when_no_live_tool():
+    """PermissionClosed with no live tool must restore RESPONDING state."""
+    fs = reduce(initial_snapshot(), TurnStarted())
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="message", text="x")))
+    assert _active(fs).state == AgentState.RESPONDING
+    assert _active(fs).tool is None
+    fs = reduce(fs, PermissionOpened())
+    assert _active(fs).state == AgentState.AWAITING_PERMISSION
+    fs = reduce(fs, PermissionClosed())
+    assert _active(fs).state == AgentState.RESPONDING

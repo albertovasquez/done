@@ -5,7 +5,7 @@ testable like render.py. See the TUI design-system spec §5."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from enum import Enum
 
 
@@ -186,10 +186,24 @@ def _reduce_agent(a: AgentSnapshot, event) -> AgentSnapshot:
             ts = _tool_status(getattr(item, "status", ""))
             tool = replace(a.tool, status=ts) if a.tool is not None else None
             new_task_status = _task_status_from_tool(ts)
-            tasks = tuple(
-                replace(t, status=new_task_status) if i == len(a.tasks) - 1 else t
-                for i, t in enumerate(a.tasks)
-            ) if a.tasks else a.tasks
+            live_title = a.tool.title if a.tool is not None else None
+            if live_title is not None and any(t.label == live_title for t in a.tasks):
+                # Match by the live tool's title (correct: not sensitive to task order)
+                matched = False
+                new_tasks = []
+                for t in reversed(a.tasks):
+                    if not matched and t.label == live_title:
+                        new_tasks.append(replace(t, status=new_task_status))
+                        matched = True
+                    else:
+                        new_tasks.append(t)
+                tasks = tuple(reversed(new_tasks))
+            else:
+                # Defensive fallback: no match or no live tool — update the last task
+                tasks = tuple(
+                    replace(t, status=new_task_status) if i == len(a.tasks) - 1 else t
+                    for i, t in enumerate(a.tasks)
+                ) if a.tasks else a.tasks
             return replace(a, tool=tool, tasks=tasks)
     return a
 
