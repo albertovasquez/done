@@ -224,7 +224,7 @@ def test_11_skill_load_emitted_and_block_passed(tmp_path):
     out = []
     route_and_dispatch(
         "fix the rake bug",
-        router=_FixedRouter(_cls("code_fix", confidence=0.9, skills=["poker-domain-rules"])),
+        router=_FixedRouter(_cls("code_fix", confidence=0.9, skills=["systematic-debugging"])),
         emitter=em, make_chat_handler=lambda: None,
         run_agent=run_agent, ask_user=lambda q: "", echo=out.append,
         worker_model_id="gpt-5.4",
@@ -232,6 +232,6 @@ def test_11_skill_load_emitted_and_block_passed(tmp_path):
     em.close()
     rec = [_j.loads(l) for l in (tmp_path / "events.jsonl").read_text().splitlines()]
     sl = [r for r in rec if r["type"] == "skill.load"]
-    assert len(sl) == 1 and sl[0]["data"]["injected"] == ["poker-domain-rules"]
+    assert len(sl) == 1 and sl[0]["data"]["injected"] == ["systematic-debugging"]
     assert received["block"] == "\n\nPOKER"                 # block reached run_agent
     assert any("injected" in line for line in out)          # console showed it

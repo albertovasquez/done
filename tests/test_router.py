@@ -6,8 +6,8 @@ import json
 from harness.router import Router, Classification
 
 _CATALOG = [
-    ("poker-domain-rules", "Poker rake/rakeback math and PPPoker domain logic"),
-    ("python-testing", "Write and run pytest unit/integration tests"),
+    ("systematic-debugging", "Use when encountering any bug, test failure, or unexpected behavior"),
+    ("test-driven-development", "Use when implementing any feature or bugfix, before writing implementation code"),
 ]
 
 
@@ -47,12 +47,12 @@ def test_classify_without_history_passes_bare_prompt():
 def test_1_parses_validates_skills_and_unknown_type():
     r = Router(_stub(json.dumps({
         "task_type": "code_fix",
-        "skills": ["poker-domain-rules", "not-a-real-skill"],
+        "skills": ["systematic-debugging", "not-a-real-skill"],
         "confidence": 0.9, "reasoning": "x", "suggested_model": None,
     })), catalog=_CATALOG, confidence_threshold=0.6)
     c = r.classify("fix the rakeback test")
     assert c.task_type == "code_fix"
-    assert c.skills == ["poker-domain-rules"]      # hallucinated dropped
+    assert c.skills == ["systematic-debugging"]    # hallucinated dropped
     assert c.needs_clarification is False
 
     r2 = Router(_stub(json.dumps({"task_type": "frobnicate", "skills": [],
@@ -95,7 +95,7 @@ def test_3_unparseable_and_fenced_json():
 
 def test_4_malformed_field_types_are_handled(tmp_path=None):
     # skills as a scalar string -> treated as empty (not character-mangled)
-    c = Router(_stub(json.dumps({"task_type": "code_fix", "skills": "poker-domain-rules",
+    c = Router(_stub(json.dumps({"task_type": "code_fix", "skills": "systematic-debugging",
                                  "confidence": 0.9, "reasoning": "x"})),
                catalog=_CATALOG).classify("fix")
     assert c.skills == []
