@@ -3,10 +3,11 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "quiubo-harness"
+name = "quiubo-done"
 version = "0.5.0"
-description = "Learning-first coding harness: a traced fork of mini-swe-agent with a Router, skills layer, an ACP agent, and a Textual ACP client (TUI)."
+description = "DoneDone — a coding agent you drive from your terminal (dn) or editor over the Agent Client Protocol; built on a vendored mini-swe-agent with a router, skills layer, and tracer."
 readme = "README.md"
+license = { text = "MIT" }
 requires-python = ">=3.10,<3.15"
 dependencies = [
     "mini-swe-agent",            # the vendored engine (see [tool.uv.sources] below)
