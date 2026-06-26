@@ -1,4 +1,8 @@
-"""AgentRunner: client-facing interface that YIELDS events live.
+"""MiniSweAgentRunner: the dev/CLI agent bridge that YIELDS events live.
+
+Used only by the non-ACP developer entrypoint (run_traced.py). The production
+ACP path drives TracingAgent directly (acp_agent.py) and does NOT use this — so
+this is the CLI bridge, not a general "agent runtime" abstraction.
 
 Bridges the Phase-0 TracingAgent (which PUSHES events via emitter.emit deep in
 its loop) to a generator (PULL) using a background thread + a thread-safe queue.
@@ -20,7 +24,6 @@ from __future__ import annotations
 
 import queue
 import threading
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Callable, Iterator
 
@@ -66,14 +69,13 @@ class _Done:
         self.exc = exc
 
 
-class AgentRunner(ABC):
+class MiniSweAgentRunner:
+    """The dev/CLI bridge: run a TracingAgent on a worker thread and yield its
+    events. (Not an abstract base — there is a single, concrete implementation;
+    the production ACP path bridges the agent itself.)"""
+
     result: RunResult | None = None
 
-    @abstractmethod
-    def run(self, task: str, **kwargs) -> Iterator[Event]: ...
-
-
-class MiniSweAgentRunner(AgentRunner):
     def __init__(self, model, env, *, agent_cfg: dict):
         self._model = model
         self._env = env
