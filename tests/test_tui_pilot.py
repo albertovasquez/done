@@ -456,3 +456,62 @@ def test_send_prompt_finally_no_reenable_after_generation_bump():
             await app._send_prompt("x")          # its captured gen is now stale
             assert app._active_input().disabled is True, "stale worker must not re-enable input"
     asyncio.run(go())
+
+
+def test_reload_starts_a_new_os_process(tmp_path):
+    import os
+    marker = tmp_path / "starts.txt"
+    cmd = [sys.executable, str(REPO / "tests/fake_agent.py")]
+    async def go():
+        os.environ["FAKE_AGENT_STARTS_FILE"] = str(marker)
+        try:
+            app = HarnessTui(agent_cmd=cmd, cwd=str(REPO), model="mock")
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                for _ in range(50):
+                    await pilot.pause()
+                    if marker.exists() and marker.read_text().count("start") >= 1:
+                        break
+                starts_before = marker.read_text().count("start")
+                await app.action_reload()
+                for _ in range(50):
+                    await pilot.pause()
+                    if marker.read_text().count("start") > starts_before:
+                        break
+            assert marker.read_text().count("start") == starts_before + 1, (
+                "reload must spawn exactly one new agent process")
+        finally:
+            os.environ.pop("FAKE_AGENT_STARTS_FILE", None)
+    asyncio.run(go())
+
+def test_reload_failure_keeps_app_alive_and_input_disabled():
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await _send_first_prompt(pilot, app, "hello")
+            for _ in range(50):
+                await pilot.pause()
+                if "done" in _transcript_text(app):
+                    break
+            # make the next _connect fail
+            app.agent_cmd = [sys.executable, "-c", "import sys; sys.exit(3)"]
+            await app.action_reload()
+            await pilot.pause()
+            assert app._conn is None, "failed reload leaves no live connection"
+            assert app._active_input().disabled is True, "_fatal must disable input"
+            assert app._busy is False, "busy released even on failure"
+            assert "reload failed" in _transcript_text(app)
+    asyncio.run(go())
+
+def test_reload_is_guarded_against_reentry():
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._busy = True                     # simulate a reload in progress
+            gen_before = app._gen
+            await app.action_reload()            # must early-return
+            assert app._gen == gen_before, "re-entrant reload must be a no-op"
+            app._busy = False
+    asyncio.run(go())

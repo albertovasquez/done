@@ -77,6 +77,11 @@ class FakeAgent(acp.Agent):
 
 
 async def _main():
+    import os
+    marker = os.getenv("FAKE_AGENT_STARTS_FILE")
+    if marker:
+        with open(marker, "a") as f:
+            f.write("start\n")
     await acp.run_agent(FakeAgent())
 
 

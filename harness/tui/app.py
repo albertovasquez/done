@@ -658,7 +658,8 @@ class HarnessTui(App):
         try:
             self._cancel_inflight()
             await self._reset_conversation()
-            self._append_line(_c("muted", "— reloading agent… —"))
+            if self._started:                     # no transcript on the landing screen
+                self._append_line(_c("muted", "— reloading agent… —"))
             await self._teardown()
             try:
                 await self._connect()
