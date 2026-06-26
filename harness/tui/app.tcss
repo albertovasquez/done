@@ -1,7 +1,49 @@
-Screen { layout: vertical; }
-#transcript { height: 1fr; border: round $primary; padding: 0 1; }
-#prompt { dock: bottom; }
-.chip { color: $text-muted; text-style: dim; }
+/* harness TUI — opencode-style two-state chat. Colors come from the `harness`
+   theme (theme.py): $accent, $surface, $foreground, $muted, $code, etc. */
+
+Screen { layout: vertical; background: $background; }
+
+/* ---- shared compose box (landing + conversation): left accent bar ---- */
+.compose {
+    border-left: thick $accent;
+    background: $surface;
+    padding: 1 2;
+    height: auto;
+}
+.compose Input {
+    background: $surface;
+    border: none;
+    padding: 0;
+    color: $foreground;
+}
+.compose-meta { color: $muted; padding-top: 1; }
+
+/* ---- LANDING state: vertically centered column ---- */
+#landing { align: center middle; height: 1fr; }
+#landing-col { width: 84; height: auto; }
+#wordmark { content-align: center middle; padding-bottom: 2; height: auto; }
+#hint { color: $muted; content-align: right middle; padding-top: 1; height: auto; }
+
+/* ---- CONVERSATION state ---- */
+#transcript { height: 1fr; padding: 1 2; background: $background; }
+#composer { dock: bottom; height: auto; margin: 0 2 1 2; }
+
+/* user message block in the transcript */
+.user-msg {
+    border-left: thick $accent;
+    background: $surface;
+    padding: 1 2;
+    margin: 1 0;
+    color: $foreground;
+    text-style: bold;
+}
+
+/* ---- status bar (bottom, both states) ---- */
+#statusbar { dock: bottom; height: 1; background: $background; padding: 0 2; }
+#statusbar-left { width: 1fr; color: $muted; }
+#statusbar-right { width: auto; color: $muted; content-align: right middle; }
+
+/* ---- permission modal (themed) ---- */
 PermissionModal { align: center middle; }
-PermissionModal #box { width: 70; border: thick $warning; padding: 1 2; background: $surface; }
-PermissionModal #cmd { color: $warning; margin-bottom: 1; }
+PermissionModal #box { width: 70; border: thick $accent; padding: 1 2; background: $surface; }
+PermissionModal #cmd { color: $accent; margin-bottom: 1; text-style: bold; }
