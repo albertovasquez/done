@@ -318,3 +318,27 @@ def test_persona_load_emits_on_first_personalized_turn_after_clarify(tmp_path):
     keys = _meta_keys_in_order(agent)
     assert keys.count("persona_load") == 1
     assert keys.index("task_classified", 1) < keys.index("persona_load")
+
+
+def test_seeded_default_workspace_is_byte_identical_noop(monkeypatch, tmp_path):
+    # seeding ships only inert templates -> chat path has no system message AND
+    # no persona_load event fires. The Phase A no-op guarantee must survive seeding.
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    from harness import persona, paths
+    persona.seed_default_workspace()
+
+    captured = {}
+    def fake_completion(**kwargs):
+        captured.update(kwargs)
+        return iter([])
+    import litellm
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+
+    agent = _build(_ScriptedRouter([_chat()]), worker_model_id="gpt-5.4")
+    agent._workspace_dir = paths.default_workspace_dir()   # the SEEDED dir
+    sid = asyncio.run(agent.new_session(cwd=".")).session_id
+    _prompt(agent, sid, "hi")
+    # no system message injected (templates are inert)
+    assert captured["messages"] == [{"role": "user", "content": "hi"}]
+    # and no persona_load event emitted
+    assert "persona_load" not in _meta_keys_in_order(agent)
