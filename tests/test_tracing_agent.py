@@ -36,15 +36,20 @@ def _tc_model(turns):
     return DeterministicToolcallModel(outputs=outputs, cost_per_call=0.0)
 
 
-def _run(tmp_path, turns, cwd):
+def _build_agent(tmp_path, turns, cwd):
+    """Construct a TracingAgent with a deterministic model (does NOT run it)."""
     emitter = Emitter(tmp_path / "events.jsonl", clock=lambda: 0.0, console=False)
     model = _tc_model(turns)
     env = LocalEnvironment(cwd=str(cwd))
     agent_cfg = _agent_config()
     agent_cfg["output_path"] = str(tmp_path / "traj.json")
-    agent = TracingAgent(model, env, emitter=emitter, **agent_cfg)
+    return TracingAgent(model, env, emitter=emitter, **agent_cfg)
+
+
+def _run(tmp_path, turns, cwd):
+    agent = _build_agent(tmp_path, turns, cwd)
     agent.run("dummy task")
-    emitter.close()
+    agent._emitter.close()
     records = [json.loads(l) for l in (tmp_path / "events.jsonl").read_text().splitlines()]
     return records
 
@@ -80,3 +85,26 @@ def test_B_terminal_submission_emits_action_done(tmp_path):
     assert records[-1]["type"] == "run.finished"
     assert records[-1]["data"]["ok"] is True
     assert records[-1]["data"]["exit_status"] == "Submitted"
+
+
+_SUBMIT = [("done", ["echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"])]
+
+
+def test_run_with_prior_seeds_messages_between_system_and_instance(tmp_path):
+    agent = _build_agent(tmp_path, _SUBMIT, cwd=tmp_path)
+    prior = [{"role": "user", "content": "earlier"},
+             {"role": "assistant", "content": "reply"}]
+    agent.run("the task", prior=prior)
+    assert agent.messages[0]["role"] == "system"
+    assert agent.messages[1] == {"role": "user", "content": "earlier"}
+    assert agent.messages[2] == {"role": "assistant", "content": "reply"}
+    assert agent.messages[3]["role"] == "user"          # the fresh instance/task message
+    assert "the task" in agent.messages[3]["content"]
+
+
+def test_run_without_prior_unchanged(tmp_path):
+    agent = _build_agent(tmp_path, _SUBMIT, cwd=tmp_path)
+    agent.run("the task")
+    assert agent.messages[0]["role"] == "system"
+    assert agent.messages[1]["role"] == "user"          # instance directly after system
+    assert "the task" in agent.messages[1]["content"]
