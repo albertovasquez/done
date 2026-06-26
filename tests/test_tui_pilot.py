@@ -374,3 +374,24 @@ def test_reset_conversation_empties_transcript_keeps_started():
             assert app._streaming_md is None and app._stream_buf == ""
             assert app._tokens == 0
     asyncio.run(go())
+
+
+def test_clear_resets_session_without_respawn():
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await _send_first_prompt(pilot, app, "hello")
+            for _ in range(50):
+                await pilot.pause()
+                if "done" in _transcript_text(app):
+                    break
+            gen_before = app._gen
+            await app.action_clear()
+            await pilot.pause()
+            assert _transcript_text(app) == "", "clear should empty the transcript"
+            assert app._gen == gen_before, "clear must NOT respawn (generation unchanged)"
+            assert app._conn is not None, "subprocess/connection stays alive"
+            assert app._session_id is not None, "a fresh session exists"
+            assert app._busy is False, "busy flag released"
+    asyncio.run(go())

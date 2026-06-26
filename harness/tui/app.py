@@ -620,6 +620,16 @@ class HarnessTui(App):
         if self._conn is not None and self._session_id is not None:
             await self._conn.cancel(session_id=self._session_id)
 
+    async def action_clear(self) -> None:
+        if self._busy:
+            return
+        self._busy = True
+        try:
+            await self._reset_conversation()
+            await self._new_session()         # same subprocess → fresh empty transcript
+        finally:
+            self._busy = False
+
     async def on_unmount(self) -> None:
         if self._pending_perm is not None and not self._pending_perm.done():
             self._pending_perm.set_result(None)
