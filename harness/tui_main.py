@@ -31,6 +31,17 @@ def _resolve_model(explicit_backend: str | None) -> tuple[str, str | None]:
     return "vibeproxy", None
 
 
+def _effective_worker_model_id(backend: str) -> str | None:
+    """The model id the agent will actually run, so the TUI footer can show it
+    on a fresh launch (not the 'default model' fallback). Mirrors acp_main's
+    own resolution: None for mock; else VIBEPROXY_MODEL (already seeded from a
+    persisted done.conf model by main()) or the gpt-5.4 default. Call AFTER the
+    persisted model has been exported into the env."""
+    if backend == "mock":
+        return None
+    return os.getenv("VIBEPROXY_MODEL", "gpt-5.4")
+
+
 def _relaunch_args(args, cwd) -> list[str]:
     """Flags to re-launch THIS TUI with, reconstructed from parsed args (not raw
     sys.argv) so they are correct however it was invoked. --cwd is always explicit."""
@@ -65,11 +76,16 @@ def main(argv=None) -> None:
     args.model = backend              # normalize so _relaunch_args carries the resolved backend
     if model_override is not None:
         os.environ.setdefault("VIBEPROXY_MODEL", model_override)  # process env still wins
+    # Seed the TUI's displayed worker model AFTER the env export, so the footer
+    # shows the real id (e.g. the persisted model) on a fresh launch instead of
+    # the "default model" fallback. Same resolution acp_main uses for the agent.
+    worker_model_id = _effective_worker_model_id(backend)
     # Pass --cwd through so the agent subprocess anchors .env to the same project.
     agent_cmd = [sys.executable, "-m", "harness.acp_main", "--model", backend, "--cwd", cwd]
     if args.yolo:
         agent_cmd.append("--yolo")    # auto-allow flows to the agent, which owns the gate
-    app = HarnessTui(agent_cmd=agent_cmd, cwd=cwd, model=backend)
+    app = HarnessTui(agent_cmd=agent_cmd, cwd=cwd, model=backend,
+                     worker_model_id=worker_model_id)
     app.run()
     if getattr(app, "_reexec", False):
         cmd = _relaunch_command(args, cwd)
