@@ -52,3 +52,22 @@ class ScheduleView:
 class DecisionView:
     question: str
     options: tuple[tuple[str, str], ...]   # (title, rationale)
+
+
+def infer_subtype(command: str) -> str:
+    """Guess a tool-call subtype from the command string, for glyph/label ONLY.
+    Display concern; never asked of the engine. Neutral 'shell' fallback."""
+    c = command.strip()
+    if c.startswith("$ "):
+        c = c[2:].strip()
+    low = c.lower()
+    first = low.split()[0] if low.split() else ""
+    if "pytest" in low or first == "test":
+        return "test"
+    if first in ("sed", "apply_patch", "patch") or "apply_patch" in low:
+        return "edit"
+    if first in ("grep", "rg", "find", "ag"):
+        return "search"
+    if first in ("cat", "head", "tail", "less", "bat"):
+        return "read"
+    return "shell"
