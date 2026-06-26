@@ -10,6 +10,7 @@ from types import SimpleNamespace as NS
 from acp import update_agent_message_text
 from harness.tui.app import HarnessTui, PermissionModal
 from harness.tui.messages import SessionUpdate
+from harness.tui.widgets.prompt_area import PromptArea
 from textual.containers import VerticalScroll
 from textual.widgets import Markdown, Static, Input
 
@@ -45,8 +46,8 @@ def _transcript_text(app) -> str:
 async def _send_first_prompt(pilot, app, text: str) -> None:
     """Type into the landing compose box and submit — this transitions the app
     from the landing state to the conversation state."""
-    app.query_one("#landing-input", Input).focus()
-    app.query_one("#landing-input", Input).value = text
+    app.query_one("#landing-input", PromptArea).focus()
+    app.query_one("#landing-input", PromptArea).value = text
     await pilot.press("enter")
 
 
@@ -189,7 +190,7 @@ def test_pilot_slash_menu_does_not_move_landing_input():
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause()
-            inp = app.query_one("#landing-input", Input)
+            inp = app.query_one("#landing-input", PromptArea)
             inp.focus()
             y_before = inp.region.y
 
@@ -201,7 +202,7 @@ def test_pilot_slash_menu_does_not_move_landing_input():
                     break
             assert app._slash is not None, "slash menu did not open on '/'"
             assert app.query("#slash-menu"), "slash menu widget should be mounted"
-            y_open = app.query_one("#landing-input", Input).region.y
+            y_open = app.query_one("#landing-input", PromptArea).region.y
             assert y_open == y_before, (
                 f"input moved when slash menu opened: was row {y_before}, now {y_open}")
 
@@ -210,7 +211,7 @@ def test_pilot_slash_menu_does_not_move_landing_input():
             # when the row count changes while filtering (no offset race).
             def _check_anchored(label: str) -> None:
                 menu = app.query_one("#slash-menu")
-                inp_now = app.query_one("#landing-input", Input)
+                inp_now = app.query_one("#landing-input", PromptArea)
                 compose_x = app.query_one("#landing-compose").region.x
                 bottom = menu.region.y + menu.region.height
                 assert menu.region.y >= 0, f"{label}: menu clipped off the top"
@@ -225,23 +226,23 @@ def test_pilot_slash_menu_does_not_move_landing_input():
             _check_anchored("all commands")
 
             # filter to fewer rows, then back to all — stays anchored both times
-            app.query_one("#landing-input", Input).value = "/h"
+            app.query_one("#landing-input", PromptArea).value = "/h"
             for _ in range(20):
                 await pilot.pause()
             _check_anchored("filtered")
-            app.query_one("#landing-input", Input).value = "/"
+            app.query_one("#landing-input", PromptArea).value = "/"
             for _ in range(20):
                 await pilot.pause()
             _check_anchored("widened back")
 
-            inp = app.query_one("#landing-input", Input)
+            inp = app.query_one("#landing-input", PromptArea)
             # close it again — input returns to the same row
             inp.value = ""
             for _ in range(20):
                 await pilot.pause()
                 if app._slash is None:
                     break
-            y_after = app.query_one("#landing-input", Input).region.y
+            y_after = app.query_one("#landing-input", PromptArea).region.y
             assert y_after == y_before, (
                 f"input did not return to its row after closing menu: "
                 f"was {y_before}, now {y_after}")
@@ -257,7 +258,7 @@ def test_pilot_slash_menu_closes_on_resize():
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause()
-            app.query_one("#landing-input", Input).value = "/"
+            app.query_one("#landing-input", PromptArea).value = "/"
             for _ in range(20):
                 await pilot.pause()
                 if app._slash is not None:
@@ -273,13 +274,13 @@ def test_pilot_slash_menu_closes_on_resize():
             assert not app.query("#slash-overlay"), "overlay must not be orphaned"
 
             # reopen at the new size — bottom re-pins to the input's new row
-            app.query_one("#landing-input", Input).value = "/"
+            app.query_one("#landing-input", PromptArea).value = "/"
             for _ in range(20):
                 await pilot.pause()
                 if app._slash is not None:
                     break
             menu = app.query_one("#slash-menu")
-            inp = app.query_one("#landing-input", Input)
+            inp = app.query_one("#landing-input", PromptArea)
             assert menu.region.y + menu.region.height == inp.region.y, (
                 "reopened menu not anchored to the input's new row")
 
@@ -454,7 +455,7 @@ def test_busy_guard_blocks_models_picker_and_prompt_send():
             workers_before = len(app.workers)
             inp = app._active_input()
             inp.value = "hello while busy"
-            await app.on_input_submitted(Input.Submitted(inp, "hello while busy"))
+            await app.on_prompt_area_submitted(PromptArea.Submitted(inp, "hello while busy"))
             await pilot.pause()
             assert len(app.workers) == workers_before, \
                 "busy prompt-send must not start a worker"
@@ -561,7 +562,7 @@ def test_pilot_escape_clears_input_text():
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause()
-            inp = app.query_one("#landing-input", Input)
+            inp = app.query_one("#landing-input", PromptArea)
             inp.focus()
             inp.value = "some half-typed text"
             await pilot.pause()
@@ -575,5 +576,60 @@ def test_pilot_escape_clears_input_text():
             await pilot.press("escape")
             await pilot.pause()
             assert inp.value == ""
+
+    asyncio.run(go())
+
+
+def test_pilot_enter_submits_shift_enter_newlines():
+    """The compose box (a PromptArea) submits on Enter and inserts a newline on
+    Shift+Enter, so a multi-line prompt is sent as one message. Enter must NOT
+    leave a stray newline in the box."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            inp = app.query_one("#landing-input", PromptArea)
+            inp.focus()
+            await pilot.press("l", "i", "n", "e", "1")
+            await pilot.press("shift+enter")            # newline, stays in the box
+            await pilot.press("l", "i", "n", "e", "2")
+            await pilot.pause()
+            assert inp.value == "line1\nline2", \
+                f"shift+enter should insert a newline: {inp.value!r}"
+            assert not app._started, "shift+enter must NOT submit"
+
+            await pilot.press("enter")                  # submit the two-line prompt
+            for _ in range(50):
+                await pilot.pause()
+                if app._started and "line1\nline2" in _transcript_text(app):
+                    break
+            assert app._started, "enter should submit the prompt"
+            assert "line1\nline2" in _transcript_text(app), \
+                "the full multi-line prompt should reach the transcript"
+
+    asyncio.run(go())
+
+
+def test_pilot_compose_box_grows_then_caps_at_three_rows():
+    """The compose box starts one row tall, grows as lines are added, and is
+    capped at three rows (max-height: 3 in app.tcss); a fourth line scrolls
+    rather than growing the box further."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            inp = app.query_one("#landing-input", PromptArea)
+            inp.focus()
+            await pilot.pause()
+            assert inp.size.height == 1, f"empty box should be 1 row, got {inp.size.height}"
+
+            inp.value = "a\nb"                           # two lines → two rows
+            await pilot.pause()
+            assert inp.size.height == 2, f"two lines should be 2 rows, got {inp.size.height}"
+
+            inp.value = "a\nb\nc\nd\ne"                   # five lines → capped at 3
+            await pilot.pause()
+            assert inp.size.height == 3, \
+                f"box must cap at 3 rows (max-height), got {inp.size.height}"
 
     asyncio.run(go())

@@ -27,7 +27,7 @@ import acp
 from acp.schema import ClientCapabilities, ElicitationCapabilities
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
-from textual.widgets import Input, LoadingIndicator, Markdown, Static
+from textual.widgets import LoadingIndicator, Markdown, Static, TextArea
 
 from harness.tui.client import TuiClient
 from harness.tui.commands import build_registry, resolve_command
@@ -37,6 +37,7 @@ from harness.tui.theme import HARNESS_THEME, COLORS, STATUS_COLOR
 from harness.tui.widgets.permission_modal import PermissionModal
 from harness.tui.widgets.select_modal import SelectModal, SelectOption
 from harness.tui.widgets.slash_menu import SlashMenu
+from harness.tui.widgets.prompt_area import PromptArea
 from harness.tui.header import icon_markup, header_text_markup
 
 _GLYPH = {"completed": "✓", "failed": "✗"}
@@ -113,8 +114,8 @@ class HarnessTui(App):
                 with Horizontal(id="landing-header"):
                     yield Static(self._header_markup(), id="header-text", markup=True)
                 with Vertical(id="landing-compose", classes="compose"):
-                    yield Input(placeholder='Ask anything... "What is the tech stack of this project?"',
-                                id="landing-input")
+                    yield PromptArea(placeholder='Ask anything... "What is the tech stack of this project?"',
+                                     id="landing-input")
                     yield Static(self._compose_meta_markup(model_label, provider),
                                  classes="compose-meta", markup=True)
                 yield Static("[b]tab[/b] agents   [b]ctrl+p[/b] commands", id="hint", markup=True)
@@ -187,7 +188,7 @@ class HarnessTui(App):
         # theme is registered + activated in __init__ (before CSS parse)
         # populate the status bar (left: path:branch, right: version)
         await self._mount_status_contents()
-        self.query_one("#landing-input", Input).focus()
+        self.query_one("#landing-input", PromptArea).focus()
         try:
             await self._connect()
         except Exception as e:                # startup failure is fatal but must not crash the UI
@@ -233,11 +234,11 @@ class HarnessTui(App):
 
     # ---- input handling (works in both states; id differs) ----
 
-    def _active_input(self) -> Input:
-        return self.query_one("#conversation-input" if self._started else "#landing-input", Input)
+    def _active_input(self) -> PromptArea:
+        return self.query_one("#conversation-input" if self._started else "#landing-input", PromptArea)
 
-    async def on_input_submitted(self, event: Input.Submitted) -> None:
-        text = event.value.strip()
+    async def on_prompt_area_submitted(self, event: PromptArea.Submitted) -> None:
+        text = event.text.strip()
         # slash command: run the highlighted command (or the typed one) instead of
         # sending a prompt.
         if text.startswith("/"):
@@ -257,9 +258,9 @@ class HarnessTui(App):
 
     # ---- slash menu ----
 
-    async def on_input_changed(self, event: Input.Changed) -> None:
+    async def on_text_area_changed(self, event: TextArea.Changed) -> None:
         # show/hide/filter the slash menu as '/' text changes in the active input
-        value = event.value
+        value = event.text_area.text
         if value.startswith("/"):
             await self._open_or_update_slash(value[1:])
         elif self._slash is not None:
@@ -278,7 +279,7 @@ class HarnessTui(App):
                 # whose height we pin to the input's top row; the menu docks to that
                 # box's bottom and grows UPWARD from the input — no offset math, so
                 # nothing races as the row count changes while filtering.
-                inp = self.query_one("#landing-input", Input)
+                inp = self.query_one("#landing-input", PromptArea)
                 self._slash_overlay = Container(self._slash, id="slash-overlay")
                 self._slash_overlay.styles.height = inp.region.y
                 await self.mount(self._slash_overlay)
@@ -428,9 +429,9 @@ class HarnessTui(App):
         await self.mount(VerticalScroll(id="transcript"), before="#statusbar")
         composer = Vertical(id="composer", classes="compose")
         await self.mount(composer, before="#statusbar")
-        await composer.mount(Input(placeholder="Reply…", id="conversation-input"))
+        await composer.mount(PromptArea(placeholder="Reply…", id="conversation-input"))
         self._refresh_status()
-        self.query_one("#conversation-input", Input).focus()
+        self.query_one("#conversation-input", PromptArea).focus()
 
     async def _reset_conversation(self) -> None:
         """Empty the transcript and reset per-conversation state WITHOUT leaving
