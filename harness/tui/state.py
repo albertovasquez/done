@@ -175,7 +175,7 @@ def _reduce_agent(a: AgentSnapshot, event) -> AgentSnapshot:
         item = event.item
         kind = getattr(item, "kind", "")
         if kind == "message":
-            return replace(a, state=AgentState.RESPONDING, activity_label="Responding…")
+            return replace(a, state=AgentState.RESPONDING, activity_label="Responding")
         if kind == "tool":
             ts = _tool_status(getattr(item, "status", ""))
             title = getattr(item, "title", "")

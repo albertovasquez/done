@@ -257,3 +257,22 @@ def test_tool_status_dicts_exported():
     assert TOOL_STATUS_LABEL[ToolStatus.ACTIVE] == "RUNNING"
     assert TOOL_STATUS_LABEL[ToolStatus.DONE] == "COMPLETED"
     assert TOOL_STATUS_LABEL[ToolStatus.FAILED] == "FAILED"
+
+
+def test_activity_status_single_ellipsis():
+    w = ActivityStatus()
+    snap = AgentSnapshot(id="default", name="agent", state=AgentState.RESPONDING,
+                         activity_label="Responding", elapsed=5.0, tokens=0)
+    line = w.line_for(snap)
+    assert "……" not in line, f"double ellipsis: {line!r}"
+    assert "Responding…" in line
+
+
+def test_activity_status_hides_zero_tokens():
+    w = ActivityStatus()
+    snap0 = AgentSnapshot(id="default", name="agent", state=AgentState.RESPONDING,
+                          activity_label="Responding", elapsed=5.0, tokens=0)
+    assert "tokens" not in w.line_for(snap0), "0 tokens must be hidden"
+    snapN = AgentSnapshot(id="default", name="agent", state=AgentState.RESPONDING,
+                          activity_label="Responding", elapsed=5.0, tokens=1500)
+    assert "tokens" in w.line_for(snapN), "nonzero tokens must show"
