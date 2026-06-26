@@ -18,3 +18,6 @@ def test_status_label_is_uppercase():
     assert STATUS_LABEL["scheduled"] == "SCHEDULED"
     assert STATUS_LABEL["failed"] == "FAILED"
     assert STATUS_LABEL["queued"] == "QUEUED"
+    # Verify all status labels in the dictionary are uppercase
+    for key, label in STATUS_LABEL.items():
+        assert label == label.upper(), f"{key} label not uppercase: {label}"
