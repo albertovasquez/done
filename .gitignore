@@ -1,4 +1,5 @@
 .env
+.DS_Store
 harness/runs/
 __pycache__/
 *.pyc
