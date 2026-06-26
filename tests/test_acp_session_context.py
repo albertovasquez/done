@@ -206,3 +206,99 @@ def test_agent_then_chat_transcript_carries_agent_narration():
     # turn-2 chat classify saw the agent turn in history
     hist = router.history_seen[1]
     assert any(m["origin"] == "agent" for m in hist)
+
+
+# --------------------------------------------------------------------------
+# Task 7 (integration): persona wiring into HarnessAgent
+# --------------------------------------------------------------------------
+
+def test_persona_reaches_chat_path(tmp_path, monkeypatch):
+    # workspace with a SOUL.md -> chat path must carry it as a system message
+    ws = tmp_path / "ws"; ws.mkdir()
+    (ws / "SOUL.md").write_text("BE TERSE", encoding="utf-8")
+
+    captured = {}
+    def fake_completion(**kwargs):
+        captured.update(kwargs)
+        return iter([])                       # empty stream -> empty answer, fine
+    import litellm
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+
+    agent = _build(_ScriptedRouter([_chat()]), worker_model_id="gpt-5.4")
+    agent._workspace_dir = ws                 # inject the test workspace
+    sid = asyncio.run(agent.new_session(cwd=".")).session_id
+    _prompt(agent, sid, "hi")                 # _prompt already runs asyncio.run
+    sysmsg = captured["messages"][0]
+    assert sysmsg["role"] == "system"
+    assert "BE TERSE" in sysmsg["content"]
+    assert sysmsg["content"] == agent._store.get(sid).persona_block
+
+
+def test_empty_workspace_is_byte_identical_chat(tmp_path, monkeypatch):
+    captured = {}
+    def fake_completion(**kwargs):
+        captured.update(kwargs)
+        return iter([])
+    import litellm
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+
+    agent = _build(_ScriptedRouter([_chat()]), worker_model_id="gpt-5.4")
+    agent._workspace_dir = tmp_path / "absent"    # no persona (absent dir)
+    sid = asyncio.run(agent.new_session(cwd=".")).session_id
+    _prompt(agent, sid, "hi")
+    assert captured["messages"] == [{"role": "user", "content": "hi"}]   # no system msg
+
+
+def test_persona_load_event_gated_off_for_empty_workspace(tmp_path):
+    # empty/absent workspace -> NO persona_load field_meta event on the conn
+    agent = _build(_ScriptedRouter([_chat()]), worker_model_id=None)  # mock chat line
+    agent._workspace_dir = tmp_path / "absent"
+    sid = asyncio.run(agent.new_session(cwd=".")).session_id
+    _prompt(agent, sid, "hi")
+    # with_meta sets update.field_meta; assert no update has persona_load in it
+    assert not any(
+        isinstance(getattr(u, "field_meta", None), dict)
+        and "persona_load" in getattr(u, "field_meta", {}).get("harness", {})
+        for u in agent._conn.updates
+    )
+
+
+def _meta_keys_in_order(agent):
+    """The _meta payload keys (task_classified, skill_load, persona_load, …) in
+    the order they were emitted on the fake conn — for asserting stream order."""
+    keys = []
+    for u in agent._conn.updates:
+        fm = getattr(u, "field_meta", None)
+        if isinstance(fm, dict):
+            keys += list(fm.get("harness", {}).keys())
+    return keys
+
+
+def test_persona_load_emits_after_task_classified_on_agent_turn(tmp_path):
+    # populated workspace + agent dispatch -> persona_load fires, AFTER
+    # task_classified (the Codex-found ordering fix), once on the first turn.
+    ws = tmp_path / "ws"; ws.mkdir()
+    (ws / "SOUL.md").write_text("BE TERSE", encoding="utf-8")
+    agent = _build(_ScriptedRouter([_agent_fix()]), worker_model_id=None)
+    agent._workspace_dir = ws
+    sid = asyncio.run(agent.new_session(cwd=".")).session_id
+    _prompt(agent, sid, "fix the bug")
+    keys = _meta_keys_in_order(agent)
+    assert "persona_load" in keys
+    assert keys.index("task_classified") < keys.index("persona_load")  # ordered after
+
+
+def test_persona_load_not_emitted_on_clarify_turn(tmp_path):
+    # populated workspace but the turn is ambiguous -> NO persona_load (clarify and
+    # ambiguous are unpersonalized; persona was composed but the event is skipped).
+    ws = tmp_path / "ws"; ws.mkdir()
+    (ws / "SOUL.md").write_text("BE TERSE", encoding="utf-8")
+    agent = _build(_ScriptedRouter([_ambiguous()]), worker_model_id=None)
+    agent._workspace_dir = ws
+    sid = asyncio.run(agent.new_session(cwd=".")).session_id
+    _prompt(agent, sid, "uh")
+    assert "persona_load" not in _meta_keys_in_order(agent)
+    # but persona WAS composed and cached on this turn (so a later agent turn in
+    # the same session reuses it without re-reading disk) — compose is not skipped,
+    # only the telemetry emit is.
+    assert "BE TERSE" in agent._store.get(sid).persona_block
