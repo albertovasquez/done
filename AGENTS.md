@@ -77,7 +77,29 @@ ACP — not baked into one client. Keep that separation.
 > in [`docs/personas.md`](docs/personas.md). Read those before answering "how
 > does X work?"; verify against live code, since docs can lag a phase behind.
 
-## 7. Commit message trailer
+## 7. Build TUI UI from the approved design system
+
+New or changed TUI UI must be based on the **approved design system**, not on
+one-off widgets or ad-hoc styling.
+
+- **Components:** find the component in `harness/tui/styles/components.md` and
+  extend it or compose existing components. Only add a new catalog entry when
+  nothing fits — and record its rationale in the design spec
+  (`docs/superpowers/specs/2026-06-26-tui-design-system-design.md`).
+- **Tokens:** use the semantic tokens in `harness/tui/theme.py`
+  (`HARNESS_THEME.variables`, `COLORS`, `STATUS_COLOR`). No hardcoded hex outside
+  `theme.py` / `COLORS`. Status is carried by color + glyph + weight together.
+- **State:** components stay dumb and reactive — they read a slice of the
+  `FleetSnapshot` (`harness/tui/state.py`); they never compute state transitions
+  (that is the reducer's job).
+- **Motion:** follow the restraint policy (brand voice) — motion signals a state
+  change, one looping animation max, ≤250ms transitions, reduced-motion +
+  monochrome fallbacks.
+
+If a change needs the design system itself to grow, update the spec and
+`components.md` in the same PR so the catalog stays the source of truth.
+
+## 8. Commit message trailer
 
 End commit messages with:
 
