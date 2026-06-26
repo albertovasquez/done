@@ -25,7 +25,7 @@ Screen { layout: vertical; background: $background; layers: base overlay; }
 /* landing header: the ≡ icon beside name/tagline/model, left-aligned above the
    compose box (Claude Code session-banner style). */
 #landing-header { height: auto; padding-bottom: 1; }
-#header-icon { width: auto; padding-right: 2; }
+#header-icon { width: auto; padding-right: 2; color: $accent; }
 #header-text { width: 1fr; height: auto; }
 #hint { color: $muted; content-align: right middle; padding-top: 1; height: auto; }
 
