@@ -26,7 +26,7 @@ from harness.tui.app import HarnessTui  # noqa: E402
 
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description="Harness Textual ACP client")
-    parser.add_argument("--model", choices=["mock", "vibeproxy"], default="mock")
+    parser.add_argument("--model", choices=["mock", "vibeproxy"], default="vibeproxy")
     # Default to the directory you launched from — `done` operates on YOUR cwd
     # (the project you're in), never on the harness's install dir. The harness's
     # own assets (skills/, config, .env) resolve separately via __file__.
