@@ -24,7 +24,7 @@ class TuiClient:                      # implements the acp.Client Protocol
         self._app = app
 
     async def session_update(self, session_id: str, update: Any, **kw: Any) -> None:
-        self._app.post_message(SessionUpdate(update))
+        self._app.post_message(SessionUpdate(update, session_id=session_id))
 
     async def request_permission(self, options: Any, session_id: str,
                                  tool_call: Any, **kw: Any) -> Any:

@@ -286,6 +286,17 @@ def test_pilot_slash_menu_closes_on_resize():
     asyncio.run(go())
 
 
+def test_session_update_message_carries_session_id():
+    from harness.tui.messages import SessionUpdate as SU
+    msg = SU("the-update", session_id="sess-7")
+    assert msg.update == "the-update"
+    assert msg.session_id == "sess-7"
+
+def test_session_update_session_id_defaults_to_none():
+    from harness.tui.messages import SessionUpdate as SU
+    assert SU("u").session_id is None
+
+
 def test_pilot_permission_modal_reject():
     """Optional Smoke: fake agent requests permission; rejecting (esc) resolves
     the Future and the turn completes. The permission modal is the shared

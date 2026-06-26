@@ -9,10 +9,13 @@ from textual.message import Message
 
 
 class SessionUpdate(Message):
-    """An ACP session/update notification, marshalled to the app for rendering."""
-    def __init__(self, update: Any) -> None:
+    """An ACP session/update notification, marshalled to the app for rendering.
+    Carries the originating session_id so the app can drop updates from a stale
+    (reloaded-away) session."""
+    def __init__(self, update: Any, session_id: str | None = None) -> None:
         super().__init__()
         self.update = update
+        self.session_id = session_id
 
 
 class PermissionRequest(Message):
