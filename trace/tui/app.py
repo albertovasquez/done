@@ -50,7 +50,7 @@ class PermissionModal(ModalScreen):
 
 
 class HarnessTui(App):
-    CSS_PATH = "tui/app.tcss"
+    CSS_PATH = "app.tcss"  # relative to this module's dir (trace/tui/)
     BINDINGS = [("escape", "cancel", "Cancel turn")]
 
     def __init__(self, agent_cmd: list[str], cwd: str, model: str) -> None:
