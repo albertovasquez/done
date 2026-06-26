@@ -12,3 +12,8 @@ dist/
 .worktrees/
 vendor/
 .venv/
+
+# AGENTS.md is a SHARED, committed operating standard for this repo. The user's
+# global gitignore (~/.config/git/ignore) ignores AGENTS.md everywhere; this
+# negation re-includes it here so the team gets it. (CLAUDE.md stays local.)
+!AGENTS.md

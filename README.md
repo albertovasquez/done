@@ -75,6 +75,7 @@ dn --cwd ~/myproject     # operate on a specific project instead of the cwd
 |---|---|---|---|
 | `--model` | `mock`, `vibeproxy` | `mock` | which LLM the agent uses |
 | `--cwd` | a path | `.` | the working directory the agent operates in |
+| `--yolo` | flag | off | auto-allow every command — never prompt for permission |
 
 ## Using the TUI
 

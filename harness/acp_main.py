@@ -70,6 +70,8 @@ async def _main(argv=None) -> None:
     parser.add_argument("--model", choices=["mock", "vibeproxy"], default="mock")
     parser.add_argument("--cwd", default=None,
                         help="project dir the agent operates on (anchors .env)")
+    parser.add_argument("--yolo", action="store_true",
+                        help="auto-allow every command without prompting (no permission modal)")
     args = parser.parse_args(argv)
 
     cwd = str(Path(args.cwd).resolve()) if args.cwd else os.getcwd()
@@ -94,6 +96,7 @@ async def _main(argv=None) -> None:
         skills_dir=roots,                                   # now an ordered list
         router=Router(complete_fn, catalog=skills.load_catalog(roots)),
         worker_model_id=worker_model_id,
+        yolo=args.yolo,
     )
     await acp.run_agent(agent)
 

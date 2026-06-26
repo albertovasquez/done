@@ -21,12 +21,16 @@ def main(argv=None) -> None:
     parser.add_argument("--model", choices=["mock", "vibeproxy"], default="vibeproxy")
     parser.add_argument("--cwd", default=None,
                         help="project directory the agent operates on (default: current dir)")
+    parser.add_argument("--yolo", action="store_true",
+                        help="auto-allow every command — never prompt for permission")
     args = parser.parse_args(argv)
 
     cwd = str(Path(args.cwd).resolve()) if args.cwd else os.getcwd()
     paths.load_env(cwd)               # resolve VIBEPROXY_* before spawning the agent
     # Pass --cwd through so the agent subprocess anchors .env to the same project.
     agent_cmd = [sys.executable, "-m", "harness.acp_main", "--model", args.model, "--cwd", cwd]
+    if args.yolo:
+        agent_cmd.append("--yolo")    # auto-allow flows to the agent, which owns the gate
     HarnessTui(agent_cmd=agent_cmd, cwd=cwd, model=args.model).run()
 
 
