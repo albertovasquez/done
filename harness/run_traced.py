@@ -143,7 +143,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         rc = route_and_dispatch(
             args.task, router=router, emitter=emitter,
-            make_chat_handler=lambda: ChatHandler(worker_model_id),
+            make_chat_handler=lambda: ChatHandler(worker_model_id, catalog=router.catalog),
             run_agent=run_agent, ask_user=input, echo=print,
             worker_model_id=worker_model_id,
             load_skills=lambda names: skills.compose(skills_roots, names))

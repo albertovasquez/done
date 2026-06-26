@@ -91,6 +91,12 @@ class Router:
         self._catalog_names = {n for n, _ in catalog}
         self._threshold = confidence_threshold
 
+    @property
+    def catalog(self) -> list[tuple[str, str]]:
+        """The (name, description) skill catalog the router classifies against.
+        Exposed so the chat path can answer capability questions from it."""
+        return self._catalog
+
     def classify(self, prompt: str, history: list[dict] | None = None) -> Classification:
         user = prompt
         if history:

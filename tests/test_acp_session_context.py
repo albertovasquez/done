@@ -55,6 +55,7 @@ class _ScriptedRouter:
     def __init__(self, classifications):
         self._queue = list(classifications)
         self.history_seen = []   # the history arg of each classify call, in order
+        self.catalog = []        # mirrors Router.catalog (chat path reads it)
 
     def classify(self, prompt, history=None):
         self.history_seen.append(list(history) if history else [])
