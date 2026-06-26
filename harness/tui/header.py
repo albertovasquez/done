@@ -14,7 +14,7 @@ BLUE = "#286ce9"
 # half-block ('▀'/'▄'), '━' is a MID-CELL horizontal stroke, so it renders on the
 # text's vertical center and lines up cleanly with each text row — no top/bottom-
 # half offset to fight, and the row gaps keep the three rules distinct (the ≡).
-_ICON_ROWS = ["▄▄▄▄▄", "▄▄▄▄▄", "▄▄▄▄▄"]
+_ICON_ROWS = ["━━━━", "━━━━", "━━━━"]
 
 
 def icon_markup() -> str:
@@ -22,12 +22,11 @@ def icon_markup() -> str:
     return "\n".join(f"[{BLUE}]{row}[/]" if row.strip() else row for row in _ICON_ROWS)
 
 
-def header_text_markup(title: str, version: str, tagline: str, model_line: str) -> str:
-    """Three-line header text: bold name + dim version / tagline / model · provider.
-
-    `model_line` is the already-formatted 'Build · model provider' markup."""
+def header_text_markup(title: str, version: str, tagline: str) -> str:
+    """Two-line header text: bold name + dim version / tagline. The mode·model
+    line is intentionally NOT here — it lives on the compose-meta line under the
+    input (and the status bar), so repeating it in the header was redundant."""
     return (
         f"[$accent][b]{title}[/b][/] [$muted]v{version}[/]\n"
-        f"[$foreground]{tagline}[/]\n"
-        f"{model_line}"
+        f"[$foreground]{tagline}[/]"
     )
