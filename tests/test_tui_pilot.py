@@ -395,3 +395,23 @@ def test_clear_resets_session_without_respawn():
             assert app._session_id is not None, "a fresh session exists"
             assert app._busy is False, "busy flag released"
     asyncio.run(go())
+
+
+def test_reload_respawns_and_bumps_generation():
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await _send_first_prompt(pilot, app, "hello")
+            for _ in range(50):
+                await pilot.pause()
+                if "done" in _transcript_text(app):
+                    break
+            gen_before = app._gen
+            await app.action_reload()
+            await pilot.pause()
+            assert app._gen == gen_before + 1, "reload must respawn (generation bumps)"
+            assert app._conn is not None, "reconnected after reload"
+            assert _transcript_text(app) == "", "scrollback wiped on reload"
+            assert app._busy is False
+    asyncio.run(go())

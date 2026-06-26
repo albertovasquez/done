@@ -630,6 +630,35 @@ class HarnessTui(App):
         finally:
             self._busy = False
 
+    def _cancel_inflight(self) -> None:
+        """Cancel any running prompt/model worker and resolve a pending permission
+        future (the subprocess about to die will never answer it)."""
+        self.workers.cancel_all()
+        if self._pending_perm is not None and not self._pending_perm.done():
+            self._pending_perm.set_result(None)
+            self._pending_perm = None
+        if isinstance(self.screen, PermissionModal):
+            self.pop_screen()
+
+    async def action_reload(self) -> None:
+        if self._busy:
+            return
+        self._busy = True
+        try:
+            self._cancel_inflight()
+            await self._reset_conversation()
+            self._append_line(_c("muted", "— reloading agent… —"))
+            await self._teardown()
+            try:
+                await self._connect()
+                # success → fresh agent = empty conversation; clear the transient
+                # "reloading…" progress line so the scrollback ends wiped.
+                await self._reset_conversation()
+            except Exception as e:
+                self._fatal(f"reload failed: {e}")
+        finally:
+            self._busy = False
+
     async def on_unmount(self) -> None:
         if self._pending_perm is not None and not self._pending_perm.done():
             self._pending_perm.set_result(None)
