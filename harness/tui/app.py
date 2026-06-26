@@ -129,12 +129,9 @@ class HarnessTui(App):
                 f"[$muted]{provider}[/]")
 
     def _header_markup(self) -> str:
-        """Build the landing header's three text lines from current model state."""
-        label = _model_label(self.model, self._worker_model_id)
-        provider = _provider_label(self.model)
-        return header_text_markup(
-            "DONE", self._version, "Get Shit Done",
-            self._compose_meta_markup(label, provider))
+        """Build the landing header text (name + tagline). The mode·model line is
+        shown on the compose-meta line under the input, not repeated here."""
+        return header_text_markup("DONE", self._version, "Get Shit Done")
 
     def _status_bar(self) -> ComposeResult:
         bar = Container(id="statusbar")
