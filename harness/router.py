@@ -10,7 +10,6 @@ unclear request never silently runs the agent.
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -42,10 +41,10 @@ def complete(system: str, user: str) -> str:
     """Thin cheap-model completion for classification. Used by the CLI; tests
     inject a stub instead. Plain text in, text out — no tool calls."""
     import litellm  # lazy: keep the ~1s import out of startup (see module note)
+    from harness import vibeproxy
     resp = litellm.completion(
         model=ROUTER_MODEL,
-        api_base=os.getenv("VIBEPROXY_BASE_URL", "http://localhost:8317/v1"),
-        api_key=os.getenv("VIBEPROXY_API_KEY", "dummy-not-used"),
+        **vibeproxy.completion_kwargs(),
         messages=[{"role": "system", "content": system},
                   {"role": "user", "content": user}],
         max_tokens=300,

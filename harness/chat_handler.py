@@ -14,7 +14,6 @@ it works in mock mode too).
 
 from __future__ import annotations
 
-import os
 import re
 from typing import Iterator
 
@@ -75,10 +74,10 @@ class ChatHandler:
                    "--model vibeproxy. (Routing worked: this did not run the agent.)")
             return
         import litellm  # lazy: keep the ~1s import out of startup (mock never hits this)
+        from harness import vibeproxy
         stream = litellm.completion(
-            model="openai/" + self._model_id,
-            api_base=os.getenv("VIBEPROXY_BASE_URL", "http://localhost:8317/v1"),
-            api_key=os.getenv("VIBEPROXY_API_KEY", "dummy-not-used"),
+            model=vibeproxy.model_id(self._model_id),
+            **vibeproxy.completion_kwargs(),
             messages=(([{"role": "system", "content": self._persona_block}]
                        if self._persona_block else [])
                       + (history or []) + [{"role": "user", "content": prompt}]),

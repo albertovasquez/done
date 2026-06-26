@@ -32,9 +32,9 @@ from harness import skills  # noqa: E402
 from harness import persona as _persona  # noqa: E402
 from harness import paths as _paths_persona  # noqa: E402
 from harness.chat_handler import ChatHandler  # noqa: E402
+from harness import vibeproxy  # noqa: E402
 
 DEFAULT_TASK = "Fix the failing test in examples/sample-repo so that add(2, 3) == 5."
-DEFAULT_VIBEPROXY_MODEL = "gpt-5.4"  # single source of truth; gpt-5.1-codex does not exist on this proxy
 
 
 def _load_agent_config() -> dict:
@@ -45,11 +45,8 @@ def _load_agent_config() -> dict:
 def _build_vibeproxy_model():
     from minisweagent.models.litellm_model import LitellmModel
     return LitellmModel(
-        model_name="openai/" + os.getenv("VIBEPROXY_MODEL", DEFAULT_VIBEPROXY_MODEL),
-        model_kwargs={
-            "api_base": os.getenv("VIBEPROXY_BASE_URL", "http://localhost:8317/v1"),
-            "api_key": os.getenv("VIBEPROXY_API_KEY", "dummy-not-used"),
-        },
+        model_name=vibeproxy.model_id(vibeproxy.default_model()),
+        model_kwargs=vibeproxy.model_kwargs(),
         cost_tracking="ignore_errors",
     )
 
@@ -114,7 +111,7 @@ def main(argv: list[str] | None = None) -> int:
     run_dir = REPO_ROOT / "harness" / "runs" / _run_id()
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    worker_model_id = None if args.model == "mock" else os.getenv("VIBEPROXY_MODEL", DEFAULT_VIBEPROXY_MODEL)
+    worker_model_id = None if args.model == "mock" else vibeproxy.default_model()
 
     if args.model == "mock":
         model = build_mock_model()
@@ -137,7 +134,7 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as e:  # noqa: BLE001
             if args.model == "vibeproxy":
                 print(f"\nVibeProxy run failed: {e}\n"
-                      f"Is VibeProxy running on {os.getenv('VIBEPROXY_BASE_URL', 'http://localhost:8317/v1')}?",
+                      f"Is VibeProxy running on {vibeproxy.base_url()}?",
                       file=sys.stderr)
             else:
                 raise
@@ -155,7 +152,7 @@ def main(argv: list[str] | None = None) -> int:
             load_skills=lambda names: skills.compose(skills_roots, names))
     except Exception as e:  # noqa: BLE001 — router model unreachable etc.
         print(f"\nRouter failed: {e}\n"
-              f"Is VibeProxy running on {os.getenv('VIBEPROXY_BASE_URL', 'http://localhost:8317/v1')}? "
+              f"Is VibeProxy running on {vibeproxy.base_url()}? "
               f"(the router uses VibeProxy even when --model is mock)", file=sys.stderr)
         rc = 1
     finally:

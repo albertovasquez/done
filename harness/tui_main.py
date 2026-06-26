@@ -39,7 +39,8 @@ def _effective_worker_model_id(backend: str) -> str | None:
     persisted model has been exported into the env."""
     if backend == "mock":
         return None
-    return os.getenv("VIBEPROXY_MODEL", "gpt-5.4")
+    from harness import vibeproxy
+    return vibeproxy.default_model()
 
 
 def _relaunch_args(args, cwd) -> list[str]:
