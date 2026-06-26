@@ -537,20 +537,22 @@ class HarnessTui(App):
     def _stream_message(self, text: str) -> None:
         """Accumulate an agent message delta into a single live Markdown widget.
 
-        Routing is POSITION-based, which is unambiguous and matches the visual
-        intent: a delta extends the streaming widget only while that widget is
-        still the LAST child of the transcript. Once anything newer is appended
-        (a user message, meta line, tool call, or the working indicator), the
-        streaming widget is no longer last:
+        Routing distinguishes three cases for a delta that arrives after the
+        stream was closed:
           - a NEW answer (its first delta) opens a fresh widget at the bottom;
-          - a LATE delta for the just-finished answer (notification lag) finds its
-            own widget is no longer last AND no new answer has opened, so it
-            extends that widget in place — never a stray block under the next
-            prompt.
-        We distinguish the two by `_stream_closed`: set when a user message / tool
-        / thought finalizes the answer. A delta while closed, with the prior
-        widget no longer last, is a late delta → extend the prior widget. A delta
-        while closed with the prior widget still last (or none) is a new answer.
+          - a NEW agent STEP within the same turn (after a tool call / thought /
+            explicit stream_reset) opens its own fresh widget — so multi-step
+            narration does not merge into the previous step's block;
+          - a LATE delta for the just-finished answer (notification lag, after a
+            NEW USER turn began) extends that prior widget in place — never a
+            stray block under the next prompt.
+        The new-step and late-delta cases have IDENTICAL positional signals
+        (prior widget closed and no longer last), so position alone cannot
+        separate them. We use the `_boundary_after` flag instead: set by
+        `_end_stream(boundary=True)` on an in-turn boundary, cleared by
+        `_add_user_message` (a new user turn) and `_reset_conversation`. Flag set
+        ⇒ new step (fresh widget); flag clear with a closed prior ⇒ late delta
+        (extend in place).
 
         Markdown.update() is a no-op until the widget is mounted, so the render is
         scheduled via call_after_refresh — by the next refresh the mount has
