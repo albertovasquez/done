@@ -533,9 +533,9 @@ def test_reload_is_guarded_against_reentry():
         async with app.run_test() as pilot:
             await pilot.pause()
             app._busy = True                     # simulate a reload in progress
-            gen_before = app._gen
             await app.action_reload()            # must early-return
-            assert app._gen == gen_before, "re-entrant reload must be a no-op"
+            assert app._reexec is False, "re-entrant reload must not set _reexec"
+            assert app._exit is False, "re-entrant reload must not call exit()"
             app._busy = False
     asyncio.run(go())
 
