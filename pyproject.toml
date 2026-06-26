@@ -48,5 +48,5 @@ include = ["harness*"]
 [tool.setuptools.package-data]
 # skills/ and the .tcss stylesheets are resolved at runtime via __file__, so they
 # must ship inside the wheel for a non-editable install to find them.
-"harness" = ["skills/**/*"]
+"harness" = ["skills/**/*", "templates/**/*"]
 "harness.tui" = ["*.tcss"]

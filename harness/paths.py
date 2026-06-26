@@ -41,6 +41,12 @@ def bundled_skills_dir() -> Path:
     return Path(importlib.resources.files("harness")) / "skills"
 
 
+def bundled_persona_templates_dir() -> Path:
+    """The persona templates shipped inside the package
+    (harness/templates/agents/default/). Works in editable and installed wheels."""
+    return Path(importlib.resources.files("harness")) / "templates" / "agents" / "default"
+
+
 def skills_dirs() -> list[Path]:
     """Ordered LOWEST precedence first: bundled, then the user dir. Absent roots
     are kept in the list — skills.load_catalog/compose skip non-dirs — so callers

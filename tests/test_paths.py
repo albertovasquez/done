@@ -80,3 +80,10 @@ def test_default_workspace_dir_does_not_create(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     d = paths.default_workspace_dir()
     assert not d.exists()
+
+
+def test_bundled_persona_templates_dir_has_trio():
+    d = paths.bundled_persona_templates_dir()
+    assert d.is_dir()
+    for name in ("SOUL.md", "IDENTITY.md", "USER.md"):
+        assert (d / name).is_file(), name
