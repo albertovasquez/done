@@ -48,7 +48,7 @@ def test_4_chat_question_does_not_run_agent(tmp_path):
         "what is 1+1",
         router=_FixedRouter(_cls("chat_question", confidence=0.97)),
         emitter=_emitter(tmp_path),
-        make_chat_handler=lambda: type("H", (), {"answer": lambda s, p: "2"})(),
+        make_chat_handler=lambda: type("H", (), {"answer_stream": lambda s, p: iter(["2"])})(),
         run_agent=spy, ask_user=lambda q: "", echo=out.append, worker_model_id="gpt-5.4")
     assert rc == 0
     assert spy.calls == []                 # agent NEVER ran for a chat question
