@@ -16,6 +16,34 @@ def _stub(payload: str):
     return lambda system, user: payload
 
 
+def test_classify_includes_preamble_in_user_message():
+    seen = {}
+
+    def stub(system, user):
+        seen["user"] = user
+        return '{"task_type": "code_fix", "skills": [], "confidence": 0.9, "reasoning": "x"}'
+
+    history = [{"role": "user", "content": "earlier ask", "origin": "chat"},
+               {"role": "assistant", "content": "chat reply", "origin": "chat"},
+               {"role": "assistant", "content": "agent narration", "origin": "agent"}]
+    Router(stub, catalog=_CATALOG).classify("the first one", history=history)
+    assert "earlier ask" in seen["user"]
+    assert "chat reply" in seen["user"]
+    assert "agent narration" not in seen["user"]
+    assert "the first one" in seen["user"]            # current prompt remains the target
+
+
+def test_classify_without_history_passes_bare_prompt():
+    seen = {}
+
+    def stub(system, user):
+        seen["user"] = user
+        return '{"task_type": "code_fix", "skills": [], "confidence": 0.9, "reasoning": "x"}'
+
+    Router(stub, catalog=_CATALOG).classify("just this", history=None)
+    assert seen["user"] == "just this"                # byte-for-byte unchanged
+
+
 def test_1_parses_validates_skills_and_unknown_type():
     r = Router(_stub(json.dumps({
         "task_type": "code_fix",

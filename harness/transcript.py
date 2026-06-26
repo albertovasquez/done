@@ -22,3 +22,17 @@ def flatten_agent_messages(messages: list[dict]) -> str:
             if isinstance(submission, str) and submission.strip():
                 parts.append(submission.strip())
     return "\n\n".join(parts)
+
+
+def router_preamble(history: list[dict]) -> str:
+    """Build a triage preamble from prior USER turns and CHAT assistant answers.
+    Excludes agent-origin assistant narration (tool/pytest prose) so triage stays
+    clean. Returns "" for empty history."""
+    lines: list[str] = []
+    for m in history:
+        role, origin = m.get("role"), m.get("origin")
+        if role == "user":
+            lines.append(f"- user: {m.get('content', '')}")
+        elif role == "assistant" and origin == "chat":
+            lines.append(f"- assistant: {m.get('content', '')}")
+    return "\n".join(lines)

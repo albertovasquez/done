@@ -45,3 +45,24 @@ def test_flatten_only_tool_turns_returns_empty():
     msgs = [{"role": "assistant", "content": None},
             {"role": "exit", "content": "", "extra": {"exit_status": "Submitted", "submission": ""}}]
     assert flatten_agent_messages(msgs) == ""
+
+
+from harness.transcript import router_preamble
+
+
+def test_router_preamble_includes_user_and_chat_assistant_excludes_agent():
+    history = [
+        {"role": "user", "content": "Flutter or React Native?", "origin": "chat"},
+        {"role": "assistant", "content": "Which target — Flutter or RN?", "origin": "chat"},
+        {"role": "user", "content": "fix the test", "origin": "agent"},
+        {"role": "assistant", "content": "I ran pytest, 2 failed: ...", "origin": "agent"},
+    ]
+    pre = router_preamble(history)
+    assert "Flutter or React Native?" in pre        # user turn (chat)
+    assert "Which target" in pre                     # chat assistant answer included
+    assert "fix the test" in pre                     # user turn (agent) included
+    assert "I ran pytest" not in pre                  # agent assistant narration EXCLUDED
+
+
+def test_router_preamble_empty_history_is_empty():
+    assert router_preamble([]) == ""
