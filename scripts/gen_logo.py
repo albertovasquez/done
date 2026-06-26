@@ -46,40 +46,54 @@ def _hex(p):
     return f"#{p[0]:02x}{p[1]:02x}{p[2]:02x}"
 
 
+# Quadrant glyphs by 4-bit mask (TL=1, TR=2, BL=4, BR=8): each cell is a 2x2
+# sub-pixel grid, giving 2x the horizontal/vertical detail of half-blocks.
+_QUAD = {
+    0: " ", 1: "▘", 2: "▝", 3: "▀", 4: "▖", 5: "▌", 6: "▞", 7: "▛",
+    8: "▗", 9: "▚", 10: "▐", 11: "▜", 12: "▄", 13: "▙", 14: "▟", 15: "█",
+}
+
+
 def render_rows():
     im = Image.open(ASSET).convert("RGB")
     w, h = im.size
     rows = max(1, round(h * COLS / w / 2))
-    im = im.resize((COLS, rows * 2), Image.LANCZOS)
+    # 2 sub-pixels per cell in each axis -> quadrant resolution.
+    im = im.resize((COLS * 2, rows * 2), Image.LANCZOS)
     px = im.load()
     out = []
     for cy in range(rows):
         cells = []
         for cx in range(COLS):
-            top, bot = _quant(px[cx, cy * 2]), _quant(px[cx, cy * 2 + 1])
-            if top is None and bot is None:
+            quads = [
+                _quant(px[cx * 2, cy * 2]),       # TL
+                _quant(px[cx * 2 + 1, cy * 2]),   # TR
+                _quant(px[cx * 2, cy * 2 + 1]),   # BL
+                _quant(px[cx * 2 + 1, cy * 2 + 1]),  # BR
+            ]
+            lit = [q for q in quads if q is not None]
+            if not lit:
                 cells.append(" ")
-            elif bot is None:
-                cells.append(f"[{_hex(top)}]▀[/]")
-            elif top is None:
-                cells.append(f"[{_hex(bot)}]▄[/]")
-            elif top == bot:
-                cells.append(f"[{_hex(top)}]█[/]")
-            else:
-                cells.append(f"[{_hex(top)} on {_hex(bot)}]▀[/]")
+                continue
+            # A cell renders in a single fg color: pick the majority ink color.
+            n_blue = sum(1 for q in lit if q == BLUE)
+            fg = BLUE if n_blue >= len(lit) - n_blue else WHITE
+            mask = sum(bit for bit, q in zip((1, 2, 4, 8), quads) if q is not None)
+            cells.append(f"[{_hex(fg)}]{_QUAD[mask]}[/]")
         out.append("".join(cells))
     return out
 
 
 HEADER = '''"""The landing-screen brand logo: the DoneDone wordmark rendered as Unicode
-half-block art, captured once and embedded as a static string so we ship no
+quadrant-block art, captured once and embedded as a static string so we ship no
 image-library dependency (mirrors wordmark.py's figlet approach).
 
-Each cell shows two vertical pixels via the half-block glyphs ▀/▄/█: foreground
-color = top pixel, background color = bottom pixel. The source asset is
-assets/donedone-logo.png (cropped from the DoneDone brand book, p.22); colors are
-quantized to the two brand logo colors — blue #286CE9 and white #E3E3E3 — over a
-transparent (navy) background, so the logo blends into the TUI's navy backdrop.
+Each cell is a 2x2 sub-pixel grid drawn with quadrant glyphs (▘▝▖▗▌▐▞▚▀▄█ …) for
+2x the detail of half-blocks; the cell takes the majority ink color of its lit
+quadrants. The source asset is assets/donedone-logo.png (cropped from the
+DoneDone brand book, p.22); colors are quantized to the two brand logo colors —
+blue #286CE9 and white #E3E3E3 — over a transparent (navy) background, so the
+logo blends into the TUI's navy backdrop.
 
 To regenerate after changing the asset, run scripts/gen_logo.py (see that file).
 
@@ -88,8 +102,8 @@ flickers or gets cleared on repaint and works in any truecolor terminal."""
 
 from __future__ import annotations
 
-# Half-block art for the DoneDone wordmark (72 cells wide, 5 rows). Generated —
-# do not edit by hand; regenerate with scripts/gen_logo.py.
+# Quadrant-block art for the DoneDone wordmark (72 cells wide, 5 rows). Generated
+# — do not edit by hand; regenerate with scripts/gen_logo.py.
 _ROWS = [
 '''
 
