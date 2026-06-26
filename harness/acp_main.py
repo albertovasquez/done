@@ -37,15 +37,22 @@ def _load_agent_cfg() -> dict:
 
 
 def _model_factory(model_choice: str):
+    """Return a factory `make(current_model=None) -> Model`. The agent calls it
+    per turn with its current worker model so /models can hot-swap (the arg wins
+    over the env default). Mock ignores the arg."""
     if model_choice == "mock":
         from harness.models_mock import build_mock_model
-        return build_mock_model
+
+        def make(current_model=None):
+            return build_mock_model()
+        return make
     # vibeproxy path — api_base/api_key live in model_kwargs (LitellmModelConfig has
     # no top-level api_base/api_key fields); mirror run_traced.py's proven wiring.
-    def make():
+    def make(current_model=None):
         from minisweagent.models.litellm_model import LitellmModel
+        model_id = current_model or os.getenv("VIBEPROXY_MODEL", "gpt-5.4")
         return LitellmModel(
-            model_name="openai/" + os.getenv("VIBEPROXY_MODEL", "gpt-5.4"),
+            model_name="openai/" + model_id,
             model_kwargs={
                 "api_base": os.getenv("VIBEPROXY_BASE_URL", "http://localhost:8317/v1"),
                 "api_key": os.getenv("VIBEPROXY_API_KEY", "dummy-not-used"),
