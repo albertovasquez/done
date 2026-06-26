@@ -160,3 +160,62 @@ def test_main_seeds_worker_model_id_from_persisted_model(isolated_config, monkey
 
     assert captured["model"] == "vibeproxy"
     assert captured["worker_model_id"] == "claude-opus-4-8"
+
+
+# --- precedence: done.conf beats a .env VIBEPROXY_MODEL, but a real shell env wins ---
+
+def _run_main_capturing(monkeypatch, isolated_config, dotenv_model):
+    """Run main() with no --model flag. `dotenv_model`, if not None, simulates a
+    project .env setting VIBEPROXY_MODEL the way load_env does (override=False:
+    only fills it in when not already a real shell env var). Returns the kwargs
+    HarnessTui was constructed with."""
+    captured = {}
+
+    class _FakeApp:
+        def __init__(self, **kw):
+            captured.update(kw)
+        def run(self):
+            pass
+
+    def fake_load_env(cwd):
+        if dotenv_model is not None:
+            os.environ.setdefault("VIBEPROXY_MODEL", dotenv_model)  # .env never beats a real shell env
+
+    monkeypatch.setattr(tui_main, "HarnessTui", _FakeApp)
+    monkeypatch.setattr(tui_main.paths, "load_env", fake_load_env)
+    tui_main.main(["--cwd", str(isolated_config)])
+    return captured
+
+
+def test_persisted_model_beats_dotenv(isolated_config, monkeypatch):
+    """A .env VIBEPROXY_MODEL must NOT override the interactively-persisted model.
+    This is the logout/login bug: .env had gpt-5.4 and silently won."""
+    monkeypatch.delenv("VIBEPROXY_MODEL", raising=False)  # no real shell env
+    _write_default(isolated_config, "vibeproxy", "claude-opus-4-8")
+
+    captured = _run_main_capturing(monkeypatch, isolated_config, dotenv_model="gpt-5.4")
+
+    assert os.environ["VIBEPROXY_MODEL"] == "claude-opus-4-8", "done.conf must beat .env"
+    assert captured["worker_model_id"] == "claude-opus-4-8"
+
+
+def test_real_shell_env_beats_persisted_model(isolated_config, monkeypatch):
+    """An explicitly-exported shell VIBEPROXY_MODEL outranks done.conf."""
+    monkeypatch.setenv("VIBEPROXY_MODEL", "shell-override")  # real shell env present
+    _write_default(isolated_config, "vibeproxy", "claude-opus-4-8")
+
+    captured = _run_main_capturing(monkeypatch, isolated_config, dotenv_model="gpt-5.4")
+
+    assert os.environ["VIBEPROXY_MODEL"] == "shell-override", "real shell env wins over done.conf"
+    assert captured["worker_model_id"] == "shell-override"
+
+
+def test_persisted_model_applied_when_no_env_at_all(isolated_config, monkeypatch):
+    """No shell env, no .env: the persisted model is applied."""
+    monkeypatch.delenv("VIBEPROXY_MODEL", raising=False)
+    _write_default(isolated_config, "vibeproxy", "claude-opus-4-8")
+
+    captured = _run_main_capturing(monkeypatch, isolated_config, dotenv_model=None)
+
+    assert os.environ["VIBEPROXY_MODEL"] == "claude-opus-4-8"
+    assert captured["worker_model_id"] == "claude-opus-4-8"
