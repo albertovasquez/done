@@ -15,35 +15,50 @@ from typing import Awaitable, Callable
 class Command:
     name: str                                  # without the leading slash; shown in the menu
     description: str
-    handler: Callable[["HarnessTui"], Awaitable[None]]  # noqa: F821
+    # arg is the text typed after the command name (e.g. "pin" in "/yolo pin"),
+    # "" when none. Defaults to "" so the no-arg call convention still works.
+    handler: Callable[["HarnessTui", str], Awaitable[None]]  # noqa: F821
     aliases: tuple[str, ...] = ()              # extra typed names that resolve here, hidden from the menu
 
 
 # Handlers are thin: they delegate to app methods so the app owns the wiring.
-async def _models(app) -> None:
+async def _models(app, arg: str = "") -> None:
     await app.action_select_model()
 
 
-async def _reload(app) -> None:
+async def _reload(app, arg: str = "") -> None:
     await app.action_reload()
 
 
-async def _clear(app) -> None:
+async def _clear(app, arg: str = "") -> None:
     await app.action_clear()
 
 
-async def _exit(app) -> None:
+async def _exit(app, arg: str = "") -> None:
     app.exit()
 
 
-async def _help(app) -> None:
+async def _help(app, arg: str = "") -> None:
     app.show_help()
+
+
+async def _yolo(app, arg: str = "") -> None:
+    sub = arg.strip().lower()
+    if sub == "":
+        app.action_toggle_yolo()
+    elif sub == "pin":
+        await app.action_yolo_pin()
+    elif sub == "unpin":
+        await app.action_yolo_unpin()
+    else:
+        app._notify_line("usage: /yolo [pin|unpin]")
 
 
 def build_registry() -> list[Command]:
     """The commands available in the slash menu, in display order."""
     return [
         Command("models", "Select the active model", _models),
+        Command("yolo", "Toggle auto-allow (pin/unpin to persist)", _yolo),
         Command("reload", "Reload everything (restart the app)", _reload),
         Command("clear", "Fresh conversation (restart the agent)", _clear),
         Command("help", "Show available commands", _help),

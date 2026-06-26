@@ -259,6 +259,20 @@ class HarnessTui(App):
         self._refresh_yolo_chip()
         self.run_worker(self._send_set_yolo(active=self._yolo), thread=False)
 
+    async def action_yolo_pin(self) -> None:
+        """Persist 'always launch in YOLO' (and turn it on now — pinning a mode
+        you're not in is incoherent)."""
+        self._yolo = True
+        self._yolo_pinned = True
+        self._refresh_yolo_chip()
+        await self._send_set_yolo(active=True, pin=True)
+
+    async def action_yolo_unpin(self) -> None:
+        """Stop auto-launching in YOLO. Leaves the live state alone."""
+        self._yolo_pinned = False
+        self._refresh_yolo_chip()
+        await self._send_set_yolo(pin=False)
+
     async def _send_set_yolo(self, *, active: bool | None = None,
                              pin: bool | None = None) -> None:
         """Push the live/pin change to the agent (which owns the gate). The chip
@@ -429,15 +443,18 @@ class HarnessTui(App):
     async def _run_slash(self, text: str) -> None:
         # prefer the highlighted menu command; else parse the typed name
         cmd = self._slash.highlighted_command() if self._slash is not None else None
+        # the text after the command name (e.g. "pin" in "/yolo pin")
+        parts = text[1:].split() if len(text) > 1 else []
+        arg = " ".join(parts[1:]) if len(parts) > 1 else ""
         if cmd is None:
-            name = text[1:].split()[0] if len(text) > 1 else ""
+            name = parts[0] if parts else ""
             cmd = resolve_command(self._commands, name)   # canonical name or exact alias
         self._active_input().value = ""
         await self._close_slash()
         if cmd is None:
             self._notify_line(f"unknown command: {text}")
             return
-        await cmd.handler(self)
+        await cmd.handler(self, arg)
 
     def _notify_line(self, message: str) -> None:
         """Show a one-off informational line (in transcript if started, else in

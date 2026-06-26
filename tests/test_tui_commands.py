@@ -211,6 +211,47 @@ def test_reload_clear_descriptions_match_new_behavior():
     assert reg["clear"].description == "Fresh conversation (restart the agent)"
 
 
+def test_registry_has_yolo():
+    names = {c.name for c in build_registry()}
+    assert "yolo" in names
+
+
+def test_yolo_handler_dispatches_on_arg():
+    import asyncio
+    from harness.tui.commands import build_registry
+
+    class _App:
+        def __init__(self): self.calls = []
+        def action_toggle_yolo(self): self.calls.append("toggle")
+        async def action_yolo_pin(self): self.calls.append("pin")
+        async def action_yolo_unpin(self): self.calls.append("unpin")
+        def _notify_line(self, m): self.calls.append(("notify", m))
+
+    reg = {c.name: c for c in build_registry()}
+    app = _App()
+    asyncio.run(reg["yolo"].handler(app, ""))
+    asyncio.run(reg["yolo"].handler(app, "pin"))
+    asyncio.run(reg["yolo"].handler(app, "unpin"))
+    assert app.calls[:3] == ["toggle", "pin", "unpin"]
+
+
+def test_existing_handlers_accept_optional_arg():
+    """Adding the arg param must not break the no-arg call convention."""
+    import asyncio
+    from harness.tui.commands import build_registry
+
+    class _App:
+        def __init__(self): self.called = []
+        async def action_reload(self): self.called.append("reload")
+        async def action_clear(self): self.called.append("clear")
+
+    reg = {c.name: c for c in build_registry()}
+    app = _App()
+    asyncio.run(reg["reload"].handler(app))        # no arg — still valid
+    asyncio.run(reg["reload"].handler(app, ""))    # with arg — also valid
+    assert app.called == ["reload", "reload"]
+
+
 def test_select_modal_search_and_select():
     async def go():
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
