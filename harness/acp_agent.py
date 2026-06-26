@@ -25,7 +25,7 @@ from harness.chat_handler import ChatHandler
 
 
 class HarnessAgent(acp.Agent):
-    def __init__(self, *, model_factory, agent_cfg, skills_dir: Path, router: Router,
+    def __init__(self, *, model_factory, agent_cfg, skills_dir: list[Path], router: Router,
                  worker_model_id):
         self._model_factory = model_factory
         self._agent_cfg = agent_cfg
@@ -249,7 +249,7 @@ class HarnessAgent(acp.Agent):
         return "refusal" if exit_status == "refusal" else "end_turn"
 
 
-def build_harness_agent(*, model_factory, agent_cfg, skills_dir: Path,
+def build_harness_agent(*, model_factory, agent_cfg, skills_dir: list[Path],
                         router: Router, worker_model_id=None) -> HarnessAgent:
     """Factory: wire the agent from resolved dependencies."""
     return HarnessAgent(
