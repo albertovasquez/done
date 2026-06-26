@@ -90,6 +90,7 @@ class HarnessTui(App):
         self._streaming_md = None             # the live Markdown widget for the current answer, else None
         self._stream_buf = ""                 # accumulated text for _streaming_md
         self._stream_closed = True            # True => the next message delta starts a fresh widget
+        self._boundary_after = False          # True => an in-turn boundary (tool/thought/stream_reset) closed the block; next prose opens a FRESH widget (vs. a late delta of the prior answer, which extends in place)
         self._tokens = 0                      # last-known token count from usage updates
         self._commands = build_registry()     # slash-command registry
         self._slash = None                    # the SlashMenu widget while open, else None
@@ -442,6 +443,7 @@ class HarnessTui(App):
         self._streaming_md = None
         self._stream_buf = ""
         self._stream_closed = True
+        self._boundary_after = False
         self._tokens = 0
         self._refresh_status()
 
@@ -469,19 +471,33 @@ class HarnessTui(App):
         for ind in self._transcript.query("#working"):
             ind.remove()
 
-    def _end_stream(self) -> None:
+    def _end_stream(self, *, boundary: bool = False) -> None:
         """Close the current live Markdown block: the NEXT message delta starts a
         fresh widget. The widget reference is KEPT (not nulled) so that a late
         delta belonging to the just-closed answer (notification-delivery can lag
         prompt() returning) still appends to ITS block, in place — rather than
         spawning a stray block under the next user prompt. Called when a tool call
-        or thought interleaves, and when a new user turn begins."""
+        or thought interleaves, and when a new user turn begins.
+
+        `boundary=True` marks an IN-TURN step boundary (tool call, thought, or an
+        explicit stream_reset): the agent is still producing this turn, so the
+        next prose is a genuinely NEW step that must open its own widget. The
+        default (`boundary=False`) is the turn-end / new-user-turn close, after
+        which a trailing late delta of the just-closed answer extends it in
+        place. `_stream_message` keys on `_boundary_after` to tell the two
+        apart."""
         self._stream_closed = True
+        if boundary:
+            self._boundary_after = True
 
     def _add_user_message(self, text: str) -> None:
         # A new user turn: close the prior answer's stream first so its widget is
-        # finalized and any late delta lands in it, not under this message.
+        # finalized and any late delta lands in it, not under this message. This
+        # is NOT an in-turn boundary — clear _boundary_after so a trailing late
+        # delta of the prior answer extends its widget rather than opening a new
+        # block under this prompt.
         self._end_stream()
+        self._boundary_after = False
         # accent bar glyph + bold text (the bordered-box look, inline).
         self._append_line(f"{_c('accent', '▌')} [b]{self._escape(text)}[/b]")
 
@@ -522,38 +538,50 @@ class HarnessTui(App):
     def _stream_message(self, text: str) -> None:
         """Accumulate an agent message delta into a single live Markdown widget.
 
-        Routing is POSITION-based, which is unambiguous and matches the visual
-        intent: a delta extends the streaming widget only while that widget is
-        still the LAST child of the transcript. Once anything newer is appended
-        (a user message, meta line, tool call, or the working indicator), the
-        streaming widget is no longer last:
+        Routing distinguishes three cases for a delta that arrives after the
+        stream was closed:
           - a NEW answer (its first delta) opens a fresh widget at the bottom;
-          - a LATE delta for the just-finished answer (notification lag) finds its
-            own widget is no longer last AND no new answer has opened, so it
-            extends that widget in place — never a stray block under the next
-            prompt.
-        We distinguish the two by `_stream_closed`: set when a user message / tool
-        / thought finalizes the answer. A delta while closed, with the prior
-        widget no longer last, is a late delta → extend the prior widget. A delta
-        while closed with the prior widget still last (or none) is a new answer.
+          - a NEW agent STEP within the same turn (after a tool call / thought /
+            explicit stream_reset) opens its own fresh widget — so multi-step
+            narration does not merge into the previous step's block;
+          - a LATE delta for the just-finished answer (notification lag, after a
+            NEW USER turn began) extends that prior widget in place — never a
+            stray block under the next prompt.
+        The new-step and late-delta cases have IDENTICAL positional signals
+        (prior widget closed and no longer last), so position alone cannot
+        separate them. We use the `_boundary_after` flag instead: set by
+        `_end_stream(boundary=True)` on an in-turn boundary, cleared by
+        `_add_user_message` (a new user turn) and `_reset_conversation`. Flag set
+        ⇒ new step (fresh widget); flag clear with a closed prior ⇒ late delta
+        (extend in place).
 
         Markdown.update() is a no-op until the widget is mounted, so the render is
         scheduled via call_after_refresh — by the next refresh the mount has
         completed and the accumulated buffer renders."""
         kids = list(self._transcript.children)
         prior_is_last = self._streaming_md is not None and kids and kids[-1] is self._streaming_md
+        # An IN-TURN boundary (tool line / thought / explicit stream_reset) closed
+        # the prior block while the agent keeps producing this turn, so the next
+        # prose is a genuinely NEW step that must open its own widget — NOT a late
+        # delta of the just-closed answer. `_boundary_after` is set by
+        # _end_stream(boundary=True) and cleared by _add_user_message (a new user
+        # turn is the late-delta case, where the prior widget extends in place).
+        boundary_after = self._boundary_after and self._streaming_md is not None
 
-        if self._stream_closed and self._streaming_md is not None and not prior_is_last:
+        if self._stream_closed and self._streaming_md is not None \
+                and not prior_is_last and not boundary_after:
             # late delta for the just-closed answer → extend its widget in place;
             # the stream stays CLOSED (this delta does not begin a new answer).
             pass
         elif self._streaming_md is None or self._stream_closed:
-            # new answer → fresh widget at the bottom; stream is now OPEN.
+            # new answer / new in-turn step → fresh widget at the bottom; stream
+            # is now OPEN and the boundary has been consumed.
             self._hide_working()
             self._streaming_md = Markdown("")
             self._append(self._streaming_md)
             self._stream_buf = ""
             self._stream_closed = False
+            self._boundary_after = False
         # else: stream already open → keep extending it.
         self._stream_buf += text
         md, buf = self._streaming_md, self._stream_buf
@@ -573,6 +601,14 @@ class HarnessTui(App):
             return
         # token usage, if the agent surfaced any under _meta
         self._maybe_update_tokens(getattr(msg.update, "field_meta", None))
+        # an explicit per-step boundary signal: Task 4 emits an empty message_chunk
+        # carrying _meta stream_reset (nested under "harness" by with_meta()). Close
+        # the current block as an IN-TURN boundary so the next prose opens a fresh
+        # widget, then return early — the empty chunk must NOT render a blank line.
+        meta = getattr(msg.update, "field_meta", None)
+        if isinstance(meta, dict) and (meta.get("harness") or {}).get("stream_reset"):
+            self._end_stream(boundary=True)
+            return
         for chip in harness_chips(getattr(msg.update, "field_meta", None)):
             self._append_line(_c("muted", f"\\[{chip}]"))
         item = render_update(msg.update)
@@ -583,13 +619,13 @@ class HarnessTui(App):
                 self._stream_message(item.text)
         elif item.kind == "thought":
             if item.text:
-                self._end_stream()  # a thought ends the current answer block
+                self._end_stream(boundary=True)  # a thought ends the current step's block
                 self._append_line(f"[{COLORS['muted']} italic]{self._escape(item.text)}[/]")
         elif item.kind == "user":
             if item.text:
                 self._append_line(f"{_c('accent', '▌')} [b]{self._escape(item.text)}[/b]")
         elif item.kind == "tool":
-            self._end_stream()  # a tool call finalizes the current Markdown block
+            self._end_stream(boundary=True)  # a tool call finalizes the current step's block
             color = self._status_hex(item.status)
             self._append_line(f"[{color}]{self._escape(item.title)}[/]")
         elif item.kind == "tool_update":

@@ -52,9 +52,9 @@ def _model_factory(model_choice: str):
     # vibeproxy path — api_base/api_key live in model_kwargs (LitellmModelConfig has
     # no top-level api_base/api_key fields); mirror run_traced.py's proven wiring.
     def make(current_model=None):
-        from minisweagent.models.litellm_model import LitellmModel
+        from harness.streaming_model import StreamingLitellmModel
         model_id = current_model or os.getenv("VIBEPROXY_MODEL", "gpt-5.4")
-        return LitellmModel(
+        return StreamingLitellmModel(
             model_name="openai/" + model_id,
             model_kwargs={
                 "api_base": os.getenv("VIBEPROXY_BASE_URL", "http://localhost:8317/v1"),

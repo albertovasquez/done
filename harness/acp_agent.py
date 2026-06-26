@@ -199,7 +199,13 @@ class HarnessAgent(acp.Agent):
         engine = await self._run_agent_turn(loop, session_id, state, text, ctx.skill_block,
                                             transcript, ctx.persona_block)
         stop_reason = engine["stop_reason"]
-        assistant = engine["assistant"] or engine["exit_status"] or stop_reason   # never empty
+        if stop_reason == "refusal":
+            # streamed-on-screen == stored: never fold prior-turn prose in.
+            # flatten_agent_messages(agent.messages) includes the injected prior
+            # transcript, so on failure use only THIS turn's streamed buffer.
+            assistant = engine.get("streamed", "") or engine["exit_status"] or stop_reason
+        else:
+            assistant = engine["assistant"] or engine["exit_status"] or stop_reason   # never empty
         self._store.record(session_id, {"prompt": text, "stop_reason": stop_reason,
                                         "kind": "agent"})
         self._store.extend(session_id, [
@@ -210,6 +216,33 @@ class HarnessAgent(acp.Agent):
     async def _run_agent_turn(self, loop, session_id, state, text, skill_block, prior,
                               persona_block="") -> dict:
         tc_counter = {"n": 0}
+
+        # --- streaming: marshal each prose delta to the TUI, accumulate into a
+        # buffer (the failure-case transcript), and signal a per-step boundary so
+        # the client can close the previous prose block before the next one. ---
+        streamed = {"buf": ""}
+        agent_ref = {"agent": None}     # bound to the TracingAgent in run_engine
+        last_step = {"n": -1}
+
+        def emit_step_boundary() -> None:
+            # tell the TUI: a NEW prose block begins (close any open one).
+            upd = with_meta(message_chunk(""), {"stream_reset": True})
+            asyncio.run_coroutine_threadsafe(
+                self._conn.session_update(session_id, upd), loop).result()
+
+        def emit_delta(piece: str) -> None:
+            # first delta of a NEW step (new n_calls) → boundary first. n_calls is
+            # incremented in TracingAgent.query() BEFORE model.query() fires
+            # on_delta, so the first delta of each step sees a fresh n_calls value
+            # → exactly one boundary per step (covers FormatError steps that never
+            # emit a tool event).
+            n = getattr(agent_ref["agent"], "n_calls", 0)
+            if n != last_step["n"]:
+                last_step["n"] = n
+                emit_step_boundary()
+            streamed["buf"] += piece
+            asyncio.run_coroutine_threadsafe(
+                self._conn.session_update(session_id, message_chunk(piece)), loop).result()
 
         def on_command(phase: str, command: str, out: dict | None) -> None:
             # runs on the worker thread → marshal to the loop and block until sent
@@ -305,13 +338,25 @@ class HarnessAgent(acp.Agent):
                 agent = TracingAgent(self._model_factory(self._worker_model_id), env,
                                      emitter=emitter, skill_block=skill_block,
                                      persona_block=persona_block, **cfg)
-                result = agent.run(text, prior=prior)
-                return {"stop_reason": "end_turn",
-                        "exit_status": result.get("exit_status", "end_turn"),
-                        "assistant": flatten_agent_messages(agent.messages)}
+                agent_ref["agent"] = agent
+                model = agent.model
+                # mock model has no on_delta attr → bind nothing → mock mode unchanged.
+                if hasattr(model, "on_delta"):
+                    model.on_delta = emit_delta
+                try:
+                    result = agent.run(text, prior=prior)
+                    return {"stop_reason": "end_turn",
+                            "exit_status": result.get("exit_status", "end_turn"),
+                            "assistant": flatten_agent_messages(agent.messages),
+                            "streamed": streamed["buf"]}
+                finally:
+                    # never marshal a delta to a dead loop after the turn ends.
+                    if hasattr(model, "on_delta"):
+                        model.on_delta = None
             except Exception:  # engine/construction failure → refusal; capture any prose
                 return {"stop_reason": "refusal", "exit_status": "refusal",
-                        "assistant": flatten_agent_messages(getattr(agent, "messages", []))}
+                        "assistant": flatten_agent_messages(getattr(agent, "messages", [])),
+                        "streamed": streamed["buf"]}
 
         if state.cancel_flag.is_set():
             return {"stop_reason": "cancelled", "exit_status": "cancelled", "assistant": ""}

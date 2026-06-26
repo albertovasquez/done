@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from types import SimpleNamespace as NS
 
-from acp import update_agent_message_text
+from acp import update_agent_message_text, start_tool_call
 from harness.tui.app import HarnessTui, PermissionModal
 from harness.tui.messages import SessionUpdate
 from harness.tui.widgets.prompt_area import PromptArea
@@ -580,6 +580,32 @@ def test_pilot_escape_clears_input_text():
     asyncio.run(go())
 
 
+def test_prose_after_tool_opens_new_block():
+    """Step-1 prose, then a tool line, then step-2 prose must land in a SEPARATE
+    Markdown widget below the tool line — not be appended into step-1's widget."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await app._enter_conversation()
+            app._session_id = "fake-session"
+
+            app.on_session_update(SessionUpdate(update_agent_message_text("step one")))
+            await pilot.pause()
+            app.on_session_update(SessionUpdate(start_tool_call(
+                tool_call_id="tc1", title="$ ls")))
+            await pilot.pause()
+            app.on_session_update(SessionUpdate(update_agent_message_text("step two")))
+            await pilot.pause()
+
+            scroll = app.query_one("#transcript", VerticalScroll)
+            md_sources = [_md_source(md) for md in scroll.query(Markdown)]
+        assert md_sources == ["step one", "step two"], (
+            f"step-2 prose did not open a new block: {md_sources!r}")
+
+    asyncio.run(go())
+
+
 def test_pilot_enter_submits_shift_enter_newlines():
     """The compose box (a PromptArea) submits on Enter and inserts a newline on
     Shift+Enter, so a multi-line prompt is sent as one message. Enter must NOT
@@ -606,6 +632,34 @@ def test_pilot_enter_submits_shift_enter_newlines():
             assert app._started, "enter should submit the prompt"
             assert "line1\nline2" in _transcript_text(app), \
                 "the full multi-line prompt should reach the transcript"
+
+    asyncio.run(go())
+
+
+def test_explicit_stream_reset_opens_new_block():
+    """A message_chunk carrying _meta stream_reset closes the open block so the
+    next delta starts fresh (covers FormatError steps with no tool event)."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await app._enter_conversation()
+            app._session_id = "fake-session"
+
+            app.on_session_update(SessionUpdate(update_agent_message_text("aaa")))
+            await pilot.pause()
+            reset = update_agent_message_text("")
+            # NOTE: Task 4 emits the flag via with_meta(), which nests under
+            # field_meta["harness"]. The TUI reader MUST use the nested path.
+            reset.field_meta = {"harness": {"stream_reset": True}}
+            app.on_session_update(SessionUpdate(reset))
+            await pilot.pause()
+            app.on_session_update(SessionUpdate(update_agent_message_text("bbb")))
+            await pilot.pause()
+
+            scroll = app.query_one("#transcript", VerticalScroll)
+            md_sources = [_md_source(md) for md in scroll.query(Markdown)]
+        assert md_sources == ["aaa", "bbb"], f"stream_reset did not split blocks: {md_sources!r}"
 
     asyncio.run(go())
 
