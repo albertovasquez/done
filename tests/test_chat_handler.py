@@ -53,3 +53,24 @@ def test_real_mode_streams_pieces_in_order_with_stream_true(monkeypatch):
     assert captured.get("stream") is True
     assert captured.get("model") == "openai/gpt-5.4"
     assert captured["messages"] == [{"role": "user", "content": "hi"}]
+
+
+def test_history_is_prepended_to_messages(monkeypatch):
+    captured = {}
+
+    def fake_completion(**kwargs):
+        captured.update(kwargs)
+        return iter([_Chunk("ok")])
+
+    import litellm
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+
+    history = [{"role": "user", "content": "earlier q"},
+               {"role": "assistant", "content": "earlier a"}]
+    list(ChatHandler("gpt-5.4").answer_stream("follow up", history=history))
+
+    assert captured["messages"] == [
+        {"role": "user", "content": "earlier q"},
+        {"role": "assistant", "content": "earlier a"},
+        {"role": "user", "content": "follow up"},
+    ]
