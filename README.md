@@ -57,21 +57,60 @@ permissions, fs/terminal delegation) are available through the ACP interface.
 
 ### Phase 5 — Textual ACP client (TUI)
 
-A single-session Textual TUI that is an **ACP client** driving the Phase-4 agent
-as a subprocess. Run it:
+A single-session Textual TUI that is an **ACP client**. It launches the Phase-4
+agent (`trace/acp_main.py`) as a subprocess and drives it over ACP — so the TUI
+talks to the engine exactly the way Zed would, not by importing it.
 
-    .venv/bin/python trace/tui_main.py --model mock          # or --model vibeproxy
-    .venv/bin/python trace/tui_main.py --model mock --cwd ~/myproject
+**Run it:**
 
-Type a prompt; watch the streaming session/update render — messages, tool-call
-lines, permission prompts (as a modal), and the harness **chips**
-(`classified: …`, `skills: N loaded`) that generic ACP clients (Toad/Zed) drop.
-The TUI is `render.py` (pure update→display) + `client.py` (`acp.Client`) +
-`app.py` (Textual shell), on the official `acp` SDK both ends.
+```bash
+# mock LLM (zero cost, no VibeProxy needed)
+.venv/bin/python trace/tui_main.py
+
+# real LLM through VibeProxy
+.venv/bin/python trace/tui_main.py --model vibeproxy
+
+# point it at a different project directory (default: current dir)
+.venv/bin/python trace/tui_main.py --model vibeproxy --cwd ~/myproject
+```
+
+**Flags:**
+
+| Flag | Values | Default | Meaning |
+|---|---|---|---|
+| `--model` | `mock`, `vibeproxy` | `mock` | which LLM the agent subprocess uses |
+| `--cwd` | a path | `.` | the working directory the agent operates in |
+
+**Using it:**
+
+- Type a prompt in the bottom input box and press **Enter** to send. The input
+  is disabled while a turn streams, then re-enabled.
+- **Esc** cancels the in-flight turn (best-effort, at the next command boundary).
+- **Ctrl-Q** quits (this also tears down the agent subprocess cleanly).
+
+**What you'll see in the transcript**, as the turn streams:
+
+- `agent:` / thinking lines — the streamed assistant message chunks.
+- `$ <command>` lines with a colored status (`pending`→`completed ✓`/`failed ✗`)
+  — each shell command the agent runs, rendered as a tool call.
+- A modal **permission prompt** before a command runs (Allow / Reject) when the
+  agent asks — your choice is sent back over ACP.
+- The harness **chips** that generic ACP clients (Toad/Zed) silently drop —
+  e.g. `[classified: chat_question · skills: — · conf: 0.99]` and
+  `[skills: 1 loaded, 0 skipped]`. These come from our custom `_meta["harness"]`
+  stream and are the whole reason to build our own client instead of using Zed.
+
+**How it's built:** `trace/tui/render.py` (pure update→display, where the chips
+live and are unit-tested), `trace/tui/client.py` (`acp.Client` — marshals the
+session/update stream to the UI, bridges permission via an `asyncio.Future`),
+`trace/tui/app.py` (the Textual shell + permission modal), and
+`trace/tui_main.py` (entrypoint). Official `acp` SDK on both ends; single async
+loop, no worker threads on the client side.
 
 ## Layout
 - `upstream/` — vendored mini-swe-agent, never edited.
 - `trace/` — the tracer (events, agent overrides, mock model, runner, ACP server).
+- `trace/tui/` — the Textual ACP client (render core, `acp.Client`, app); entrypoint `trace/tui_main.py`.
 - `examples/sample-repo/` — tiny repo with one failing test.
 - `docs/` — spec, plan, and learning log.
 
