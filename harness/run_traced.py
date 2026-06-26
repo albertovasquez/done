@@ -106,7 +106,7 @@ def main(argv: list[str] | None = None) -> int:
 
     load_dotenv(REPO_ROOT / ".env")  # explicit: mini's own load targets the global dir
 
-    run_dir = REPO_ROOT / "trace" / "runs" / _run_id()
+    run_dir = REPO_ROOT / "harness" / "runs" / _run_id()
     run_dir.mkdir(parents=True, exist_ok=True)
 
     worker_model_id = None if args.model == "mock" else os.getenv("VIBEPROXY_MODEL", DEFAULT_VIBEPROXY_MODEL)

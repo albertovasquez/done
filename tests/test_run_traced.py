@@ -152,7 +152,7 @@ def test_4_thin_client_mock_red_green(tmp_path, monkeypatch):
         (dst / f).write_text((src / f).read_text())
 
     # Pin the run id so we read THIS run's artifacts, not the "latest global" dir
-    # (avoids an ordering hazard if another run exists under trace/runs/).
+    # (avoids an ordering hazard if another run exists under harness/runs/).
     monkeypatch.setattr(rt, "_run_id", lambda: "pytest-thin-client")
 
     rc = rt.main(["--model", "mock", "--cwd", str(dst)])
@@ -163,7 +163,7 @@ def test_4_thin_client_mock_red_green(tmp_path, monkeypatch):
 
     # This run's events.jsonl parses; seq is contiguous and the runner's bookend
     # events frame the stream (run.started ... run.finished).
-    events_path = rt.REPO_ROOT / "trace" / "runs" / "pytest-thin-client" / "events.jsonl"
+    events_path = rt.REPO_ROOT / "harness" / "runs" / "pytest-thin-client" / "events.jsonl"
     rec = [json.loads(l) for l in events_path.read_text().splitlines()]
     assert [r["seq"] for r in rec] == list(range(len(rec)))
     # task.classified first (seq 0); skill.load next; run.started follows; run.finished last.
