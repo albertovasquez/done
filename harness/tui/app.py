@@ -22,7 +22,7 @@ from typing import Any
 import acp
 from acp.schema import ClientCapabilities, ElicitationCapabilities
 from textual.app import App, ComposeResult
-from textual.containers import Container, Vertical
+from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Input, RichLog, Static
 
 from harness.tui.client import TuiClient
@@ -33,7 +33,7 @@ from harness.tui.theme import HARNESS_THEME, COLORS, STATUS_COLOR
 from harness.tui.widgets.permission_modal import PermissionModal
 from harness.tui.widgets.select_modal import SelectModal, SelectOption
 from harness.tui.widgets.slash_menu import SlashMenu
-from harness.tui.logo import logo_markup
+from harness.tui.header import icon_markup, header_text_markup
 
 _GLYPH = {"completed": "✓", "failed": "✗"}
 _MODE = "Build"                       # the single agent "mode" we expose for now
@@ -95,7 +95,13 @@ class HarnessTui(App):
         provider = _provider_label(self.model)
         with Container(id="landing"):
             with Vertical(id="landing-col"):
-                yield Static(logo_markup(), id="wordmark", markup=True)
+                with Horizontal(id="landing-header"):
+                    yield Static(icon_markup(), id="header-icon", markup=True)
+                    yield Static(
+                        header_text_markup(
+                            "DoneDone", self._version, "Get Shit Done",
+                            self._compose_meta_markup(model_label, provider)),
+                        id="header-text", markup=True)
                 with Vertical(id="landing-compose", classes="compose"):
                     yield Input(placeholder='Ask anything... "What is the tech stack of this project?"',
                                 id="landing-input")
@@ -171,8 +177,8 @@ class HarnessTui(App):
         if self._started:
             self._transcript.write(_c("error", message))
         else:
-            # the wordmark Static is rendered with Textual markup → $error resolves
-            self.query_one("#wordmark", Static).update(f"[$error]{message}[/]")
+            # the header-text Static is rendered with Textual markup → $error resolves
+            self.query_one("#header-text", Static).update(f"[$error]{message}[/]")
 
     # ---- input handling (works in both states; id differs) ----
 
@@ -269,13 +275,12 @@ class HarnessTui(App):
         await cmd.handler(self)
 
     def _notify_line(self, message: str) -> None:
-        """Show a one-off informational line (in transcript if started, else as a
-        transient title under the wordmark)."""
+        """Show a one-off informational line (in transcript if started, else in
+        the landing header's text column, leaving the icon in place)."""
         if self._started:
             self._transcript.write(_c("muted", message))
         else:
-            self.query_one("#wordmark", Static).update(
-                logo_markup() + "\n\n" + f"[$muted]{message}[/]")
+            self.query_one("#header-text", Static).update(f"[$muted]{message}[/]")
 
     # ---- commands: /models, /help, /exit, /quit ----
 
@@ -351,7 +356,7 @@ class HarnessTui(App):
             for ln in lines:
                 self._transcript.write(ln)
         else:
-            self.query_one("#wordmark", Static).update(logo_markup() + "\n\n" + msg)
+            self.query_one("#header-text", Static).update(msg)
 
     async def _enter_conversation(self) -> None:
         """Tear down the landing view, build the transcript + bottom composer."""

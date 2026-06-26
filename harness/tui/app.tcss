@@ -22,9 +22,11 @@ Screen { layout: vertical; background: $background; layers: base overlay; }
 /* ---- LANDING state: vertically centered column ---- */
 #landing { align: center middle; height: 1fr; }
 #landing-col { width: 84; height: auto; }  /* full-width compose box */
-/* the logo is narrower than the column and centers here, so it reads compact
-   above the full-width input without the two sharing a width. */
-#wordmark { content-align: center middle; padding-bottom: 1; height: auto; }
+/* landing header: the ≡ icon beside name/tagline/model, left-aligned above the
+   compose box (Claude Code session-banner style). */
+#landing-header { height: auto; padding-bottom: 1; }
+#header-icon { width: auto; padding-right: 2; }
+#header-text { width: 1fr; height: auto; }
 #hint { color: $muted; content-align: right middle; padding-top: 1; height: auto; }
 
 /* ---- CONVERSATION state ---- */
