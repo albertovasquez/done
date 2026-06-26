@@ -47,7 +47,7 @@ things a turn can become:
 
 | Dispatch path | Where it runs | Sees `skill_block` / persona? |
 |---|---|---|
-| `code_*` / `ops_task` (agent) | `TracingAgent` (`acp_agent.py:166`, `:270`) | **yes** |
+| `code_*` / `ops_task` (agent) | `_run_agent_turn` (`acp_agent.py:166`) → `TracingAgent` ctor (`:270`) | **yes** |
 | `chat_question` | `ChatHandler` (`acp_agent.py:137`) | **no** — never touches `skill_block` or `TracingAgent` |
 | `ambiguous` / `needs_clarification` | returns at `acp_agent.py:132` | **no** — returns before composition |
 | router classification itself | separate cheap model, fixed prompt (`router.py:56`, `:107`) | **no** — persona-blind by construction |
