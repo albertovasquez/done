@@ -36,6 +36,20 @@ def _load_agent_cfg() -> dict:
     return cfg["agent"]
 
 
+def _stub_complete(system: str, user: str) -> str:
+    """Deterministic, offline replacement for the Router's `complete` (used only
+    when HARNESS_ROUTER_STUB=1). Returns a fixed chat_question classification as
+    JSON — no VibeProxy call — so tests are fast and non-flaky."""
+    import json
+    return json.dumps({
+        "task_type": "chat_question",
+        "skills": [],
+        "confidence": 1.0,
+        "suggested_model": None,
+        "reasoning": "stubbed classification (HARNESS_ROUTER_STUB)",
+    })
+
+
 def _model_factory(model_choice: str):
     """Return a factory `make(current_model=None) -> Model`. The agent calls it
     per turn with its current worker model so /models can hot-swap (the arg wins
@@ -71,11 +85,17 @@ async def _main(argv=None) -> None:
 
     worker_model_id = None if args.model == "mock" else os.getenv("VIBEPROXY_MODEL", "gpt-5.4")
 
+    # Test seam: HARNESS_ROUTER_STUB=1 swaps the live (VibeProxy) classifier for a
+    # fixed one, so tests that only exercise downstream behavior (e.g. session
+    # replay) don't pay for — or flake on — real network classification. OFF by
+    # default; only honored when the env flag is set.
+    complete_fn = _stub_complete if os.getenv("HARNESS_ROUTER_STUB") == "1" else complete
+
     agent = HarnessAgent(
         model_factory=_model_factory(args.model),
         agent_cfg=_load_agent_cfg(),
         skills_dir=REPO_ROOT / "skills",
-        router=Router(complete, catalog=skills.load_catalog(REPO_ROOT / "skills")),
+        router=Router(complete_fn, catalog=skills.load_catalog(REPO_ROOT / "skills")),
         worker_model_id=worker_model_id,
     )
     await acp.run_agent(agent)

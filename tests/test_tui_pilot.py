@@ -9,7 +9,9 @@ from harness.tui.app import HarnessTui, PermissionModal
 from textual.widgets import RichLog, Input
 
 REPO = Path(__file__).resolve().parent.parent
-FAKE_CMD = [str(REPO / ".venv/bin/python"), str(REPO / "tests/fake_agent.py")]
+# Running interpreter (portable across worktrees / any cwd), not a hardcoded
+# REPO/.venv path which doesn't exist in a git worktree.
+FAKE_CMD = [sys.executable, str(REPO / "tests/fake_agent.py")]
 
 
 def _transcript_text(app) -> str:

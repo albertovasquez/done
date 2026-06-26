@@ -9,7 +9,9 @@ from typing import Any
 import acp
 
 REPO = Path(__file__).resolve().parent.parent
-CMD = [str(REPO / ".venv/bin/python"), str(REPO / "tests/fake_agent.py")]
+# Use the running interpreter (portable across worktrees / any cwd), not a
+# hardcoded REPO/.venv path which doesn't exist in a git worktree.
+CMD = [sys.executable, str(REPO / "tests/fake_agent.py")]
 
 
 class _Collector:
