@@ -44,6 +44,26 @@ def test_registry_has_core_commands():
     assert {"models", "exit", "help"} <= names
 
 
+def test_persona_command_registered():
+    names = {c.name for c in build_registry()}
+    assert "persona" in names
+
+
+def test_persona_command_opens_rail():
+    # /persona opens the agents rail (view-only; switching is deferred to C2c).
+    async def _run():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            rail = app.query_one("#agent-rail")
+            assert rail.display is False
+            from harness.tui.commands import build_registry, resolve_command
+            cmd = resolve_command(build_registry(), "persona")
+            await cmd.handler(app, "")
+            await pilot.pause()
+            assert rail.display is True
+    asyncio.run(_run())
+
+
 def test_quit_is_an_alias_of_exit_not_a_separate_entry():
     cmds = build_registry()
     names = [c.name for c in cmds]
