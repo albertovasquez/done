@@ -45,7 +45,9 @@ Screen { layout: vertical; background: $background; layers: base overlay; }
 
 /* ---- CONVERSATION state ---- */
 #transcript { height: 1fr; padding: 1 2; background: $background; }
-#composer { dock: bottom; height: auto; margin: 0 2 1 2; }
+/* bottom margin must clear the full 2-row statusbar below (it docks to the same
+   edge); a 1-row margin left the composer's last row on the statusbar's gutter. */
+#composer { dock: bottom; height: auto; margin: 0 2 2 2; }
 
 /* streamed agent answer: a live Markdown widget. Sit flush in the transcript
    (Textual's Markdown adds its own block margins; trim the outer ones so it
@@ -67,10 +69,11 @@ Screen { layout: vertical; background: $background; layers: base overlay; }
 }
 
 /* ---- status bar (bottom, both states) ----
-   offset (not margin) lifts the docked bar one row off the screen's bottom edge:
-   Textual removes docked widgets from layout, so margin against the docked edge is
-   a no-op. `offset: 0 -1` shifts it up one row, leaving a blank gutter below. */
-#statusbar { layout: horizontal; dock: bottom; height: 1; background: $background; padding: 0 2; offset: 0 -1; }
+   Reserve 2 rows and bottom-align the content rather than offsetting a 1-row bar.
+   `offset` only shifts a docked widget visually — it doesn't reserve space — so it
+   painted over the composer above. A 2-row dock genuinely reserves both rows: the
+   composer lays out above them and the top row reads as a blank gutter. */
+#statusbar { layout: horizontal; dock: bottom; height: 2; background: $background; padding: 0 2; content-align: left bottom; }
 #statusbar-left { width: 1fr; color: $muted; }
 #statusbar-right { width: auto; color: $muted; content-align: right middle; }
 #statusbar-mode { width: auto; padding: 0 2 0 0; content-align: left middle; }
