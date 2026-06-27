@@ -107,3 +107,14 @@ End commit messages with:
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
 ```
 (or the appropriate trailer for whichever agent authored the change.)
+
+## 9. Diagnose from the logs before guessing
+
+When a run misbehaves, read the logs — don't theorize from the code alone. All
+runs leave durable artifacts under `harness/runs/` (gitignored): the CLI writes
+`events.jsonl` always; the TUI writes `trace.jsonl` and the agent writes
+`harness.log` under `--debug` (or `HARNESS_DEBUG=1`). They are JSONL/plain-text —
+read them with `jq`/`grep`. **`docs/debugging.md` is the full reference**: the
+three formats, how to find the latest run, the event vocabulary, and copy-paste
+`jq` recipes. Reach for `--debug` + the trace file when a failure isn't
+reproducible in a unit test.
