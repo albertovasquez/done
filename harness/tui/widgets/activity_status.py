@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from textual.widgets import Static
 
-from harness.tui.state import AgentSnapshot, AgentState
+from harness.tui.state import AgentSnapshot, AgentState, ToolStatus
 
 _WORKING = {AgentState.THINKING, AgentState.RESPONDING, AgentState.RUNNING_TOOL,
             AgentState.AWAITING_PERMISSION, AgentState.AWAITING_DECISION}
@@ -41,7 +41,10 @@ class ActivityStatus(Static):
         meta = _fmt_elapsed(snap.elapsed)
         if snap.tokens > 0:
             meta += f" · ↓ {_fmt_tokens(snap.tokens)} tokens"
-        return f"[$accent]{glyph}[/] [$foreground]{label}…[/] [$muted]({meta})[/]"
+        done = sum(1 for t in snap.tools if t.status == ToolStatus.DONE)
+        count = f" [$muted]· {done} done[/]" if done > 0 else ""
+        return (f"[$accent]{glyph}[/] [$foreground]{label}…[/]{count} "
+                f"[$muted]({meta})[/]")
 
     def update_from(self, snap: AgentSnapshot) -> None:
         self._snap = snap
