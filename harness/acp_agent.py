@@ -23,7 +23,7 @@ from harness import memory as memory_mod
 from harness import persona
 from harness import skills
 from harness.acp_emit import (tool_call_start, tool_call_done, message_chunk,
-                              with_meta, plan_update)
+                              with_meta, plan_update, trace_event)
 from harness.acp_env import AcpEnvironment
 from harness.acp_session import SessionStore
 from harness.router import Router, Classification
@@ -59,6 +59,15 @@ class HarnessAgent(acp.Agent):
         """True when the permission gate should allow without prompting the
         client (yolo mode). Kept tiny + pure so the gate is unit-testable."""
         return self._yolo
+
+    async def _trace(self, session_id, type, **data):
+        """Relay one trace event to the TUI sole-writer, only when --debug. Rides
+        the existing with_meta channel; a no-op (and zero wire bytes) when debug
+        is off, preserving the byte-identical-wire invariant."""
+        if not self._debug:
+            return
+        await self._conn.session_update(
+            session_id, with_meta(message_chunk(""), {"trace": trace_event(type, **data)}))
 
     def _persona_key(self) -> str:
         """The done.conf agent key the active seat persists under: the persona the
@@ -249,6 +258,9 @@ class HarnessAgent(acp.Agent):
                 "confidence": cls.confidence}
         await self._conn.session_update(session_id,
             with_meta(message_chunk(""), {"task_classified": meta}))
+        await self._trace(session_id, "task.classified", sid=session_id,
+                          task_type=cls.task_type, skills=cls.skills,
+                          confidence=cls.confidence)
 
         # Active-persona identity chip (C2a): the persona the agent ACTUALLY resolved.
         # Unlike persona_load, this is NOT gated on injected/personalized — an identity
@@ -290,6 +302,7 @@ class HarnessAgent(acp.Agent):
             # boilerplate, not model output, so it must not pollute later context.
             self._store.extend(session_id, [
                 {"role": "user", "content": text, "origin": "clarify"}])
+            await self._trace(session_id, "clarify", sid=session_id, question=q)
             return acp.PromptResponse(stop_reason="end_turn")
 
         # Render base_block once — used by both chat and agent paths below.
@@ -327,6 +340,7 @@ class HarnessAgent(acp.Agent):
             self._store.extend(session_id, [
                 {"role": "user", "content": text, "origin": "chat"},
                 {"role": "assistant", "content": answer, "origin": "chat"}])
+            await self._trace(session_id, "chat.done", sid=session_id)
             return acp.PromptResponse(stop_reason="end_turn")
 
         # agent path
@@ -354,6 +368,7 @@ class HarnessAgent(acp.Agent):
         self._store.extend(session_id, [
             {"role": "user", "content": text, "origin": "agent"},
             {"role": "assistant", "content": assistant, "origin": "agent"}])
+        await self._trace(session_id, "run.finished", sid=session_id, stop_reason=stop_reason)
         return acp.PromptResponse(stop_reason=stop_reason)
 
     async def _run_agent_turn(self, loop, session_id, state, text, skill_block, prior,

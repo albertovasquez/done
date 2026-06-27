@@ -76,3 +76,9 @@ def parse_plan_command(command: str) -> list[tuple[str, str]] | None:
 def plan_update(entries: list[tuple[str, str]]):
     """Build an ACP plan update from (label, status) pairs."""
     return update_plan([plan_entry(label, status=status) for label, status in entries])
+
+
+def trace_event(type: str, **data) -> dict:
+    """Relay payload for the --debug trace: the TUI unpacks
+    field_meta['harness']['trace'] and writes it with source='agent'."""
+    return {"type": type, "data": data}
