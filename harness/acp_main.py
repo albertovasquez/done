@@ -94,7 +94,23 @@ async def _main(argv=None) -> None:
     from harness import skills
 
     from harness import vibeproxy
-    worker_model_id = None if args.model == "mock" else vibeproxy.default_model()
+    if args.model == "mock":
+        worker_model_id = None
+    else:
+        # Per-persona model for the STANDALONE path (dn-agent --persona X): when no
+        # VIBEPROXY_MODEL is already in the env (the TUI parent exports it; a real
+        # shell may too), fall back to this persona's persisted done.conf model so a
+        # direct launch isn't a model/workspace split-brain. Env wins when present.
+        from harness import config
+        persona_key = workspace_dir.name
+        persisted = config.load_agent(persona_key)
+        env_model = os.getenv("VIBEPROXY_MODEL")
+        if env_model:
+            worker_model_id = env_model
+        elif persisted is not None and persisted.model:
+            worker_model_id = persisted.model
+        else:
+            worker_model_id = vibeproxy.DEFAULT_MODEL
 
     # Test seam: HARNESS_ROUTER_STUB=1 swaps the live (VibeProxy) classifier for a
     # fixed one, so tests that only exercise downstream behavior (e.g. session
