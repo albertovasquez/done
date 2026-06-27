@@ -83,6 +83,21 @@ async def _main(argv=None) -> None:
     except Exception:
         conf_debug = None
     debug = resolve_debug(args.debug, os.environ, conf_debug)
+    if debug:
+        # The agent's stderr is hidden behind the TUI's alt-screen, so its
+        # logger.warning/exception calls are invisible without a file sink. Route
+        # them next to the trace. Own run dir (separate process from the TUI).
+        import time as _time
+        from harness.logging_setup import setup_file_logging
+        # NOTE: `paths` is already module-imported at the top — do NOT re-import it
+        # here. A local `from harness import paths` would make `paths` a function
+        # local for the WHOLE scope, leaving paths.load_env() below unbound on the
+        # non-debug path (UnboundLocalError).
+        try:
+            log_dir = paths.runs_dir() / f"{_time.strftime('%Y%m%d-%H%M%S')}-agent-{os.getpid()}"
+            setup_file_logging(log_dir / "harness.log")
+        except Exception:
+            pass                          # logging setup must never break startup
 
     cwd = str(Path(args.cwd).resolve()) if args.cwd else os.getcwd()
     # Capture whether VIBEPROXY_MODEL came from the real SHELL env BEFORE load_env

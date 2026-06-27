@@ -1047,8 +1047,12 @@ class HarnessTui(App):
         if self._cm is not None:
             try:
                 await self._cm.__aexit__(None, None, None)
-            except Exception:
-                pass
+            except Exception as e:
+                # low-stakes at exit, but record it (was a bare swallow) so a
+                # subprocess that won't die cleanly leaves a breadcrumb.
+                self.log(f"agent teardown raised on exit: {e!r}")
+                if self._tracer is not None:
+                    self._tracer.emit("dn", "teardown.error", error=str(e))
         if self._tracer is not None:
             self._tracer.close()              # flush the trace file on app exit
             self._tracer = None
