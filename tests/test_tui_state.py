@@ -6,7 +6,49 @@ from harness.tui.state import (
     AgentState, ToolStatus, ToolView, TaskItem, ScheduleView, DecisionView,
     AgentSnapshot, FleetSnapshot, initial_snapshot,
     infer_subtype,
+    persona_from_meta, PersonaResolved, reduce,
 )
+
+
+def test_persona_from_meta_reads_id():
+    assert persona_from_meta({"harness": {"persona": {"id": "fred"}}}) == "fred"
+
+def test_persona_from_meta_tolerant_of_garbage():
+    assert persona_from_meta(None) is None
+    assert persona_from_meta({}) is None
+    assert persona_from_meta({"harness": "nope"}) is None
+    assert persona_from_meta({"harness": {"persona": {}}}) is None          # no id
+    assert persona_from_meta({"harness": {"persona": {"id": 5}}}) is None   # non-str id
+
+def test_reduce_persona_sets_active_id_and_remaps_agent():
+    snap = initial_snapshot()                 # active_id="default", agent ("default","agent")
+    out = reduce(snap, PersonaResolved("fred"))
+    assert out.active_id == "fred"
+    assert out.active is not None
+    assert out.active.id == "fred"
+    assert out.active.name == "fred"
+
+def test_reduce_persona_idempotent():
+    snap = reduce(initial_snapshot(), PersonaResolved("fred"))
+    again = reduce(snap, PersonaResolved("fred"))
+    assert again.active_id == "fred"
+    assert again.active.id == "fred"
+    assert len(again.agents) == 1             # no duplicate agent added
+
+def test_reduce_persona_invariant_active_never_none():
+    # Codex edge case: if active_id matches NO agent (reachable once C2c holds
+    # multiple agents), PersonaResolved must still leave .active resolvable — it
+    # seeds an agent for the new id rather than producing active_id with no agent.
+    snap = FleetSnapshot(
+        agents=(AgentSnapshot(id="a", name="A"), AgentSnapshot(id="b", name="B")),
+        active_id="missing")              # active is None here
+    assert snap.active is None
+    out = reduce(snap, PersonaResolved("fred"))
+    assert out.active_id == "fred"
+    assert out.active is not None         # invariant restored
+    assert out.active.id == "fred" and out.active.name == "fred"
+    # the pre-existing agents are untouched
+    assert any(a.id == "a" for a in out.agents) and any(a.id == "b" for a in out.agents)
 
 
 def test_agent_state_values():
