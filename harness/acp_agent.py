@@ -68,15 +68,23 @@ class HarnessAgent(acp.Agent):
 
     async def ext_method(self, method: str, params: dict) -> dict:
         """Harness-specific extension methods. `harness/set_model` hot-swaps the
-        worker model for SUBSEQUENT turns without restarting the agent — both the
-        chat path (ChatHandler) and the agent path (model factory) read
-        self._worker_model_id fresh on each prompt."""
+        worker model for SUBSEQUENT turns without restarting the agent — it stamps
+        the active session's state.worker_model (read by prompt() on every turn),
+        updates the seat in the persona-sessions map, and mirrors the value in
+        self._worker_model_id (global fallback). All three are updated atomically
+        so the very next prompt on the active session sees the new model."""
         if method == "harness/set_model":
             model = (params or {}).get("model")
             ok = True
             if model:
                 self._worker_model_id = model
                 self._persona_sessions.set_model(self._active_persona, model)
+                seat = self._persona_sessions.seat_of(self._active_persona)
+                if seat is not None:
+                    try:
+                        self._store.get(seat.session_id).worker_model = model
+                    except KeyError:
+                        pass            # session gone (shouldn't happen) — global+seat still updated
                 try:                       # best-effort; report failure, never break the swap
                     config.save_agent(self._persona_key(),
                                       config.AgentConfig(backend=self._backend, model=model))

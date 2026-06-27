@@ -260,3 +260,19 @@ def test_prompt_uses_session_model_not_global(isolated_config, tmp_path):
     assert agent._store.get(ana_sid).worker_model == "m-ana"
     # Default session must be UNCHANGED — not overwritten with ana's model
     assert agent._store.get(default_sid).worker_model == default_model
+
+
+def test_set_model_updates_active_session_state(isolated_config):
+    """`/models` swap (set_model) must reach the active session's state.worker_model
+    so that the very next prompt() picks up the new model, not the stale one."""
+    agent = _make_agent(backend="mock")
+    agent._cwd = "/x"
+    # new_session registers the default seat and stamps state.worker_model
+    resp = asyncio.run(agent.new_session(cwd="/x"))
+    sid = resp.session_id
+
+    # Hot-swap via the harness/set_model extension method
+    asyncio.run(agent.ext_method("harness/set_model", {"model": "m-new"}))
+
+    # The active session's state must reflect the new model so the next prompt uses it
+    assert agent._store.get(sid).worker_model == "m-new"
