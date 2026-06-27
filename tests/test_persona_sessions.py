@@ -73,3 +73,15 @@ def test_set_model_is_per_seat():
     pses.set_model("ana", "m-ana-2")
     assert pses.model_of("ana") == "m-ana-2"
     assert pses.model_of("bob") == "m-bob"          # untouched
+
+
+def test_split_brain_launch_persona_model_does_not_win_for_other_seat(monkeypatch):
+    # default has m-default, ana has m-ana, NO real shell VIBEPROXY_MODEL.
+    models = {"default": "m-default", "ana": "m-ana"}
+    monkeypatch.setattr(ps.config, "load_agent",
+                        lambda pid: ps.config.AgentConfig(backend="vibeproxy", model=models[pid])
+                        if pid in models else None)
+    # ana must resolve its OWN model even though default is the launch persona.
+    got = ps.resolve_session_model(
+        "ana", shell_set_model=False, shell_env=None, dotenv=None, backend="vibeproxy")
+    assert got == "m-ana"

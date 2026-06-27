@@ -175,17 +175,20 @@ def test_main_yolo_flag_overrides_absent_pin(isolated_config, monkeypatch):
 # --- effective worker model id (the label the TUI footer shows) ---
 
 def test_effective_worker_model_id_mock_is_none():
-    assert tui_main._effective_worker_model_id("mock") is None
+    # mock backend always returns None regardless of persona or shell_set_model
+    assert tui_main._effective_worker_model_id("mock", None, False) is None
 
 
 def test_effective_worker_model_id_vibeproxy_uses_env(monkeypatch):
+    # A real shell VIBEPROXY_MODEL (shell_set_model=True) wins for all personas
     monkeypatch.setenv("VIBEPROXY_MODEL", "claude-opus-4-8")
-    assert tui_main._effective_worker_model_id("vibeproxy") == "claude-opus-4-8"
+    assert tui_main._effective_worker_model_id("vibeproxy", None, shell_set_model=True) == "claude-opus-4-8"
 
 
-def test_effective_worker_model_id_vibeproxy_default_when_env_unset(monkeypatch):
+def test_effective_worker_model_id_vibeproxy_default_when_env_unset(monkeypatch, isolated_config):
+    # No shell env, no .env, no persisted config: falls back to engine default
     monkeypatch.delenv("VIBEPROXY_MODEL", raising=False)
-    assert tui_main._effective_worker_model_id("vibeproxy") == "gpt-5.4"
+    assert tui_main._effective_worker_model_id("vibeproxy", None, shell_set_model=False) == "gpt-5.4"
 
 
 def test_main_seeds_worker_model_id_from_persisted_model(isolated_config, monkeypatch):
@@ -238,13 +241,15 @@ def _run_main_capturing(monkeypatch, isolated_config, dotenv_model):
 
 def test_persisted_model_beats_dotenv(isolated_config, monkeypatch):
     """A .env VIBEPROXY_MODEL must NOT override the interactively-persisted model.
-    This is the logout/login bug: .env had gpt-5.4 and silently won."""
+    This is the logout/login bug: .env had gpt-5.4 and silently won.
+    Under the new design the persisted model is resolved via resolve_session_model
+    (not exported into VIBEPROXY_MODEL) so the footer reflects done.conf directly."""
     monkeypatch.delenv("VIBEPROXY_MODEL", raising=False)  # no real shell env
     _write_default(isolated_config, "vibeproxy", "claude-opus-4-8")
 
     captured = _run_main_capturing(monkeypatch, isolated_config, dotenv_model="gpt-5.4")
 
-    assert os.environ["VIBEPROXY_MODEL"] == "claude-opus-4-8", "done.conf must beat .env"
+    # done.conf model wins; no longer exported into os.environ
     assert captured["worker_model_id"] == "claude-opus-4-8"
 
 
@@ -260,13 +265,15 @@ def test_real_shell_env_beats_persisted_model(isolated_config, monkeypatch):
 
 
 def test_persisted_model_applied_when_no_env_at_all(isolated_config, monkeypatch):
-    """No shell env, no .env: the persisted model is applied."""
+    """No shell env, no .env: the persisted model resolves from done.conf.
+    Under the new design it is resolved via resolve_session_model, not exported
+    into VIBEPROXY_MODEL."""
     monkeypatch.delenv("VIBEPROXY_MODEL", raising=False)
     _write_default(isolated_config, "vibeproxy", "claude-opus-4-8")
 
     captured = _run_main_capturing(monkeypatch, isolated_config, dotenv_model=None)
 
-    assert os.environ["VIBEPROXY_MODEL"] == "claude-opus-4-8"
+    # done.conf model flows to footer; no longer exported into os.environ
     assert captured["worker_model_id"] == "claude-opus-4-8"
 
 
