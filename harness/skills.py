@@ -11,10 +11,13 @@ frontmatter missing name/description is recorded as 'skipped' with a reason.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
+
+logger = logging.getLogger("harness.skills")
 
 
 @dataclass
@@ -54,7 +57,12 @@ def load_catalog(roots: list[Path]) -> list[tuple[str, str]]:
                     raise ValueError("frontmatter missing name/description")
                 if name != child.name:
                     raise ValueError("name mismatch")
-            except (OSError, UnicodeDecodeError, yaml.YAMLError, ValueError):
+            except (OSError, UnicodeDecodeError, yaml.YAMLError, ValueError) as e:
+                # A malformed skill silently vanishes from the catalog — the
+                # router can never select it and the user never learns why. Unlike
+                # compose(), load_catalog returns a flat list with no skipped slot,
+                # so a log is the only place this surfaces.
+                logger.warning("skipping skill %s/SKILL.md: %s", child.name, e)
                 continue
             merged[name] = desc          # later root wins
     return sorted(merged.items())
