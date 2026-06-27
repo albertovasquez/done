@@ -48,6 +48,12 @@ class HarnessAgent(acp.Agent):
         client (yolo mode). Kept tiny + pure so the gate is unit-testable."""
         return self._yolo
 
+    def _persona_key(self) -> str:
+        """The done.conf agent key this agent persists under: its own persona id,
+        which is the workspace directory's basename, or "default" when running
+        with no persona workspace. NOT a branch — "default" is just the id."""
+        return self._workspace_dir.name if self._workspace_dir is not None else "default"
+
     def on_connect(self, conn) -> None:
         self._conn = conn
 
@@ -58,13 +64,15 @@ class HarnessAgent(acp.Agent):
         self._worker_model_id fresh on each prompt."""
         if method == "harness/set_model":
             model = (params or {}).get("model")
+            ok = True
             if model:
                 self._worker_model_id = model
-                try:                       # best-effort: a failed write never breaks the swap
-                    config.save_default(config.AgentConfig(backend=self._backend, model=model))
+                try:                       # best-effort; report failure, never break the swap
+                    config.save_agent(self._persona_key(),
+                                      config.AgentConfig(backend=self._backend, model=model))
                 except Exception:
-                    pass
-            return {"ok": True, "model": self._worker_model_id}
+                    ok = False
+            return {"ok": ok, "model": self._worker_model_id}
         if method == "harness/set_yolo":
             # Live auto-allow toggle (+ optional persisted pin). The ACP process
             # owns the permission gate, so it owns both the flip and the write.
@@ -80,21 +88,21 @@ class HarnessAgent(acp.Agent):
                 try:                       # best-effort: a failed write never breaks the toggle
                     if pin:
                         # Pair the pin with the agent's known backend+model so a
-                        # fresh config never gets a default with empty required
-                        # fields (which would later resolve to `--model ""`).
+                        # fresh config never gets a persona table with empty
+                        # required fields (which would later resolve to `--model ""`).
                         # model may be None (mock); pass it only when it's a real
-                        # string — update_default refuses to create an incomplete
-                        # default, so the pin simply no-ops rather than corrupting.
+                        # string — update_agent refuses to create an incomplete
+                        # table, so the pin simply no-ops rather than corrupting.
                         fields = {"backend": self._backend, "yolo_pinned": True}
                         if isinstance(self._worker_model_id, str) and self._worker_model_id:
                             fields["model"] = self._worker_model_id
-                        config.update_default(**fields)
+                        config.update_agent(self._persona_key(), **fields)
                     else:
-                        config.update_default(yolo_pinned=False)
+                        config.update_agent(self._persona_key(), yolo_pinned=False)
                 except Exception:
                     ok = False             # surface the failure; do NOT claim success
             try:
-                pinned = config.yolo_pinned()
+                pinned = config.yolo_pinned(self._persona_key())
             except Exception:
                 pinned = False
             return {"ok": ok, "active": self._yolo, "pinned": pinned}

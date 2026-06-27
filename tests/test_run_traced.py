@@ -266,3 +266,34 @@ def test_main_threads_persona_to_chat_path(tmp_path, monkeypatch):
 
     assert rt.main(["--model", "mock", "--task", "hello", "--cwd", str(tmp_path)]) == 0
     assert "BE TERSE" in captured["persona_block"]
+
+
+import pytest  # noqa: E402 (appended section)
+from harness import paths  # noqa: E402
+
+
+@pytest.fixture(autouse=False)
+def isolated(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    return tmp_path
+
+
+def test_persona_arg_selects_workspace(monkeypatch, tmp_path, isolated):
+    ws = paths.config_dir() / "agents" / "fred"
+    ws.mkdir(parents=True)
+    seen = {}
+    import harness.persona as persona_mod
+
+    def spy_resolve(workspace_dir):
+        seen["ws"] = workspace_dir
+        raise SystemExit(0)        # stop run_traced before it builds a model
+    monkeypatch.setattr(persona_mod, "resolve_persona", spy_resolve)
+    with pytest.raises(SystemExit):
+        rt.main(["--model", "mock", "--persona", "fred", "--cwd", str(tmp_path)])
+    assert seen["ws"] == ws
+
+
+def test_unknown_persona_exits_nonzero(monkeypatch, tmp_path, isolated):
+    with pytest.raises(SystemExit) as exc:
+        rt.main(["--model", "mock", "--persona", "ghost", "--cwd", str(tmp_path)])
+    assert exc.value.code != 0

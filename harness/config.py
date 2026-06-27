@@ -76,9 +76,14 @@ def load() -> dict[str, AgentConfig]:
     return out
 
 
+def load_agent(persona_id: str) -> AgentConfig | None:
+    """The [agents.<persona_id>] entry, or None when absent/unreadable."""
+    return load().get(persona_id)
+
+
 def load_default() -> AgentConfig | None:
     """The reserved [agents.default] entry, or None when absent/unreadable."""
-    return load().get(RESERVED_KEY)
+    return load_agent(RESERVED_KEY)
 
 
 def _quote(value: str) -> str:
@@ -108,37 +113,38 @@ def _serialize(agents: dict[str, AgentConfig]) -> str:
     return "\n".join(lines)
 
 
-def update_default(
+def update_agent(
+    persona_id: str,
     *,
     backend: str | None = None,
     model: str | None = None,
     yolo_pinned: bool | None = None,
 ) -> None:
-    """Upsert [agents.default], overlaying ONLY the kwargs passed (None = leave
-    unchanged). Preserves untouched default fields and every other agent table.
+    """Upsert [agents.<persona_id>], overlaying ONLY the kwargs passed (None =
+    leave unchanged). Preserves untouched fields and every other agent table.
     Writes atomically (temp file + os.replace) under a created config dir.
     Best-effort: callers that must not fail on I/O errors should guard the call.
 
-    This is the merge-safe write: changing the model never clears a pin, and
-    pinning never clears the model — each call site touches only its own fields.
-
-    Refuses to CREATE a new default with empty required fields: if no default
-    exists yet and the merged backend/model would be blank (e.g. `/yolo pin`
-    before any model was set), it no-ops rather than writing `backend=""`/
-    `model=""` — which a later flagless launch would resolve to `--model ""` and
-    crash the agent. Updating an EXISTING (already-complete) default is unaffected."""
+    Refuses to CREATE a new table with empty required fields: if the table does
+    not exist yet and the merged backend/model would be blank, it no-ops rather
+    than writing backend=""/model="" (which a later flagless launch would
+    resolve to `--model ""` and crash the agent). Updating an EXISTING
+    (already-complete) table is unaffected. The default's name stays None; named
+    agents preserve their existing name."""
     agents = load()
-    cur = agents.get(RESERVED_KEY)
+    cur = agents.get(persona_id)
     base_backend = cur.backend if cur is not None else ""
     base_model = cur.model if cur is not None else ""
     base_pinned = cur.yolo_pinned if cur is not None else False
+    base_name = cur.name if cur is not None else None
     merged_backend = base_backend if backend is None else backend
     merged_model = base_model if model is None else model
     if not merged_backend or not merged_model:
-        return                              # don't persist an incomplete default
-    agents[RESERVED_KEY] = AgentConfig(             # default carries no name
+        return                              # don't persist an incomplete table
+    agents[persona_id] = AgentConfig(
         backend=merged_backend,
         model=merged_model,
+        name=base_name,
         yolo_pinned=base_pinned if yolo_pinned is None else yolo_pinned,
     )
     text = _serialize(agents)
@@ -150,16 +156,30 @@ def update_default(
     os.replace(tmp, path)
 
 
-def save_default(cfg: AgentConfig) -> None:
-    """Upsert the default's backend+model, preserving its yolo_pinned and every
-    other agent table. Thin wrapper over update_default (kept for the set_model
-    call site + tests). NOTE: deliberately ignores cfg.yolo_pinned — set_model
+def update_default(
+    *,
+    backend: str | None = None,
+    model: str | None = None,
+    yolo_pinned: bool | None = None,
+) -> None:
+    """Upsert [agents.default]. Thin wrapper over update_agent("default", ...)."""
+    update_agent(RESERVED_KEY, backend=backend, model=model, yolo_pinned=yolo_pinned)
+
+
+def save_agent(persona_id: str, cfg: AgentConfig) -> None:
+    """Upsert persona_id's backend+model, preserving its yolo_pinned and every
+    other agent table. NOTE: deliberately ignores cfg.yolo_pinned — set_model
     passes a default-constructed cfg and must not clear an existing pin."""
-    update_default(backend=cfg.backend, model=cfg.model)
+    update_agent(persona_id, backend=cfg.backend, model=cfg.model)
 
 
-def yolo_pinned() -> bool:
-    """Whether the persisted default is pinned to launch in YOLO. False when the
-    default is absent or the file is unreadable."""
-    cur = load_default()
+def save_default(cfg: AgentConfig) -> None:
+    """Upsert the default's backend+model. Thin wrapper over save_agent."""
+    save_agent(RESERVED_KEY, cfg)
+
+
+def yolo_pinned(persona_id: str = "default") -> bool:
+    """Whether the persisted persona is pinned to launch in YOLO. False when the
+    table is absent or the file is unreadable."""
+    cur = load_agent(persona_id)
     return cur.yolo_pinned if cur is not None else False

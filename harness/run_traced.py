@@ -104,7 +104,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model", choices=["mock", "vibeproxy"], default="mock")
     parser.add_argument("--task", default=DEFAULT_TASK)
     parser.add_argument("--cwd", default=str(REPO_ROOT / "examples" / "sample-repo"))
+    parser.add_argument("--persona", default=None,
+                        help="persona workspace id to run as (default: the built-in default)")
     args = parser.parse_args(argv)
+
+    import sys as _sys
+    from harness import persona_select as _persona_select
+    try:
+        workspace_dir = _persona_select.resolve_workspace(args.persona)
+    except _persona_select.InvalidPersonaId as e:
+        print(f'invalid persona id "{e}" — use only letters, digits, - or _',
+              file=_sys.stderr)
+        raise SystemExit(2)
+    except _persona_select.UnknownPersona as e:
+        print(f'no persona "{e}"', file=_sys.stderr)
+        raise SystemExit(2)
 
     load_dotenv(REPO_ROOT / ".env")  # explicit: mini's own load targets the global dir
     _persona.seed_default_workspace()  # first-run: drop editable templates in the config dir
@@ -123,8 +137,8 @@ def main(argv: list[str] | None = None) -> int:
     agent_cfg["output_path"] = str(run_dir / "traj.json")
     emitter = Emitter(run_dir / "events.jsonl", clock=lambda: 0.0, console=True)
     from datetime import date
-    persona_block = _persona.resolve_persona(_paths_persona.default_workspace_dir()).block
-    memory_block = _memory.resolve_memory(_paths_persona.default_workspace_dir(), today=date.today()).block
+    persona_block = _persona.resolve_persona(workspace_dir).block
+    memory_block = _memory.resolve_memory(workspace_dir, today=date.today()).block
 
     def run_agent(prompt, skill_block=""):
         runner = MiniSweAgentRunner(model, env, agent_cfg=agent_cfg)

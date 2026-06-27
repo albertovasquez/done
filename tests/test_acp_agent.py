@@ -11,7 +11,7 @@ from harness.acp_agent import HarnessAgent
 from harness import config
 
 
-def _make_agent(backend="vibeproxy"):
+def _make_agent(backend="vibeproxy", workspace_dir=None):
     """A HarnessAgent with cheap stand-ins; only set_model behavior is exercised."""
     return HarnessAgent(
         model_factory=lambda *a, **k: None,
@@ -21,6 +21,7 @@ def _make_agent(backend="vibeproxy"):
         worker_model_id="gpt-5.4",
         yolo=False,
         backend=backend,
+        workspace_dir=workspace_dir,
     )
 
 
@@ -30,12 +31,21 @@ def isolated_config(tmp_path, monkeypatch):
     return tmp_path
 
 
-def test_set_model_persists_backend_and_model():
-    agent = _make_agent(backend="vibeproxy")
+def test_set_model_persists_under_default_when_no_workspace():
+    agent = _make_agent(backend="vibeproxy")          # workspace_dir=None -> "default"
     result = asyncio.run(agent.ext_method("harness/set_model", {"model": "claude-opus-4-8"}))
     assert result == {"ok": True, "model": "claude-opus-4-8"}
     assert config.load_default() == config.AgentConfig(
         backend="vibeproxy", model="claude-opus-4-8")
+
+
+def test_set_model_persists_under_named_persona(tmp_path):
+    ws = tmp_path / "agents" / "fred"
+    ws.mkdir(parents=True)
+    agent = _make_agent(backend="vibeproxy", workspace_dir=ws)
+    asyncio.run(agent.ext_method("harness/set_model", {"model": "m-fred"}))
+    assert config.load_agent("fred") == config.AgentConfig(backend="vibeproxy", model="m-fred")
+    assert config.load_default() is None               # default table untouched
 
 
 def test_set_model_empty_model_does_not_persist():
@@ -44,13 +54,15 @@ def test_set_model_empty_model_does_not_persist():
     assert config.load_default() is None  # nothing written for a no-op swap
 
 
-def test_set_model_survives_save_failure(monkeypatch):
-    def boom(_cfg):
+def test_set_model_reports_failure(monkeypatch):
+    def boom(*a, **k):
         raise OSError("disk full")
-    monkeypatch.setattr(config, "save_default", boom)
+    monkeypatch.setattr(config, "save_agent", boom)
     agent = _make_agent()
     result = asyncio.run(agent.ext_method("harness/set_model", {"model": "x"}))
-    assert result == {"ok": True, "model": "x"}  # swap still succeeds
+    # swap still applies in-session, but the response reports it did NOT persist
+    assert result["model"] == "x"
+    assert result["ok"] is False
 
 
 def test_set_yolo_active_true_sets_gate_no_persist():
@@ -90,9 +102,9 @@ def test_set_yolo_omitted_pin_does_not_touch_persistence():
 
 
 def test_set_yolo_survives_persist_failure(monkeypatch):
-    def boom(**kw):
+    def boom(*a, **kw):
         raise OSError("disk full")
-    monkeypatch.setattr(config, "update_default", boom)
+    monkeypatch.setattr(config, "update_agent", boom)
     agent = _make_agent()
     result = asyncio.run(agent.ext_method("harness/set_yolo", {"active": True, "pin": True}))
     # live toggle still succeeds, but ok=False surfaces the failed persist so the

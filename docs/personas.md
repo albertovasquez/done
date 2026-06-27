@@ -92,19 +92,38 @@ same `~/.config/harness/agents/default/` workspace and applies the persona to it
 chat and agent paths too. The persona is resolved through the same single
 resolver the ACP agent uses, so the two paths can't drift.
 
+## Selection
+
+Run as a named persona workspace with `--persona <id>`:
+
+    dn --persona fred
+
+Without `--persona`, the built-in `default` persona is used. The id must be an
+existing workspace under `~/.config/harness/agents/<id>/` — an unknown id is a
+hard error (persona *creation* lands in a later phase). Each persona has its own
+sessions, memory, and model (persisted in `done.conf` under `[agents.<id>]`); a
+live `/models` swap is remembered per persona.
+
+A persona workspace may also declare extra skill directories in a `persona.toml`
+file at the workspace root:
+
+```toml
+skills = ["/path/to/extra-skills", "~/my-skills"]
+```
+
+These are loaded in addition to the system and user skill roots. (`persona.toml`
+never holds the worker model — that lives in `done.conf [agents.<id>]`.)
+
 ## Not yet (later phases)
 
-Phase A is the foundation: read the files, inject them, with a no-op default.
-Deliberately out of scope for now:
+Phase C1 added selection (`--persona`) and per-persona model persistence. What
+remains deferred:
 
-- **Multiple personas / selection.** There's one fixed `default` workspace; no
-  `--persona` flag or `/persona` picker yet. *(Phase C.)*
 - **Guided onboarding.** First-run seeding drops editable templates (done), but
   there's no interactive `BOOTSTRAP.md` setup ritual or wiped-workspace
   attestation yet. *(Phase D.)*
-- **Memory.** The persona is static — it can't learn or accumulate context
-  across sessions. *(Phase B.)*
-- **Per-persona model / config** (`persona.toml`). *(Phase C.)*
+- **Persona creation.** `--persona <id>` requires the workspace to already
+  exist; creating a new named persona is Phase D work.
 - **Scheduling / proactive runs** (a persona acting without you present).
   *(Phase E.)*
 

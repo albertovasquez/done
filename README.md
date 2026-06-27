@@ -129,6 +129,18 @@ Until you edit a file, behavior is unchanged — no persona, no overhead. See
 blank/inert-skip, the dev path, and what's coming in later phases: multiple
 personas, selection, memory, scheduling).
 
+### Selecting a persona
+
+Run as a named persona workspace with `--persona <id>`:
+
+    dn --persona fred
+
+Without `--persona`, the built-in `default` persona is used. The id must be an
+existing workspace under `~/.config/harness/agents/<id>/` — an unknown id is a
+hard error (persona *creation* lands in a later phase). Each persona has its own
+sessions, memory, and model (persisted in `done.conf` under `[agents.<id>]`); a
+live `/models` swap is remembered per persona.
+
 ## Using the TUI
 
 - Type a prompt in the input box and press **Enter** to send. Input is disabled
