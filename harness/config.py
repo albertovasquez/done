@@ -120,15 +120,25 @@ def update_default(
     Best-effort: callers that must not fail on I/O errors should guard the call.
 
     This is the merge-safe write: changing the model never clears a pin, and
-    pinning never clears the model — each call site touches only its own fields."""
+    pinning never clears the model — each call site touches only its own fields.
+
+    Refuses to CREATE a new default with empty required fields: if no default
+    exists yet and the merged backend/model would be blank (e.g. `/yolo pin`
+    before any model was set), it no-ops rather than writing `backend=""`/
+    `model=""` — which a later flagless launch would resolve to `--model ""` and
+    crash the agent. Updating an EXISTING (already-complete) default is unaffected."""
     agents = load()
     cur = agents.get(RESERVED_KEY)
     base_backend = cur.backend if cur is not None else ""
     base_model = cur.model if cur is not None else ""
     base_pinned = cur.yolo_pinned if cur is not None else False
+    merged_backend = base_backend if backend is None else backend
+    merged_model = base_model if model is None else model
+    if not merged_backend or not merged_model:
+        return                              # don't persist an incomplete default
     agents[RESERVED_KEY] = AgentConfig(             # default carries no name
-        backend=base_backend if backend is None else backend,
-        model=base_model if model is None else model,
+        backend=merged_backend,
+        model=merged_model,
         yolo_pinned=base_pinned if yolo_pinned is None else yolo_pinned,
     )
     text = _serialize(agents)

@@ -252,6 +252,55 @@ def test_existing_handlers_accept_optional_arg():
     assert app.called == ["reload", "reload"]
 
 
+def test_reconcile_yolo_corrects_failed_unpin():
+    """The silent-bypass hazard: if /yolo unpin's write fails, the agent reports
+    pinned=True and the chip must be corrected back to pinned + the user told."""
+    from harness.tui.app import HarnessTui
+
+    app = HarnessTui.__new__(HarnessTui)        # bypass __init__/Textual mount
+    app._yolo = True
+    app._yolo_pinned = False                    # optimistic (wrong) state
+    notes: list[str] = []
+    app._notify_line = lambda m: notes.append(m)
+    app._refresh_yolo_chip = lambda: None
+
+    # agent reports the write FAILED → still pinned on disk
+    app._reconcile_yolo({"ok": False, "active": True, "pinned": True},
+                        want_pinned=False, verb="unpin")
+    assert app._yolo_pinned is True             # chip corrected to the truth
+    assert notes and "did not persist" in notes[0]
+
+
+def test_reconcile_yolo_no_response_warns():
+    from harness.tui.app import HarnessTui
+
+    app = HarnessTui.__new__(HarnessTui)
+    app._yolo = True
+    app._yolo_pinned = False
+    notes: list[str] = []
+    app._notify_line = lambda m: notes.append(m)
+    app._refresh_yolo_chip = lambda: None
+
+    app._reconcile_yolo(None, want_pinned=False, verb="unpin")
+    assert notes and "agent unavailable" in notes[0]
+
+
+def test_reconcile_yolo_success_is_quiet():
+    from harness.tui.app import HarnessTui
+
+    app = HarnessTui.__new__(HarnessTui)
+    app._yolo = True
+    app._yolo_pinned = True
+    notes: list[str] = []
+    app._notify_line = lambda m: notes.append(m)
+    app._refresh_yolo_chip = lambda: None
+
+    app._reconcile_yolo({"ok": True, "active": True, "pinned": True},
+                        want_pinned=True, verb="pin")
+    assert notes == []                          # success: no noise
+    assert app._yolo_pinned is True
+
+
 def test_select_modal_search_and_select():
     async def go():
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")

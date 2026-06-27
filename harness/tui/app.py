@@ -250,7 +250,8 @@ class HarnessTui(App):
             return
         fresh = StatusChip.for_yolo(self._yolo, self._yolo_pinned)
         chip._label = fresh._label
-        chip.update(fresh._Static__content)
+        chip._token = fresh._token          # keep the chip's internal state self-consistent
+        chip.update(fresh._Static__content)  # the raw markup string (pre-render), re-evaluated by Textual
 
     def action_toggle_yolo(self) -> None:
         """Flip the live auto-allow gate (chip click / bare /yolo). Persisting is
@@ -261,33 +262,58 @@ class HarnessTui(App):
 
     async def action_yolo_pin(self) -> None:
         """Persist 'always launch in YOLO' (and turn it on now — pinning a mode
-        you're not in is incoherent)."""
+        you're not in is incoherent). Reconciles the chip to the TRUE persisted
+        state the agent reports, so a failed write can't show a false 'pinned'."""
         self._yolo = True
-        self._yolo_pinned = True
+        self._yolo_pinned = True            # optimistic; reconciled below
         self._refresh_yolo_chip()
-        await self._send_set_yolo(active=True, pin=True)
+        resp = await self._send_set_yolo(active=True, pin=True)
+        self._reconcile_yolo(resp, want_pinned=True, verb="pin")
 
     async def action_yolo_unpin(self) -> None:
-        """Stop auto-launching in YOLO. Leaves the live state alone."""
-        self._yolo_pinned = False
+        """Stop auto-launching in YOLO. Leaves the live state alone. Reconciles
+        from the agent's reported pin so a failed write can't silently leave the
+        config pinned while the chip shows unpinned (the silent-bypass hazard)."""
+        self._yolo_pinned = False           # optimistic; reconciled below
         self._refresh_yolo_chip()
-        await self._send_set_yolo(pin=False)
+        resp = await self._send_set_yolo(pin=False)
+        self._reconcile_yolo(resp, want_pinned=False, verb="unpin")
+
+    def _reconcile_yolo(self, resp: dict | None, *, want_pinned: bool, verb: str) -> None:
+        """Trust the agent's reported persisted state over our optimistic guess.
+        If it disagrees with what we intended (write failed / no agent), correct
+        the chip and tell the user — never leave a persisted bypass hidden."""
+        if not resp:
+            self._notify_line(f"could not {verb}: agent unavailable — persisted state unchanged")
+            return
+        pinned = resp.get("pinned")
+        active = resp.get("active")
+        if isinstance(active, bool):
+            self._yolo = active
+        if isinstance(pinned, bool):
+            self._yolo_pinned = pinned
+            if pinned != want_pinned or not resp.get("ok", True):
+                self._notify_line(
+                    f"/yolo {verb} did not persist — config is "
+                    f"{'pinned' if pinned else 'not pinned'}")
+        self._refresh_yolo_chip()
 
     async def _send_set_yolo(self, *, active: bool | None = None,
-                             pin: bool | None = None) -> None:
-        """Push the live/pin change to the agent (which owns the gate). The chip
-        is already updated; an older agent / transient error just no-ops."""
+                             pin: bool | None = None) -> dict | None:
+        """Push the live/pin change to the agent (which owns the gate) and return
+        its authoritative {ok, active, pinned} response, or None if no agent /
+        the call failed."""
         if self._conn is None:
-            return
+            return None
         params: dict = {}
         if active is not None:
             params["active"] = active
         if pin is not None:
             params["pin"] = pin
         try:
-            await self._conn.ext_method("harness/set_yolo", params)
+            return await self._conn.ext_method("harness/set_yolo", params)
         except Exception:
-            pass
+            return None
 
     def on_click(self, event) -> None:
         # Footer mode chip: a click anywhere on it toggles YOLO. Guard on the id

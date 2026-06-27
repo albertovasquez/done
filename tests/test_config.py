@@ -217,6 +217,27 @@ def test_serialize_emits_yolo_pinned_true(tmp_path):
     assert "yolo_pinned = true" in config.conf_path().read_text()
 
 
+def test_update_default_refuses_incomplete_new_default(tmp_path):
+    # /yolo pin before any model was set must NOT write backend=""/model="".
+    config.update_default(yolo_pinned=True)
+    assert config.load_default() is None        # no incomplete default written
+    assert config.yolo_pinned() is False
+
+
+def test_update_default_creates_default_when_backend_and_model_given(tmp_path):
+    # Pinning WITH a backend+model (as the agent now supplies) writes a complete row.
+    config.update_default(backend="vibeproxy", model="gpt-5.4", yolo_pinned=True)
+    assert config.load_default() == config.AgentConfig(
+        backend="vibeproxy", model="gpt-5.4", yolo_pinned=True)
+
+
+def test_update_default_pin_on_existing_default_ok(tmp_path):
+    # Updating an already-complete default (just the pin) still works.
+    config.save_default(config.AgentConfig(backend="mock", model="x"))
+    config.update_default(yolo_pinned=True)
+    assert config.load_default().yolo_pinned is True
+
+
 def test_update_default_preserves_other_agents(tmp_path):
     _write(tmp_path, (
         'schema_version = 1\n'
