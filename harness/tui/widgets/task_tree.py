@@ -127,7 +127,13 @@ class TaskTree(Static):
         for t in tasks:
             glyph, token = _GLYPH.get(t.status, ("□", "muted"))
             label = t.label[2:] if t.label.startswith("$ ") else t.label
-            out.append(f"[${token}]{glyph}[/] [$foreground]{label}[/]")
+            summary = summarize_command(label)
+            head, sep, tail = summary.partition("  (+")
+            if sep:
+                body = f"[$foreground]{head}[/] [$muted](+{tail}[/]"
+            else:
+                body = f"[$foreground]{summary}[/]"
+            out.append(f"[${token}]{glyph}[/] {body}")
         return out
 
     def update_tasks(self, tasks: tuple[TaskItem, ...]) -> None:

@@ -183,6 +183,19 @@ def test_summarize_width_capped_with_ellipsis():
     assert out.endswith("…")
 
 
+def test_lines_for_uses_summary_and_muted_count():
+    from harness.tui.state import TaskItem
+    from harness.tui.widgets.task_tree import TaskTree
+    tasks = (TaskItem(
+        label='cd harness && cat persona.py && echo X && cat persona_config.py',
+        status="done", tool_id="t1"),)
+    line = TaskTree().lines_for(tasks)[0]
+    assert "cat persona.py" in line
+    assert "persona_config.py" not in line       # full command not shown
+    assert "(+1 more)" in line
+    assert "$muted" in line                        # count is muted
+
+
 from harness.tui.state import DecisionView
 from harness.tui.widgets.decision_prompt import (
     DecisionPrompt, TYPE_SOMETHING, CHAT_ABOUT_IT,
