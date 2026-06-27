@@ -124,6 +124,15 @@ This decision is the analog of C1's single-home-model choice and gets the same
 treatment: its own brainstorm, an explicit precedence/lifecycle design, and Codex
 adversarial review before any code. C2c does NOT block C2a/C2b.
 
+**C2c watch-for (flagged by the C2a whole-branch review):** C2a's `reduce()`
+`PersonaResolved` case renames the active agent's `id` in place
+(`replace(a, id=event.id, ...)`). This is correct at N=1, but in a multi-agent tuple
+it can produce two agents sharing one id if `active_id` resolves to an id another agent
+already holds (reproduced: `[a,b]` active="a" + `PersonaResolved("b")` → `['b','b']`).
+Unreachable in C2a/C2b (single active agent), but C2c MUST restructure this — key the
+fold on a stable, immutable `agent_id` rather than mutating `id`, or de-dup after the
+remap. Address it in C2c's reducer design, not before (YAGNI).
+
 ---
 
 ## 4. Constraints inherited from the design system
