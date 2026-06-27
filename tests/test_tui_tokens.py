@@ -13,7 +13,7 @@ def test_glyph_has_all_state_and_subtype_keys():
 
 
 def test_bypass_glyph_present():
-    assert GLYPH["bypass"] == "!"
+    assert GLYPH["bypass"] == "▶▶"
 
 
 def test_status_label_is_uppercase():

@@ -75,31 +75,35 @@ is the **single looping animation** in the whole UI (active `◐` cycle).
 - **In:** `state`
 - **Reduced-motion:** `ActivityGlyph` → static `◐`.
 
-### `StatusChip.for_yolo` — clickable footer mode chip
+### `StatusChip.for_yolo` — clickable footer mode line
 A `StatusChip` mounted in the status bar that toggles a **session mode** on
-click. First use: YOLO (permission auto-allow). The pattern generalizes to any
-binary session mode (backend, fleet-mode, …).
+click. First use: the permission bypass. The pattern generalizes to any binary
+session mode (backend, fleet-mode, …).
 - **In:** `(active: bool, pinned: bool)` → `StatusChip.for_yolo(...)`.
-- **Look:** off = `• ask` (muted); on = `! YOLO` (amber `$scheduled`, bold);
-  pinned adds ` · pin`. Glyph `!` = `GLYPH["bypass"]`. Amber signals a
-  security-sensitive on-state without a per-command banner (restraint, p.4).
+- **Look:** off = `▶▶ bypass permissions off` (muted); on = `▶▶ bypass
+  permissions on` (**RED** `$error`, bold); pinned adds ` · pinned`. Glyph
+  `▶▶` = `GLYPH["bypass"]`. **Plain-words posture, not jargon** — a user reads
+  the security state directly. Red on the active state is the loudest signal:
+  a full bypass that auto-runs commands. The safe state stays muted (quiet, not
+  cryptic). Wording mirrors Claude Code's own permission-mode footer.
 - **Click → action:** the app's `on_click` (guarded on `#statusbar-mode`) calls
-  `action_toggle_yolo()`, which flips the live state, refreshes the chip in
+  `action_toggle_yolo()`, which flips the live state, refreshes the line in
   place (`_refresh_yolo_chip`), and fires `ext_method("harness/set_yolo",
-  {active})`.
+  {active})`. Also toggled by `/yolo` (no shift+tab — terminal-finicky here).
 - **Persisting is a SEPARATE gesture.** A click only flips the *live* mode
   (loud, reversible). Making a mode *survive launches* is the deliberate
   `/yolo pin` (writes `yolo_pinned` to `done.conf`) — never the click. This
   split is the pattern's safety contract; reuse it for any persisted mode.
 - **Placement = far LEFT of the status bar** (mounted first), where the eye
   lands — a security-sensitive mode must not be buried behind the `1fr` cwd at
-  the right edge (where it clips on narrow terminals). For an always-on bypass,
-  also mirror the marker into the top mode line (`Build · YOLO · model`,
-  amber) so it shows top **and** bottom.
+  the right edge (where it clips on narrow terminals). The `#statusbar` is a
+  `layout: horizontal` row (chip · cwd · version). Also mirror a compact marker
+  into the top mode line (`Build · bypass on · model`, red) so it shows top
+  **and** bottom.
 
 ```
-· ask          ! YOLO          ! YOLO · pin
- muted          amber           amber
+▶▶ bypass permissions off      ▶▶ bypass permissions on      ▶▶ bypass permissions on · pinned
+ muted                          red                           red
 ```
 
 ### `Hairline` / `SectionLabel`

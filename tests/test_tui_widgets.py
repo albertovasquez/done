@@ -28,26 +28,25 @@ def test_status_chip_renders_uppercase_label():
     assert "RUNNING" in chip._label
 
 
-def test_status_chip_for_yolo_off_is_muted_ask():
+def test_status_chip_for_yolo_off_is_muted_bypass_off():
     chip = StatusChip.for_yolo(active=False, pinned=False)
     markup = chip._Static__content
-    assert "ask" in chip._label
-    assert "$muted" in markup
-    assert "YOLO" not in chip._label
+    assert "bypass permissions off" in chip._label
+    assert "$muted" in markup                  # safe state is quiet, not loud
 
 
-def test_status_chip_for_yolo_on_is_amber_yolo():
+def test_status_chip_for_yolo_on_is_red_bypass_on():
     chip = StatusChip.for_yolo(active=True, pinned=False)
-    assert "YOLO" in chip._label
-    assert "pin" not in chip._label
-    assert "$scheduled" in chip._Static__content
-    assert "!" in chip._label                 # the bypass glyph
+    assert "bypass permissions on" in chip._label
+    assert "pinned" not in chip._label
+    assert "$error" in chip._Static__content   # RED — loudest signal for a full bypass
+    assert "▶▶" in chip._label                 # the bypass glyph
 
 
-def test_status_chip_for_yolo_pinned_shows_pin_marker():
+def test_status_chip_for_yolo_pinned_shows_pinned_marker():
     chip = StatusChip.for_yolo(active=True, pinned=True)
-    assert "YOLO" in chip._label and "pin" in chip._label
-    assert "$scheduled" in chip._Static__content
+    assert "bypass permissions on" in chip._label and "pinned" in chip._label
+    assert "$error" in chip._Static__content
 
 
 def test_activity_glyph_reduced_motion_is_static():

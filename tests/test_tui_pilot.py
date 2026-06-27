@@ -860,31 +860,31 @@ def test_pilot_permission_modal_shows_command_in_body():
 
 
 def test_yolo_chip_click_toggles_state():
-    """Clicking the footer mode chip flips the live YOLO state and the chip text."""
+    """Clicking the footer mode line flips the live bypass state and its text."""
     async def go():
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock", yolo=False)
         async with app.run_test() as pilot:
             await pilot.pause()
             chip = app.query_one("#statusbar-mode", Static)
-            assert "ask" in chip._Static__content      # starts off
+            assert "bypass permissions off" in chip._Static__content   # starts off
             app.action_toggle_yolo()
             await pilot.pause(); await pilot.pause()
             assert app._yolo is True
-            assert "YOLO" in app.query_one("#statusbar-mode", Static)._Static__content
+            assert "bypass permissions on" in app.query_one("#statusbar-mode", Static)._Static__content
 
     asyncio.run(go())
 
 
-def test_compose_meta_shows_yolo_marker_when_on():
-    """The top mode line ('Build · …') gains an amber YOLO marker when the live
-    gate is on, so the bypass is visible at the top as well as the footer."""
+def test_compose_meta_shows_bypass_marker_when_on():
+    """The top mode line ('Build · …') gains a RED 'bypass on' marker when the
+    live gate is on, so the posture is visible at the top as well as the footer."""
     app = HarnessTui.__new__(HarnessTui)        # bypass Textual mount; pure method
     app.model = "mock"
     app._yolo = False
-    assert "YOLO" not in app._compose_meta_markup("mock model", "Mock")
+    assert "bypass" not in app._compose_meta_markup("mock model", "Mock")
     app._yolo = True
     markup = app._compose_meta_markup("mock model", "Mock")
-    assert "YOLO" in markup and "$scheduled" in markup   # amber, present
+    assert "bypass on" in markup and "$error" in markup   # red, present
 
 
 def test_yolo_chip_is_leftmost_in_statusbar():
