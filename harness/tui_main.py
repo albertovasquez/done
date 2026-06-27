@@ -53,8 +53,10 @@ def _effective_worker_model_id(backend: str) -> str | None:
 
 
 def _relaunch_args(args, cwd) -> list[str]:
-    """Flags to re-launch THIS TUI with, reconstructed from parsed args (not raw
-    sys.argv) so they are correct however it was invoked. --cwd is always explicit."""
+    """Flags to re-launch THIS TUI with (the /reload re-exec), reconstructed from
+    parsed args (not raw sys.argv) so they are correct however it was invoked.
+    --model carries the session backend (mock|vibeproxy); --cwd is always explicit;
+    --yolo / --persona are emitted when set — /reload preserves the current state."""
     flags = ["--model", args.model, "--cwd", cwd]
     if args.yolo:
         flags.append("--yolo")
@@ -112,7 +114,8 @@ def main(argv=None) -> None:
     if args.yolo:
         agent_cmd.append("--yolo")    # auto-allow flows to the agent, which owns the gate
     app = HarnessTui(agent_cmd=agent_cmd, cwd=cwd, model=backend,
-                     worker_model_id=worker_model_id, yolo=yolo)
+                     worker_model_id=worker_model_id, yolo=yolo,
+                     persona=args.persona)
     app.run()
     if getattr(app, "_reexec", False):
         cmd = _relaunch_command(args, cwd)

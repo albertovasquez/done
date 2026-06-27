@@ -26,6 +26,7 @@ from typing import Any
 import acp
 from acp.schema import ClientCapabilities, ElicitationCapabilities
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import LoadingIndicator, Markdown, Static, TextArea
 
@@ -42,6 +43,7 @@ from harness.tui.theme import HARNESS_THEME, COLORS
 from harness.tui.widgets.activity_region import ActivityRegion
 from harness.tui.widgets.permission_modal import PermissionModal
 from harness.tui.widgets.select_modal import SelectModal, SelectOption
+from harness.tui.widgets.agent_rail import AgentRail, PersonaSelected
 from harness.tui.widgets.slash_menu import SlashMenu
 from harness.tui.widgets.prompt_area import PromptArea
 from harness.tui.widgets.status_chip import StatusChip
@@ -77,7 +79,7 @@ class HarnessTui(App):
 
     def __init__(self, agent_cmd: list[str], cwd: str, model: str,
                  worker_model_id: str | None = None, version: str = "0.5.0",
-                 yolo: bool = False) -> None:
+                 yolo: bool = False, persona: str | None = None) -> None:
         super().__init__()
         self.agent_cmd = agent_cmd
         self.cwd = cwd
@@ -85,7 +87,11 @@ class HarnessTui(App):
         self._worker_model_id = worker_model_id
         self._version = version
         self._yolo = yolo                          # live gate (TUI mirror of the agent's)
-        self._yolo_pinned = _config.yolo_pinned()  # persisted pin, for the chip's '· pin'
+        self._launch_persona = persona or "default"  # the persona id this process launched as
+        # Read the pin for THIS process's persona (not always "default") — a process
+        # launched with `--persona fred` shows fred's pin. (Also used to highlight the
+        # launched persona in the rail before the first turn — see _current_persona.)
+        self._yolo_pinned = _config.yolo_pinned(self._launch_persona)
         self._client = TuiClient(self)
         self._conn = None
         self._cm = None                       # the spawn_agent_process context manager
@@ -104,6 +110,7 @@ class HarnessTui(App):
         self._boundary_after = False          # True => an in-turn boundary (tool/thought/stream_reset) closed the block; next prose opens a FRESH widget (vs. a late delta of the prior answer, which extends in place)
         self._tokens = 0                      # last-known token count from usage updates
         self._persona_seen = False            # True after the first real PersonaResolved lands
+        self._turn_active = False             # True while a prompt turn is in flight (used by Esc-rail guard)
         self._snapshot = initial_snapshot()   # the presentation model (pure, immutable)
         self._commands = build_registry()     # slash-command registry
         self._slash = None                    # the SlashMenu widget while open, else None
@@ -134,6 +141,9 @@ class HarnessTui(App):
                                  classes="compose-meta", markup=True)
                 yield Static("[b]tab[/b] agents   [b]ctrl+p[/b] commands", id="hint", markup=True)
         yield self._status_bar()
+        rail = AgentRail(id="agent-rail")
+        rail.display = False
+        yield rail
 
     def _yolo_meta_markup(self) -> str:
         """' · bypass on' (RED) for the top mode line when the permission bypass
@@ -248,6 +258,16 @@ class HarnessTui(App):
             self.query_one("#statusbar-right", Static).update(self._status_right())
         except Exception:
             pass
+
+    def _current_persona(self) -> str:
+        """The persona id this process is currently running as.
+
+        After the first PersonaResolved chip arrives (_persona_seen True), the
+        snapshot's active_id is authoritative. Before that chip lands, fall back
+        to _launch_persona (the id passed via --persona on startup)."""
+        if self._persona_seen:
+            return self._snapshot.active_id
+        return self._launch_persona
 
     def _status_persona(self) -> str:
         if not getattr(self, "_persona_seen", False):
@@ -419,6 +439,7 @@ class HarnessTui(App):
         inp.value = ""
         inp.disabled = True
         self._turn_start = time.monotonic()
+        self._turn_active = True
         self._apply(TurnStarted())
         self._send_gen = self._gen            # tag this turn's worker with its generation
         self.run_worker(self._send_prompt(text), thread=False)
@@ -477,6 +498,28 @@ class HarnessTui(App):
             if event.key == "escape" and self._active_input().value:
                 self._active_input().value = ""
                 event.stop()
+                return
+            # Focus-traversal model for the agents rail:
+            # Tab from the prompt (when rail is hidden) → reveal and focus the rail.
+            if event.key == "tab":
+                rail = self.query_one("#agent-rail", AgentRail)
+                if isinstance(self.focused, PromptArea) and not rail.display:
+                    rail.set_rows(self._persona_rows())
+                    rail.display = True
+                    rail.focus()
+                    event.stop()
+                # Otherwise let Tab do normal focus traversal (don't stop).
+                return
+            # Esc from the rail (when slash menu is closed) → hide rail, return focus.
+            # FIX 4: only close the rail when no turn is active; if a turn is running,
+            # let Esc fall through to action_cancel (the "Cancel turn" binding).
+            if event.key == "escape":
+                rail = self.query_one("#agent-rail", AgentRail)
+                if rail.display and isinstance(self.focused, AgentRail) \
+                        and not self._turn_active:
+                    rail.display = False
+                    self._active_input().focus()
+                    event.stop()
             return
         if event.key == "down":
             self._slash.move(1); event.stop()
@@ -700,6 +743,7 @@ class HarnessTui(App):
             self._apply(TurnEnded(ok=False))
             self._append_line(_c("error", f"agent disconnected — restart to continue ({e})"))
         finally:
+            self._turn_active = False
             if gen == self._gen:                  # only the CURRENT generation touches the UI
                 self._hide_working()
                 self._active_input().disabled = False
@@ -885,6 +929,30 @@ class HarnessTui(App):
             self._pending_perm = None
         if isinstance(self.screen, PermissionModal):
             self.pop_screen()
+
+    def _persona_rows(self):
+        from harness import persona_select, persona_config, paths
+        from harness.tui.roster import persona_rows
+        def name_of(pid):
+            ws = paths.default_workspace_dir() if pid == "default" \
+                else paths.config_dir() / "agents" / pid
+            return persona_config.read_name(ws)
+        return persona_rows(persona_select.list_personas(),
+                            self._current_persona(), name_of)
+
+    def action_toggle_rail(self) -> None:
+        rail = self.query_one("#agent-rail", AgentRail)
+        if not rail.display:
+            rail.set_rows(self._persona_rows())   # refresh on open
+            rail.display = True
+            rail.focus()
+        else:
+            rail.display = False
+            self._active_input().focus()
+
+    async def on_persona_selected(self, event: PersonaSelected) -> None:
+        # Rail is view-only; persona switching is deferred to C2c.
+        event.stop()
 
     async def action_reload(self) -> None:
         if self._busy:

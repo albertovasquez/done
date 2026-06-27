@@ -293,3 +293,14 @@ def test_persona_flows_into_agent_cmd_and_relaunch(isolated_config, monkeypatch,
     tui_main.main(["--model", "vibeproxy", "--cwd", str(tmp_path), "--persona", "fred"])
     assert "--persona" in captured["agent_cmd"]
     assert "fred" in captured["agent_cmd"]
+
+
+def test_relaunch_args_always_emits_model_flag(tmp_path):
+    """_relaunch_args must ALWAYS emit --model (the session backend: mock vs vibeproxy)
+    so the backend survives a re-exec."""
+    from types import SimpleNamespace as NS
+    args = NS(model="vibeproxy", yolo=False, persona="fred")
+    flags = tui_main._relaunch_args(args, str(tmp_path))
+    assert "--model" in flags
+    assert "vibeproxy" in flags
+    assert "--persona" in flags and "fred" in flags

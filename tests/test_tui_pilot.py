@@ -946,3 +946,341 @@ def test_statusbar_children_share_one_row():
             # left-to-right order: mode chip, then cwd, then version
             assert kids["statusbar-mode"].x < kids["statusbar-left"].x < kids["statusbar-right"].x
     asyncio.run(go())
+
+
+def test_agent_rail_renders_rows_and_posts_selection():
+    from harness.tui.widgets.agent_rail import AgentRail, PersonaSelected
+    from harness.tui.roster import PersonaRow
+    from textual.app import App
+
+    posted = []
+
+    class _Probe(App):
+        def compose(self):
+            yield AgentRail(id="rail")
+        def on_persona_selected(self, msg: PersonaSelected):
+            posted.append(msg.id)
+
+    async def go():
+        app = _Probe()
+        async with app.run_test() as pilot:
+            rail = app.query_one("#rail", AgentRail)
+            rail.set_rows((
+                PersonaRow(id="default", name="default", active=False),
+                PersonaRow(id="fred", name="Fred R.", active=True),
+            ))
+            await pilot.pause()
+            # the rendered content shows both names with correct glyphs
+            text = rail._rail_text()
+            assert "default" in text and "Fred R." in text
+            assert "● Fred R." in text, f"active glyph missing: {text!r}"
+            assert "○ default" in text, f"idle glyph missing: {text!r}"
+            # selecting the "fred" row posts PersonaSelected("fred")
+            rail.select_id("fred")             # a direct selection entrypoint the widget exposes
+            await pilot.pause()
+            assert posted == ["fred"]
+
+    asyncio.run(go())
+
+
+def test_agent_rail_listview_selected_event_path():
+    """Cover the @on(ListView.Selected) → item.data → PersonaSelected round-trip.
+
+    This is the path exercised on real keyboard/click selection, distinct from
+    the programmatic select_id() helper tested above."""
+    from harness.tui.widgets.agent_rail import AgentRail, PersonaSelected
+    from harness.tui.roster import PersonaRow
+    from textual.app import App
+    from textual.widgets import ListView, ListItem
+
+    posted = []
+
+    class _Probe(App):
+        def compose(self):
+            yield AgentRail(id="rail")
+        def on_persona_selected(self, msg: PersonaSelected):
+            posted.append(msg.id)
+
+    async def go():
+        app = _Probe()
+        async with app.run_test() as pilot:
+            rail = app.query_one("#rail", AgentRail)
+            rail.set_rows((
+                PersonaRow(id="default", name="default", active=False),
+                PersonaRow(id="fred", name="Fred R.", active=True),
+            ))
+            await pilot.pause()
+            # Find the ListItem for "default" that set_rows() created (has .data = "default")
+            items = list(rail.query(ListItem))
+            default_item = next(i for i in items if getattr(i, "data", None) == "default")
+            # Fire the real ListView.Selected event directly — this is the path
+            # _on_selected() handles; proves item.data → PersonaSelected("default").
+            rail.post_message(ListView.Selected(rail, default_item, 0))
+            await pilot.pause()
+            assert "default" in posted, (
+                f"PersonaSelected not posted via ListView.Selected path; got: {posted}"
+            )
+
+    asyncio.run(go())
+
+
+# ---- Task 4: rail mount, tab toggle, persona selection wiring ----
+
+def test_rail_hidden_by_default_and_tab_toggles():
+    """Rail starts hidden; Tab from the prompt reveals it (focus-traversal model).
+    Esc from the rail hides it and returns focus to the prompt."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            from harness.tui.widgets.agent_rail import AgentRail
+            from harness.tui.widgets.prompt_area import PromptArea
+            rail = app.query_one("#agent-rail", AgentRail)
+            assert rail.display is False       # hidden by default
+
+            # Tab from the prompt (landing-input has focus on startup) → reveals rail
+            prompt = app.query_one("#landing-input", PromptArea)
+            prompt.focus()
+            await pilot.pause()
+            assert isinstance(app.focused, PromptArea), "prompt should be focused"
+            await pilot.press("tab")
+            await pilot.pause()
+            assert rail.display is True        # rail revealed
+            assert isinstance(app.focused, AgentRail), "rail should have focus"
+
+            # Esc from the rail → hides rail and returns focus to prompt
+            await pilot.press("escape")
+            await pilot.pause()
+            assert rail.display is False       # rail hidden
+            assert isinstance(app.focused, PromptArea), "focus back to prompt"
+    asyncio.run(go())
+
+
+def test_tab_from_prompt_reveals_rail_and_focuses_it():
+    """Tab pressed while prompt is focused and rail is hidden: rail opens and
+    gets focus. Second path: action_toggle_rail still works as a direct caller."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            from harness.tui.widgets.agent_rail import AgentRail
+            from harness.tui.widgets.prompt_area import PromptArea
+            rail = app.query_one("#agent-rail", AgentRail)
+            assert rail.display is False
+
+            # Focus prompt, press Tab → rail should open and be focused
+            app.query_one("#landing-input", PromptArea).focus()
+            await pilot.pause()
+            await pilot.press("tab")
+            await pilot.pause()
+            assert rail.display is True, "rail must be displayed after tab from prompt"
+            assert isinstance(app.focused, AgentRail), "AgentRail must hold focus"
+
+            # action_toggle_rail still closes it (used by /persona no-arg)
+            app.action_toggle_rail()
+            await pilot.pause()
+            assert rail.display is False
+    asyncio.run(go())
+
+
+def test_esc_from_rail_hides_and_refocuses_prompt():
+    """Esc while the rail is focused hides the rail and returns focus to the prompt."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            from harness.tui.widgets.agent_rail import AgentRail
+            from harness.tui.widgets.prompt_area import PromptArea
+            # Open the rail via action (direct path, no key interception needed)
+            app.action_toggle_rail()
+            await pilot.pause()
+            rail = app.query_one("#agent-rail", AgentRail)
+            assert rail.display is True
+            # Rail should have focus (action_toggle_rail calls rail.focus())
+            assert isinstance(app.focused, AgentRail), "rail must be focused after open"
+
+            # Press Esc → hide rail, return focus to prompt
+            await pilot.press("escape")
+            await pilot.pause()
+            assert rail.display is False, "rail must hide on Esc"
+            assert isinstance(app.focused, PromptArea), "focus must return to prompt"
+    asyncio.run(go())
+
+
+# ---- C2b Bug 5: tab must not intercept PromptArea focus traversal ----
+
+def test_tab_from_prompt_opens_rail_focus_traversal_model():
+    """Focus-traversal model (C2b): Tab from the prompt reveals the agent rail
+    and moves focus to it. The app's on_key intercepts Tab only when the prompt
+    has focus and the rail is hidden — so Tab literally navigates 'to the agents'."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            from harness.tui.widgets.agent_rail import AgentRail
+            # PromptArea has focus at boot (on_mount focuses it)
+            inp = app.query_one("#landing-input", PromptArea)
+            inp.focus()
+            await pilot.pause()
+            rail = app.query_one("#agent-rail", AgentRail)
+            assert rail.display is False, "rail starts hidden"
+            # Tab while prompt has focus: app.on_key intercepts → reveal+focus rail
+            await pilot.press("tab")
+            await pilot.pause()
+            assert rail.display is True, (
+                "tab with prompt focused must reveal the rail (focus-traversal model)")
+            assert isinstance(app.focused, AgentRail), "focus must move to the rail"
+    asyncio.run(go())
+
+
+def test_tab_binding_removed_no_global_toggle():
+    """Structural check: the Tab binding is no longer in HarnessTui.BINDINGS.
+    Tab is now handled by on_key (focus-aware interception), not a global binding."""
+    from textual.binding import Binding
+    tab_bindings = [b for b in HarnessTui.BINDINGS
+                    if isinstance(b, Binding) and b.key == "tab"]
+    assert not tab_bindings, (
+        "Tab must NOT be in BINDINGS — it is handled by on_key for focus-traversal"
+    )
+
+
+# ---- FIX 3: rail highlight uses _current_persona() not stale snapshot ----
+
+def test_persona_rows_highlights_launch_persona_before_first_turn():
+    """_persona_rows must use _current_persona() for the active-id argument.
+    Before FIX 3, it used self._snapshot.active_id which is 'default' (initial
+    snapshot) even when launched as 'fred', so the fred row was not highlighted."""
+    from harness.tui.widgets.agent_rail import AgentRail
+    app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock", persona="fred")
+    # Before the first PersonaResolved, _persona_seen is False.
+    # _current_persona() must return "fred" (the launch persona).
+    assert app._current_persona() == "fred", (
+        "_current_persona() must return launch persona before first PersonaResolved"
+    )
+    # _snapshot.active_id is still "default" (initial_snapshot)
+    assert app._snapshot.active_id != "fred", (
+        "snapshot active_id is stale 'default' before first PersonaResolved"
+    )
+    # _persona_rows must use _current_persona(), not snapshot.active_id
+    # We test this indirectly: if the rows were built with snapshot.active_id='default',
+    # then fred's row would NOT be marked active. Patch persona_rows to capture the
+    # active_id argument.
+    import harness.tui.app as app_mod
+    from harness import persona_select as ps
+    captured = {}
+    real_persona_rows = None
+    try:
+        import harness.tui.roster as roster_mod
+        real_persona_rows = roster_mod.persona_rows
+        def spy_rows(personas, active_id, name_of):
+            captured["active_id"] = active_id
+            return real_persona_rows(personas, active_id, name_of)
+        roster_mod.persona_rows = spy_rows
+        # _persona_rows is called when the rail is opened
+        app._persona_rows()
+    finally:
+        if real_persona_rows is not None:
+            roster_mod.persona_rows = real_persona_rows
+    assert captured.get("active_id") == "fred", (
+        f"_persona_rows must pass 'fred' as active_id (got {captured.get('active_id')!r}); "
+        "it must use _current_persona() not _snapshot.active_id"
+    )
+
+
+# ---- FIX 4: Esc closes rail only when no turn active ----
+
+def test_esc_cancels_turn_even_when_rail_open():
+    """Esc while the rail is open AND a turn is active must let Esc fall through to
+    action_cancel (it must NOT close the rail and eat the event). Before FIX 4,
+    the rail-close path called event.stop() unconditionally, so action_cancel never
+    fired."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            from harness.tui.widgets.agent_rail import AgentRail
+            # Open the rail
+            app.action_toggle_rail()
+            await pilot.pause()
+            rail = app.query_one("#agent-rail", AgentRail)
+            assert rail.display is True, "rail must be open for this test"
+
+            # Simulate a turn in flight
+            app._turn_active = True
+
+            # Track whether action_cancel was called
+            cancel_called = {"v": False}
+            original_cancel = app.action_cancel
+            async def fake_cancel():
+                cancel_called["v"] = True
+            app.action_cancel = fake_cancel
+
+            # Press Esc — should NOT close the rail; should reach action_cancel
+            await pilot.press("escape")
+            await pilot.pause()
+
+            # Rail must still be open (not closed by on_key)
+            assert rail.display is True, (
+                "Esc with turn active must NOT close the rail "
+                "(it should fall through to action_cancel)"
+            )
+            # ...and Esc must actually reach action_cancel (the "Cancel turn" binding).
+            assert cancel_called["v"] is True, (
+                "Esc with turn active must fall through to action_cancel"
+            )
+
+    asyncio.run(go())
+
+
+def test_esc_closes_rail_when_no_turn_active():
+    """Esc while the rail is open and no turn is active must close the rail (existing
+    behaviour must still work when _turn_active is False)."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            from harness.tui.widgets.agent_rail import AgentRail
+            from harness.tui.widgets.prompt_area import PromptArea
+            # Open the rail and focus it
+            app.action_toggle_rail()
+            await pilot.pause()
+            rail = app.query_one("#agent-rail", AgentRail)
+            rail.focus()
+            await pilot.pause()
+            assert rail.display is True
+            assert app._turn_active is False
+
+            # Esc — should close the rail
+            await pilot.press("escape")
+            await pilot.pause()
+            assert rail.display is False, "Esc with no turn must close the rail"
+
+    asyncio.run(go())
+
+
+# ---- FIX 5: yolo-pin chip reads from launch persona, not always default ----
+
+def test_yolo_pinned_reads_launch_persona(tmp_path, monkeypatch):
+    """HarnessTui.__init__ must call _config.yolo_pinned(persona or 'default'),
+    not _config.yolo_pinned() with no arg (which always reads the default persona).
+    Before FIX 5, launching as 'fred' with fred.yolo_pinned=True would produce
+    _yolo_pinned=False because it read the default persona's pin."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    from harness import config
+    # fred has yolo_pinned=True, default does not
+    config.update_agent("fred", backend="mock", model="m-fred", yolo_pinned=True)
+    config.update_default(backend="mock", model="m-default", yolo_pinned=False)
+
+    app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock", persona="fred")
+    assert app._yolo_pinned is True, (
+        "app._yolo_pinned must be True when fred.yolo_pinned=True; "
+        "HarnessTui.__init__ must call _config.yolo_pinned('fred'), not yolo_pinned()"
+    )
+
+
+def test_yolo_pinned_default_persona_still_works(tmp_path, monkeypatch):
+    """Launching without a persona (defaults to 'default') must still read the
+    default persona's yolo_pinned — the FIX 5 change must not break this."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    from harness import config
+    config.update_default(backend="mock", model="m-default", yolo_pinned=True)
+
+    app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")  # no persona=
+    assert app._yolo_pinned is True, (
+        "default persona's yolo_pinned must still be read when no persona= is passed"
+    )

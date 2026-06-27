@@ -114,6 +114,27 @@ skills = ["/path/to/extra-skills", "~/my-skills"]
 These are loaded in addition to the system and user skill roots. (`persona.toml`
 never holds the worker model — that lives in `done.conf [agents.<id>]`.)
 
+`persona.toml` may also set a display `name` (used by the agents rail; falls back
+to the workspace id):
+
+```toml
+name = "Fred the Reviewer"
+```
+
+## The agents rail (TUI)
+
+Press **Tab** (or run `/persona`) to open the **agents rail** — a list of every
+persona workspace, with the active one highlighted (and named via `persona.toml`).
+**Esc** closes it. The status-bar persona chip also shows the live persona.
+
+The rail is a **view** today: it shows your personas and which one is running. To
+run a different persona, launch with `--persona <id>`. In-app **switching** between
+personas is deliberately deferred to a later phase — the standard mature-harness
+approach (OpenClaw / OpenCode / Codex) keeps one process alive and routes between
+loaded sessions in-process, which needs the long-lived-process engine; doing it via
+process-restart leaks per-persona state. So switching ships with that engine, not as
+a TUI re-exec.
+
 ## Not yet (later phases)
 
 Phase C1 added selection (`--persona`) and per-persona model persistence. What

@@ -133,3 +133,6 @@ PermissionModal #select-list { height: 2; margin-top: 1; }
 /* ---- design-system decision prompt ---- */
 #decision-prompt { padding: 1 2; border-left: thick $accent; background: $surface; }
 #decision-question { text-style: bold; padding-bottom: 1; }
+
+/* ---- C2b: agent rail (persona switcher) ---- */
+#agent-rail { dock: right; width: 28; border-left: solid $surface; background: $background; }

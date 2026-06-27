@@ -30,6 +30,11 @@ async def _reload(app, arg: str = "") -> None:
     await app.action_reload()
 
 
+async def _persona(app, arg: str = "") -> None:
+    # Rail is view-only (switching lands in C2c); /persona just opens the agents rail.
+    app.action_toggle_rail()
+
+
 async def _clear(app, arg: str = "") -> None:
     await app.action_clear()
 
@@ -60,6 +65,7 @@ def build_registry() -> list[Command]:
         Command("models", "Select the active model", _models),
         Command("yolo", "Toggle auto-allow (pin/unpin to persist)", _yolo),
         Command("reload", "Reload everything (restart the app)", _reload),
+        Command("persona", "Open the agents rail (your personas + which is active)", _persona),
         Command("clear", "Fresh conversation (restart the agent)", _clear),
         Command("help", "Show available commands", _help),
         Command("exit", "Exit the app", _exit, aliases=("quit",)),
