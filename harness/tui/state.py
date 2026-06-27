@@ -220,19 +220,15 @@ def reduce(snapshot: FleetSnapshot, event) -> FleetSnapshot:
     """Pure: fold one event into the snapshot, updating the ACTIVE agent only
     (single-agent today; fleet fan-out later targets event.agent_id)."""
     if isinstance(event, PersonaResolved):
-        # Set the active persona id and rename the (single) active agent to it.
-        # C2a is single-agent: remap the active snapshot's id+name to the persona.
-        # (C2b reads active_id to highlight; C2c grows the tuple per real session.)
-        agents = tuple(
-            replace(a, id=event.id, name=event.id) if a.id == snapshot.active_id else a
-            for a in snapshot.agents
-        )
-        # Invariant: after PersonaResolved, active_id MUST resolve to an agent.
-        # If the old active_id matched none (empty tuple, or active was already None —
-        # reachable once C2c holds multiple agents), seed one so .active is never None.
-        if not any(a.id == event.id for a in agents):
-            agents = agents + (AgentSnapshot(id=event.id, name=event.id),)
-        return FleetSnapshot(agents=agents, active_id=event.id)
+        # Select the agent whose id == event.id as active. If it already exists,
+        # just point active_id at it (preserve its state — do NOT rename whoever
+        # was active). Only seed a fresh agent when no agent carries that id.
+        # This makes "rename in place" obsolete: switching is selection.
+        if any(a.id == event.id for a in snapshot.agents):
+            return FleetSnapshot(agents=snapshot.agents, active_id=event.id)
+        return FleetSnapshot(
+            agents=snapshot.agents + (AgentSnapshot(id=event.id, name=event.id),),
+            active_id=event.id)
     agents = tuple(
         _reduce_agent(a, event) if a.id == snapshot.active_id else a
         for a in snapshot.agents

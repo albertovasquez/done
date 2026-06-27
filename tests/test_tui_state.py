@@ -29,11 +29,15 @@ def test_reduce_persona_sets_active_id_and_remaps_agent():
     assert out.active.name == "fred"
 
 def test_reduce_persona_idempotent():
+    # First PersonaResolved("fred") seeds a new agent (initial snapshot has "default").
     snap = reduce(initial_snapshot(), PersonaResolved("fred"))
+    assert snap.active_id == "fred"
+    agent_count = len(snap.agents)            # 2: "default" + "fred"
+    # Second PersonaResolved("fred") selects the existing "fred" — no new agent seeded.
     again = reduce(snap, PersonaResolved("fred"))
     assert again.active_id == "fred"
     assert again.active.id == "fred"
-    assert len(again.agents) == 1             # no duplicate agent added
+    assert len(again.agents) == agent_count   # idempotent: no duplicate agent added
 
 def test_reduce_persona_invariant_active_never_none():
     # Codex edge case: if active_id matches NO agent (reachable once C2c holds
@@ -336,3 +340,32 @@ def test_tool_update_blank_id_is_noop():
     a = _active(fs)
     assert a.tools[0].status == ToolStatus.PENDING, "blank-id update must not change the tool"
     assert a.tasks[0].status == "in_progress", "blank-id update must not change the task"
+
+
+# ---- PersonaResolved select/seed invariant tests (C2c task 4) ----
+
+def test_persona_resolved_no_duplicate_ids():
+    snap = FleetSnapshot(agents=(AgentSnapshot(id="a", name="a"),
+                                 AgentSnapshot(id="b", name="b")), active_id="a")
+    out = reduce(snap, PersonaResolved("b"))
+    ids = [ag.id for ag in out.agents]
+    assert len(ids) == len(set(ids))                 # no dup
+    assert out.active_id == "b"
+    assert sum(ag.id == "b" for ag in out.agents) == 1
+
+
+def test_persona_resolved_preserves_target_state():
+    snap = FleetSnapshot(
+        agents=(AgentSnapshot(id="a", name="a", tokens=10),
+                AgentSnapshot(id="b", name="b", tokens=99)), active_id="a")
+    out = reduce(snap, PersonaResolved("b"))
+    b = next(ag for ag in out.agents if ag.id == "b")
+    assert b.tokens == 99                            # selected, NOT overwritten with a's
+
+
+def test_persona_resolved_seeds_when_absent():
+    snap = FleetSnapshot(agents=(AgentSnapshot(id="a", name="a"),), active_id="a")
+    out = reduce(snap, PersonaResolved("c"))
+    assert out.active_id == "c"
+    assert any(ag.id == "c" for ag in out.agents)
+    assert out.active is not None
