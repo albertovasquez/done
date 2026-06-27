@@ -1027,15 +1027,22 @@ def test_agent_rail_listview_selected_event_path():
 # ---- Task 4: rail mount, tab toggle, persona selection wiring ----
 
 def test_rail_hidden_by_default_and_tab_toggles():
+    """Rail starts hidden; the toggle action opens and closes it.
+    With Bug-5 fix (priority=False on Tab binding), Tab from PromptArea is
+    consumed by the widget for focus traversal, so we invoke action_toggle_rail
+    directly (or press Tab when focus is NOT in the prompt) to test the toggle."""
     async def go():
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
         async with app.run_test() as pilot:
             rail = app.query_one("#agent-rail")
             assert rail.display is False       # hidden by default
-            await pilot.press("tab")
-            assert rail.display is True        # tab opens it
-            await pilot.press("tab")
-            assert rail.display is False       # tab closes it
+            # Toggle via direct action call (focus-independent path)
+            app.action_toggle_rail()
+            await pilot.pause()
+            assert rail.display is True        # opens
+            app.action_toggle_rail()
+            await pilot.pause()
+            assert rail.display is False       # closes
     asyncio.run(go())
 
 
@@ -1063,3 +1070,112 @@ def test_selecting_active_persona_is_noop():
             assert app._switch_persona is None     # no switch
             assert app._reexec is False            # no re-exec
     asyncio.run(go())
+
+
+# ---- C2b Bug 3: no-op guard uses stale snapshot active_id before first turn ----
+
+def test_selecting_launch_persona_before_first_turn_is_noop():
+    """App launched with --persona fred: selecting 'fred' before the first
+    PersonaResolved chip lands must be a no-op (already on fred). Before this
+    fix, _snapshot.active_id = 'default' (initial_snapshot) so selecting 'fred'
+    wrongly triggered a re-exec."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock",
+                         persona="fred")
+        async with app.run_test() as pilot:
+            from harness.tui.widgets.agent_rail import PersonaSelected
+            assert app._persona_seen is False, "no chip should have landed yet"
+            app.post_message(PersonaSelected("fred"))
+            await pilot.pause()
+            assert app._switch_persona is None, (
+                "selecting the launch persona before first chip must be a no-op")
+            assert app._reexec is False
+    asyncio.run(go())
+
+
+def test_selecting_different_persona_before_first_turn_switches():
+    """App launched with --persona fred: selecting 'default' before the first
+    chip lands must trigger a switch (they're different personas)."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock",
+                         persona="fred")
+        async with app.run_test() as pilot:
+            from harness.tui.widgets.agent_rail import PersonaSelected
+            assert app._persona_seen is False, "no chip should have landed yet"
+            app.post_message(PersonaSelected("default"))
+            await pilot.pause()
+            assert app._switch_persona == "default", (
+                "selecting a different persona before first chip must switch")
+            assert app._reexec is True
+    asyncio.run(go())
+
+
+# ---- C2b Bug 4: mid-turn switch must be refused ----
+
+def test_switch_refused_while_turn_active():
+    """Selecting a persona while a turn is in flight must be refused (no re-exec,
+    no switch set). The turn-active flag must be checked."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            from harness.tui.widgets.agent_rail import PersonaSelected
+            # Simulate a turn in flight by setting the flag directly
+            app._turn_active = True
+            app.post_message(PersonaSelected("fred"))
+            await pilot.pause()
+            assert app._switch_persona is None, (
+                "switch must be refused while a turn is active")
+            assert app._reexec is False
+    asyncio.run(go())
+
+
+def test_switch_allowed_when_no_turn_active():
+    """Selecting a persona when no turn is in flight must proceed normally."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            from harness.tui.widgets.agent_rail import PersonaSelected
+            assert app._turn_active is False, "no turn running at boot"
+            app.post_message(PersonaSelected("fred"))
+            await pilot.pause()
+            assert app._switch_persona == "fred"
+            assert app._reexec is True
+    asyncio.run(go())
+
+
+# ---- C2b Bug 5: tab must not intercept PromptArea focus traversal ----
+
+def test_tab_does_not_toggle_rail_when_prompt_has_focus():
+    """With Bug-5 fix (Binding priority=False), when the PromptArea has keyboard
+    focus pressing Tab must NOT open the agent rail — the PromptArea's
+    tab_behavior='focus' consumes Tab first for focus traversal."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            # PromptArea has focus at boot (on_mount focuses it)
+            inp = app.query_one("#landing-input", PromptArea)
+            inp.focus()
+            await pilot.pause()
+            rail = app.query_one("#agent-rail")
+            assert rail.display is False, "rail starts hidden"
+            # Tab while prompt has focus: PromptArea consumes it (focus traversal)
+            # The rail must stay hidden
+            await pilot.press("tab")
+            await pilot.pause()
+            assert rail.display is False, (
+                "tab with prompt focused must NOT open rail (focus traversal, not priority binding)")
+    asyncio.run(go())
+
+
+def test_tab_binding_priority_is_false():
+    """Structural check: the Tab binding must have priority=False so PromptArea's
+    tab_behavior='focus' can consume Tab for focus traversal before the app-level
+    binding fires. This is the fix for Bug 5."""
+    from textual.binding import Binding
+    tab_bindings = [b for b in HarnessTui.BINDINGS
+                    if isinstance(b, Binding) and b.key == "tab"]
+    assert tab_bindings, "Tab binding must exist on HarnessTui"
+    assert not tab_bindings[0].priority, (
+        "Tab binding must have priority=False so PromptArea consumes Tab first"
+    )

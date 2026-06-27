@@ -317,3 +317,84 @@ def test_relaunch_without_switch_keeps_current_persona(tmp_path):
         _switch_persona = None
     tui_main._apply_switch(args, _App())
     assert args.persona == "default"              # unchanged
+
+
+# ---- C2b Bug 1+2: switch must re-resolve target persona's model + yolo ----
+
+def test_apply_switch_clears_model_and_yolo(tmp_path):
+    """_apply_switch must clear args.model and args.yolo on a real switch so the
+    child re-exec resolves the TARGET persona's model and yolo-pin (not the old
+    persona's resolved values)."""
+    import argparse
+    args = argparse.Namespace(model="vibeproxy", cwd=str(tmp_path), yolo=True, persona="default")
+    class _App:
+        _switch_persona = "fred"
+    tui_main._apply_switch(args, _App())
+    # persona updated
+    assert args.persona == "fred"
+    # model cleared so child re-resolves from fred's config
+    assert args.model is None
+    # yolo cleared so child re-resolves fred's pin
+    assert args.yolo is False
+
+
+def test_relaunch_args_omits_model_flag_when_none(tmp_path):
+    """When args.model is None (set by _apply_switch on a switch), _relaunch_args
+    must NOT emit --model so the child process reads the target persona's config."""
+    from types import SimpleNamespace as NS
+    args = NS(model=None, yolo=False, persona="fred")
+    flags = tui_main._relaunch_args(args, str(tmp_path))
+    assert "--model" not in flags
+    assert "--persona" in flags and "fred" in flags
+
+
+def test_switch_relaunch_re_resolves_fred_model(isolated_config, monkeypatch, tmp_path):
+    """End-to-end: launching as 'default' (vibeproxy/m-default), switching to
+    'fred' (mock/m-fred), the re-exec'd child process resolves fred's backend and
+    model — not default's. Contract: the re-exec'd child must run _resolve_model
+    for fred, yielding (mock, m-fred)."""
+    from harness import config
+    # Set up fred's persona config
+    config.save_agent("fred", config.AgentConfig(backend="mock", model="m-fred"))
+    config.save_default(config.AgentConfig(backend="vibeproxy", model="m-default"))
+
+    # Simulate what main() does: resolve for current (default) persona
+    import argparse
+    args = argparse.Namespace(model=None, cwd=str(tmp_path), yolo=False, persona="default")
+    args.model, _ = tui_main._resolve_model(args.model, args.persona)  # -> vibeproxy
+    args.yolo = tui_main._resolve_yolo(False, "default")               # -> False
+
+    # App switches to fred
+    class _App:
+        _switch_persona = "fred"
+    tui_main._apply_switch(args, _App())
+
+    # After switch: model cleared, yolo cleared, persona=fred
+    assert args.persona == "fred"
+    assert args.model is None
+    assert args.yolo is False
+
+    # Child re-exec: re-resolve for fred's persona (simulates main() entry)
+    backend2, model2 = tui_main._resolve_model(args.model, args.persona)
+    yolo2 = tui_main._resolve_yolo(args.yolo, args.persona)
+    assert backend2 == "mock",   f"expected fred's backend 'mock', got {backend2!r}"
+    assert model2 == "m-fred",   f"expected fred's model 'm-fred', got {model2!r}"
+    assert yolo2 is False
+
+
+def test_switch_preserves_backend_type_in_relaunch(isolated_config, monkeypatch, tmp_path):
+    """On a switch the --model backend flag is omitted; the child picks up fred's
+    backend from config. But if fred has no config, the fallback is vibeproxy (not
+    mock just because the session ran in mock mode)."""
+    from harness import config
+    monkeypatch.setattr(tui_main.sys, "argv", ["not-a-real-file"])
+
+    import argparse
+    args = argparse.Namespace(model="mock", cwd=str(tmp_path), yolo=False, persona="default")
+    class _App:
+        _switch_persona = "fred"
+    tui_main._apply_switch(args, _App())
+    # model cleared — child will fall back to vibeproxy (no fred config)
+    assert args.model is None
+    flags = tui_main._relaunch_args(args, str(tmp_path))
+    assert "--model" not in flags, "no --model on switch relaunch"

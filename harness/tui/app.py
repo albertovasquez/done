@@ -76,11 +76,11 @@ class HarnessTui(App):
     CSS_PATH = "app.tcss"  # relative to this module's dir (harness/tui/)
     BINDINGS = [("escape", "cancel", "Cancel turn"),
                 ("ctrl+o", "toggle_details", "Tool details"),
-                Binding("tab", "toggle_rail", "Agents", priority=True)]
+                Binding("tab", "toggle_rail", "Agents", priority=False)]
 
     def __init__(self, agent_cmd: list[str], cwd: str, model: str,
                  worker_model_id: str | None = None, version: str = "0.5.0",
-                 yolo: bool = False) -> None:
+                 yolo: bool = False, persona: str | None = None) -> None:
         super().__init__()
         self.agent_cmd = agent_cmd
         self.cwd = cwd
@@ -88,6 +88,7 @@ class HarnessTui(App):
         self._worker_model_id = worker_model_id
         self._version = version
         self._yolo = yolo                          # live gate (TUI mirror of the agent's)
+        self._launch_persona = persona or "default"  # the persona id this process launched as
         self._yolo_pinned = _config.yolo_pinned()  # persisted pin, for the chip's '· pin'
         self._client = TuiClient(self)
         self._conn = None
@@ -108,6 +109,7 @@ class HarnessTui(App):
         self._boundary_after = False          # True => an in-turn boundary (tool/thought/stream_reset) closed the block; next prose opens a FRESH widget (vs. a late delta of the prior answer, which extends in place)
         self._tokens = 0                      # last-known token count from usage updates
         self._persona_seen = False            # True after the first real PersonaResolved lands
+        self._turn_active = False             # True while a prompt turn is in flight
         self._snapshot = initial_snapshot()   # the presentation model (pure, immutable)
         self._commands = build_registry()     # slash-command registry
         self._slash = None                    # the SlashMenu widget while open, else None
@@ -255,6 +257,17 @@ class HarnessTui(App):
             self.query_one("#statusbar-right", Static).update(self._status_right())
         except Exception:
             pass
+
+    def _current_persona(self) -> str:
+        """The persona id this process is currently running as.
+
+        After the first PersonaResolved chip arrives (_persona_seen True), the
+        snapshot's active_id is authoritative. Before that chip lands, fall back
+        to _launch_persona (the id passed via --persona on startup), so the
+        no-op guard in on_persona_selected is correct from the very first frame."""
+        if self._persona_seen:
+            return self._snapshot.active_id
+        return self._launch_persona
 
     def _status_persona(self) -> str:
         if not getattr(self, "_persona_seen", False):
@@ -426,6 +439,7 @@ class HarnessTui(App):
         inp.value = ""
         inp.disabled = True
         self._turn_start = time.monotonic()
+        self._turn_active = True              # C2b: guard mid-turn persona switch
         self._apply(TurnStarted())
         self._send_gen = self._gen            # tag this turn's worker with its generation
         self.run_worker(self._send_prompt(text), thread=False)
@@ -707,6 +721,7 @@ class HarnessTui(App):
             self._apply(TurnEnded(ok=False))
             self._append_line(_c("error", f"agent disconnected — restart to continue ({e})"))
         finally:
+            self._turn_active = False             # C2b: turn complete, allow persona switch
             if gen == self._gen:                  # only the CURRENT generation touches the UI
                 self._hide_working()
                 self._active_input().disabled = False
@@ -914,9 +929,12 @@ class HarnessTui(App):
 
     async def on_persona_selected(self, event: PersonaSelected) -> None:
         event.stop()
-        if event.id == self._snapshot.active_id:
+        if event.id == self._current_persona():
             return                                 # switch-to-same is a no-op
         if self._busy:
+            return
+        if self._turn_active:
+            self._notify_line("finish the current turn before switching persona")
             return
         self._switch_persona = event.id
         self._busy = True

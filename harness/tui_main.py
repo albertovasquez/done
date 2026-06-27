@@ -54,8 +54,16 @@ def _effective_worker_model_id(backend: str) -> str | None:
 
 def _relaunch_args(args, cwd) -> list[str]:
     """Flags to re-launch THIS TUI with, reconstructed from parsed args (not raw
-    sys.argv) so they are correct however it was invoked. --cwd is always explicit."""
-    flags = ["--model", args.model, "--cwd", cwd]
+    sys.argv) so they are correct however it was invoked. --cwd is always explicit.
+
+    When args.model is None (set by _apply_switch on a persona switch), the
+    --model flag is omitted so the child process re-resolves the target persona's
+    backend and model from done.conf — rather than inheriting the old resolved
+    values. Similarly, --yolo is only emitted when args.yolo is True (not cleared
+    by a switch), letting the child re-resolve the target persona's yolo-pin."""
+    flags = ["--cwd", cwd]
+    if args.model is not None:
+        flags = ["--model", args.model] + flags
     if args.yolo:
         flags.append("--yolo")
     if getattr(args, "persona", None):
@@ -65,10 +73,18 @@ def _relaunch_args(args, cwd) -> list[str]:
 
 def _apply_switch(args, app) -> None:
     """If the app requested a persona switch (C2b rail), thread it into args so
-    the re-exec launches as the selected persona. No-op when no switch was made."""
+    the re-exec launches as the selected persona. No-op when no switch was made.
+
+    On a real switch, also clears args.model (so the child re-resolves the target
+    persona's backend from done.conf) and args.yolo (so the child re-resolves the
+    target persona's yolo-pin). The session-mode choice (mock vs vibeproxy) is
+    thus derived fresh from the target persona's config, not inherited from the
+    launching persona's resolved values."""
     chosen = getattr(app, "_switch_persona", None)
     if chosen:
         args.persona = chosen
+        args.model = None    # child re-resolves from target persona's config
+        args.yolo = False    # child re-resolves target persona's yolo-pin
 
 
 def _relaunch_command(args, cwd) -> list[str]:
@@ -120,7 +136,8 @@ def main(argv=None) -> None:
     if args.yolo:
         agent_cmd.append("--yolo")    # auto-allow flows to the agent, which owns the gate
     app = HarnessTui(agent_cmd=agent_cmd, cwd=cwd, model=backend,
-                     worker_model_id=worker_model_id, yolo=yolo)
+                     worker_model_id=worker_model_id, yolo=yolo,
+                     persona=args.persona)
     app.run()
     if getattr(app, "_reexec", False):
         _apply_switch(args, app)                   # C2b: switch persona on re-exec
