@@ -50,7 +50,7 @@ def _format_catalog(catalog: list[tuple[str, str]]) -> str:
 class ChatHandler:
     def __init__(self, worker_model_id: str | None,
                  catalog: list[tuple[str, str]] | None = None,
-                 persona_block: str = ""):
+                 persona_block: str = "", base_block: str = ""):
         # None => mock mode (no chat-capable model available)
         self._model_id = worker_model_id
         # The skill catalog (name, description) — used to answer capability
@@ -59,6 +59,10 @@ class ChatHandler:
         # Persona context (identity trio). Prepended as a system message on every
         # turn when non-empty; "" => no system message (byte-identical to before).
         self._persona_block = persona_block
+        # Authored base system prompt (rendered by base_prompt.render_base_prompt).
+        # Combined with persona_block as a single system message (base first).
+        # "" => no additional system content (preserves byte-identical no-op).
+        self._base_block = base_block
 
     def answer_stream(self, prompt: str,
                       history: list[dict] | None = None) -> Iterator[str]:
@@ -75,11 +79,12 @@ class ChatHandler:
             return
         import litellm  # lazy: keep the ~1s import out of startup (mock never hits this)
         from harness import vibeproxy
+        system_content = self._base_block + self._persona_block
         stream = litellm.completion(
             model=vibeproxy.model_id(self._model_id),
             **vibeproxy.completion_kwargs(),
-            messages=(([{"role": "system", "content": self._persona_block}]
-                       if self._persona_block else [])
+            messages=(([{"role": "system", "content": system_content}]
+                       if system_content else [])
                       + (history or []) + [{"role": "user", "content": prompt}]),
             max_tokens=1000,
             stream=True,

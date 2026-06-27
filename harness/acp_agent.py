@@ -240,8 +240,14 @@ class HarnessAgent(acp.Agent):
         if cls.task_type == "chat_question":
             # hand the router's catalog so "what skills do we have?" is answered
             # from data, not the model (see ChatHandler.is_capability_question)
+            import platform
+            from harness import base_prompt
+            base_block = base_prompt.render_base_prompt(
+                model_id=(self._worker_model_id or "mock"),
+                cwd=state.cwd, system_line=platform.platform())
             handler = ChatHandler(self._worker_model_id, catalog=self._router.catalog,
-                                  persona_block=(state.persona_block or "") + (state.memory_block or ""))
+                                  persona_block=(state.persona_block or "") + (state.memory_block or ""),
+                                  base_block=base_block)
             pieces: list[str] = []
 
             def pump() -> None:

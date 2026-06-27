@@ -190,3 +190,24 @@ def test_empty_persona_block_adds_no_system_message(monkeypatch):
 
     list(ChatHandler("gpt-5.4", persona_block="").answer_stream("hi"))
     assert captured["messages"] == [{"role": "user", "content": "hi"}]   # byte-identical
+
+
+def test_base_block_becomes_system_message_before_persona(monkeypatch):
+    captured = {}
+
+    def fake_completion(**kwargs):
+        captured["messages"] = kwargs["messages"]
+        # minimal streaming-shaped stub: yield nothing
+        return iter(())
+
+    import litellm
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+
+    h = ChatHandler("vibeproxy", catalog=[], persona_block="PERSONA",
+                    base_block="BASEBLOCK")
+    list(h.answer_stream("hi"))  # drives litellm.completion with our messages
+
+    sys_msgs = [m for m in captured["messages"] if m["role"] == "system"]
+    assert sys_msgs, "chat path must have a system message when base_block is set"
+    content = sys_msgs[0]["content"]
+    assert content.index("BASEBLOCK") < content.index("PERSONA")

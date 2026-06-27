@@ -171,7 +171,8 @@ def main(argv: list[str] | None = None) -> int:
         rc = route_and_dispatch(
             args.task, router=router, emitter=emitter,
             make_chat_handler=lambda: ChatHandler(worker_model_id, catalog=router.catalog,
-                                                  persona_block=persona_block + memory_block),
+                                                  persona_block=persona_block + memory_block,
+                                                  base_block=base_block),
             run_agent=run_agent, ask_user=input, echo=print,
             worker_model_id=worker_model_id,
             load_skills=lambda names: skills.compose(skills_roots, names))
