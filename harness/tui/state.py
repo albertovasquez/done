@@ -41,6 +41,7 @@ class ToolView:
 class TaskItem:
     label: str
     status: str          # pending | in_progress | done | failed
+    tool_id: str = ""    # the tool_call_id this row tracks (match updates by id, not label)
 
 
 @dataclass(frozen=True)
@@ -182,23 +183,27 @@ def _reduce_agent(a: AgentSnapshot, event) -> AgentSnapshot:
             tid = getattr(item, "id", "")
             subtype = infer_subtype(title)
             tool = ToolView(title=title, status=ts, subtype=subtype, id=tid)
-            tasks = a.tasks + (TaskItem(label=title, status="in_progress"),)
+            tasks = a.tasks + (TaskItem(label=title, status="in_progress", tool_id=tid),)
             tools = a.tools + (tool,)
             return replace(a, state=AgentState.RUNNING_TOOL, tool=tool,
                            tasks=tasks, tools=tools, activity_label=f"Running {subtype}")
         if kind == "tool_update":
             ts = _tool_status(getattr(item, "status", ""))
             uid = getattr(item, "id", "")
+            # Match by id. An empty update id is ambiguous (every default-id tool
+            # would match), so a blank uid matches nothing — no-op rather than
+            # clobber unrelated rows.
+            def _match(tid: str) -> bool:
+                return bool(uid) and tid == uid
             new_tools = tuple(
                 replace(tv, status=ts, body=(getattr(item, "body", "") or tv.body))
-                if tv.id == uid else tv
+                if _match(tv.id) else tv
                 for tv in a.tools
             )
-            updated = next((tv for tv in new_tools if tv.id == uid), None)
+            updated = next((tv for tv in new_tools if _match(tv.id)), None)
             new_task_status = _task_status_from_tool(ts)
             new_tasks = tuple(
-                replace(t, status=new_task_status)
-                if (updated is not None and t.label == updated.title) else t
+                replace(t, status=new_task_status) if _match(t.tool_id) else t
                 for t in a.tasks
             )
             live = updated if updated is not None else a.tool

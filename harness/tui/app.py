@@ -32,12 +32,12 @@ from textual.widgets import LoadingIndicator, Markdown, Static, TextArea
 from harness.tui.client import TuiClient
 from harness.tui.commands import build_registry, resolve_command
 from harness.tui.messages import SessionUpdate, PermissionRequest
-from harness.tui.render import render_update, harness_chips, status_style, format_cwd
+from harness.tui.render import render_update, harness_chips, format_cwd
 from harness.tui.state import (
     initial_snapshot, reduce, TurnStarted, TurnEnded, ItemReceived,
     TokensUpdated, DecisionOpened, decision_from_meta,
 )
-from harness.tui.theme import HARNESS_THEME, COLORS, STATUS_COLOR
+from harness.tui.theme import HARNESS_THEME, COLORS
 from harness.tui.widgets.activity_region import ActivityRegion
 from harness.tui.widgets.permission_modal import PermissionModal
 from harness.tui.widgets.select_modal import SelectModal, SelectOption
@@ -797,14 +797,6 @@ class HarnessTui(App):
             # NOT inline in the transcript.
         elif item.kind == "tool_update":
             pass  # handled by the reducer fold + ActivityRegion refresh
-
-    @staticmethod
-    def _status_hex(status: str) -> str:
-        # render.status_style returns a color NAME (e.g. "green"); map to our hex.
-        name = status_style(status)
-        # status_style already returns a Rich-valid color name; STATUS_COLOR maps
-        # the canonical statuses to theme hex. Prefer the theme hex when known.
-        return STATUS_COLOR.get(status, name)
 
     def action_toggle_details(self) -> None:
         try:

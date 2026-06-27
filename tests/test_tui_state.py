@@ -191,8 +191,8 @@ def test_tool_update_targets_live_tool_not_last_index():
         tool=live_tool,
         tools=(live_tool,),
         tasks=(
-            TaskItem(label="$ echo one", status="in_progress"),   # index 0 — matches live tool
-            TaskItem(label="$ other task", status="in_progress"),  # index 1 — does NOT match
+            TaskItem(label="$ echo one", status="in_progress", tool_id="t1"),  # index 0 — matches live tool by id
+            TaskItem(label="$ other task", status="in_progress", tool_id="t2"),  # index 1 — different id
         ),
     )
     synthetic_fs = FleetSnapshot(agents=(synthetic_agent,), active_id="default")
@@ -272,3 +272,25 @@ def test_tool_update_without_body_keeps_prior_body():
     fs = reduce(fs, ItemReceived(RenderedItem(kind="tool_update", id="t1", status="completed", body="")))
     a = _active(fs)
     assert a.tools[0].body == "partial", "a body-less update must not wipe the prior body"
+
+
+def test_tool_update_same_title_updates_only_matching_task():
+    """Two tools with the SAME title but different ids: a tool_update for one must
+    flip only THAT task row, not both (match by tool_id, not label)."""
+    fs = reduce(initial_snapshot(), TurnStarted())
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="tool", id="t1", title="$ cat f", status="pending")))
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="tool", id="t2", title="$ cat f", status="pending")))
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="tool_update", id="t1", status="completed", body="x")))
+    a = _active(fs)
+    assert a.tasks[0].status == "done", "t1's task row should be done"
+    assert a.tasks[1].status == "in_progress", "t2's identically-titled task row must NOT flip"
+
+
+def test_tool_update_blank_id_is_noop():
+    """An update with an empty id must not clobber default-id tools/tasks."""
+    fs = reduce(initial_snapshot(), TurnStarted())
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="tool", id="t1", title="$ x", status="pending")))
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="tool_update", id="", status="completed", body="y")))
+    a = _active(fs)
+    assert a.tools[0].status == ToolStatus.PENDING, "blank-id update must not change the tool"
+    assert a.tasks[0].status == "in_progress", "blank-id update must not change the task"

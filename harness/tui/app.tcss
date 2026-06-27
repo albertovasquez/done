@@ -118,7 +118,6 @@ PermissionModal #select-list { height: 2; margin-top: 1; }
 
 /* ---- pinned activity region (above the composer) ---- */
 #activity-region { height: auto; padding: 0 2; margin: 0 2; }
-#activity-region.-hidden { display: none; }
 #ar-rule { height: 1; color: $muted; }
 #ar-status { height: 1; color: $accent; }
 #ar-tasks { height: auto; color: $foreground; }
