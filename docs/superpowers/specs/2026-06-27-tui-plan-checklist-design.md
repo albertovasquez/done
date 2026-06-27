@@ -194,6 +194,24 @@ Run from the worktree root: `.venv/bin/python -m pytest tests/ -q`
 (note: the venv lives in the primary checkout; run with the worktree as cwd per
 the editable-install shadowing lesson).
 
+## Resolved during implementation: the plan transport (sentinel command)
+
+The spec above assumed the agent could emit a native ACP `plan` update directly.
+In implementation this hit a real constraint: the agent is **mini-SWE-agent**
+(`minisweagent.agents.default.DefaultAgent`), whose only action channel is
+*bash commands* — there is no structured tool-call channel, so the model cannot
+call `update_plan(...)`.
+
+**Resolution:** a sentinel `plan` command, mirroring the existing memory
+"structured-capability-over-shell" pattern. The agent runs
+`plan "label:status" "label:status" …`; `AcpEnvironment.execute` intercepts it via
+`parse_plan_command` (pure, in `acp_emit.py`), emits the ACP plan update through an
+`on_plan` callback, and returns success **without** running it as a shell command
+or asking permission. The base prompt teaches the concrete grammar. Everything
+downstream (render → reduce → widget) is exactly as specified above — the sentinel
+only fills the missing producer. Status grammar: `pending|in_progress|completed`,
+default `pending`, last-colon split so labels may contain colons.
+
 ## Risk & rollback
 
 - **Lowest-risk path:** the tool reducer and its tests are untouched; the new
