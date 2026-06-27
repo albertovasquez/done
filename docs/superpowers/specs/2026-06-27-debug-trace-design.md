@@ -126,8 +126,14 @@ One `Event` per line (existing `harness/events.py` shape), extended with
 
 ### Payloads & size (firehose consequence)
 
-"Everything at default" means `llm.call.messages` and `action.output` carry
-**full bodies**. The trace can therefore contain prompt text and command output.
+"Everything at default" means the trace carries the agent's full event stream
+with payloads: `llm.call` (n, n_messages), `llm.return` (cost, n_actions,
+`content_preview` — capped at 120 chars by `TracingAgent`), `action` (command),
+`action.done` (returncode, output_bytes). Full action OUTPUT text is already
+carried by the live tool-call updates the TUI renders; the trace records the
+command, returncode, and byte count. LLM response text is previewed (120 chars),
+not full — widening it is a one-line change in `tracing_agent.py` if ever needed.
+The trace can therefore contain prompt commands and response previews.
 It lives under `harness/runs/<ts>/`, the same directory the CLI already writes
 `events.jsonl` to. `harness/runs/` is already gitignored (`.gitignore:4`), so
 the trace — including full payloads — is excluded from git by the existing rule.
