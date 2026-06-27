@@ -8,7 +8,6 @@ handles the selection (switch by re-exec). Mirrors select_modal's ListView usage
 from __future__ import annotations
 
 from textual import on
-from textual.app import ComposeResult
 from textual.message import Message
 from textual.widgets import Label, ListItem, ListView
 

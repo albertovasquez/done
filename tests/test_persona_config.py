@@ -48,3 +48,9 @@ def test_read_name_none_when_corrupt(tmp_path):
 def test_read_name_none_when_non_str(tmp_path):
     (tmp_path / "persona.toml").write_text("name = 42\n")
     assert persona_config.read_name(tmp_path) is None
+
+
+def test_read_name_none_when_empty_string(tmp_path):
+    """Empty string name is falsy — read_name returns None, not ""."""
+    (tmp_path / "persona.toml").write_text('name = ""\n')
+    assert persona_config.read_name(tmp_path) is None

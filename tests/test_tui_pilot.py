@@ -970,12 +970,55 @@ def test_agent_rail_renders_rows_and_posts_selection():
                 PersonaRow(id="fred", name="Fred R.", active=True),
             ))
             await pilot.pause()
-            # the rendered content shows both names
-            text = rail._rail_text()           # a helper that returns the rendered lines as one str
+            # the rendered content shows both names with correct glyphs
+            text = rail._rail_text()
             assert "default" in text and "Fred R." in text
+            assert "● Fred R." in text, f"active glyph missing: {text!r}"
+            assert "○ default" in text, f"idle glyph missing: {text!r}"
             # selecting the "fred" row posts PersonaSelected("fred")
             rail.select_id("fred")             # a direct selection entrypoint the widget exposes
             await pilot.pause()
             assert posted == ["fred"]
+
+    asyncio.run(go())
+
+
+def test_agent_rail_listview_selected_event_path():
+    """Cover the @on(ListView.Selected) → item.data → PersonaSelected round-trip.
+
+    This is the path exercised on real keyboard/click selection, distinct from
+    the programmatic select_id() helper tested above."""
+    from harness.tui.widgets.agent_rail import AgentRail, PersonaSelected
+    from harness.tui.roster import PersonaRow
+    from textual.app import App
+    from textual.widgets import ListView, ListItem
+
+    posted = []
+
+    class _Probe(App):
+        def compose(self):
+            yield AgentRail(id="rail")
+        def on_persona_selected(self, msg: PersonaSelected):
+            posted.append(msg.id)
+
+    async def go():
+        app = _Probe()
+        async with app.run_test() as pilot:
+            rail = app.query_one("#rail", AgentRail)
+            rail.set_rows((
+                PersonaRow(id="default", name="default", active=False),
+                PersonaRow(id="fred", name="Fred R.", active=True),
+            ))
+            await pilot.pause()
+            # Find the ListItem for "default" that set_rows() created (has .data = "default")
+            items = list(rail.query(ListItem))
+            default_item = next(i for i in items if getattr(i, "data", None) == "default")
+            # Fire the real ListView.Selected event directly — this is the path
+            # _on_selected() handles; proves item.data → PersonaSelected("default").
+            rail.post_message(ListView.Selected(rail, default_item, 0))
+            await pilot.pause()
+            assert "default" in posted, (
+                f"PersonaSelected not posted via ListView.Selected path; got: {posted}"
+            )
 
     asyncio.run(go())
