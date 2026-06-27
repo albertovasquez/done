@@ -152,26 +152,44 @@ class HarnessAgent(acp.Agent):
             if not isinstance(pid, str) or not pid:
                 return {"ok": False, "error": "missing id"}
             from harness import persona_select
-            from harness.persona_sessions import resolve_session_model
             try:
-                resolve_session_model_for = lambda p: resolve_session_model(
-                    p, shell_set_model=self._shell_set_model,
-                    shell_env=self._shell_env, dotenv=self._shell_env, backend=self._backend)
-                seat = self._persona_sessions.get_or_create(
-                    pid, cwd=self._cwd, store=self._store,
-                    resolve_ws=persona_select.resolve_workspace,
-                    resolve_model=resolve_session_model_for)
+                return self._activate_seat(pid)
             except (persona_select.UnknownPersona, persona_select.InvalidPersonaId) as e:
                 # The error dict reaches the TUI, but a durable log is the only
                 # place a persona-switch failure is diagnosable after the fact.
                 logger.warning("set_persona rejected id %r: %s", pid, e)
                 return {"ok": False, "error": str(e)}
-            self._active_persona = pid
-            self._worker_model_id = seat.model      # mirror active seat for read sites
-            self._store.get(seat.session_id).worker_model = seat.model
-            return {"ok": True, "id": pid, "session_id": seat.session_id,
-                    "model": seat.model}
+        if method == "harness/create_persona":
+            pid = (params or {}).get("id")
+            if not isinstance(pid, str) or not pid:
+                return {"ok": False, "error": "missing id"}
+            from harness import persona, persona_select
+            try:
+                persona.create_persona(pid)              # raises InvalidPersonaId/PersonaExists/OSError
+                return self._activate_seat(pid)          # raises UnknownPersona/InvalidPersonaId
+            except (persona_select.InvalidPersonaId, persona.PersonaExists,
+                    persona_select.UnknownPersona, OSError) as e:
+                return {"ok": False, "error": str(e)}
         return {}
+
+    def _activate_seat(self, pid: str) -> dict:
+        """Get-or-create the seat for persona `pid`, make it active, mirror its model
+        into the read-site fallback + the session state, and return the switch result.
+        Raises persona_select.UnknownPersona / InvalidPersonaId. The ONE activation path
+        shared by set_persona and create_persona."""
+        from harness import persona_select
+        from harness.persona_sessions import resolve_session_model
+        resolve_session_model_for = lambda p: resolve_session_model(
+            p, shell_set_model=self._shell_set_model,
+            shell_env=self._shell_env, dotenv=self._shell_env, backend=self._backend)
+        seat = self._persona_sessions.get_or_create(
+            pid, cwd=self._cwd, store=self._store,
+            resolve_ws=persona_select.resolve_workspace,
+            resolve_model=resolve_session_model_for)
+        self._active_persona = pid
+        self._worker_model_id = seat.model      # mirror active seat for read sites
+        self._store.get(seat.session_id).worker_model = seat.model
+        return {"ok": True, "id": pid, "session_id": seat.session_id, "model": seat.model}
 
     async def initialize(self, protocol_version, client_capabilities=None,
                          client_info=None, **kw):
