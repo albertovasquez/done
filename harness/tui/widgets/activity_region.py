@@ -1,7 +1,8 @@
 """ActivityRegion — the pinned, transient zone above the composer that shows what
 the agent is doing RIGHT NOW. Tool calls live here, NOT in the transcript scroll.
-Compact while working (status line + task checklist); ctrl+o expands to per-tool
-detail; renders empty when idle/terminal. Reads an AgentSnapshot. See spec §3.
+Compact while working (status line + task checklist); ctrl+o switches to a
+scannable per-tool list (one-line heads: glyph + title + status chip); renders
+empty when idle/terminal. Reads an AgentSnapshot. See spec §3.
 
 Mount strategy: TaskTree and the tools container are ALWAYS mounted in compose()
 and toggled via `.display`. This avoids async mount-timing races that arise when
@@ -35,7 +36,7 @@ class ActivityRegion(Vertical):
         yield Static("", id="ar-rule", markup=True)
         yield ActivityStatus(id="ar-status")
         yield TaskTree(id="ar-tasks")
-        yield Vertical(id="ar-tools")   # holds ToolCallRow children when expanded
+        yield Vertical(id="ar-tools")   # holds one-line ToolCallRow children (ctrl+o)
 
     def is_idle(self, snap: AgentSnapshot) -> bool:
         return snap is None or snap.state not in _WORKING
@@ -71,4 +72,4 @@ class ActivityRegion(Vertical):
         else:
             tools_container.remove_children()
             for tv in snap.tools:
-                tools_container.mount(ToolCallRow(tv, expanded=True))
+                tools_container.mount(ToolCallRow(tv, expanded=False))
