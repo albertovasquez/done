@@ -951,8 +951,34 @@ class HarnessTui(App):
             self._active_input().focus()
 
     async def on_persona_selected(self, event: PersonaSelected) -> None:
-        # Rail is view-only; persona switching is deferred to C2c.
         event.stop()
+        if self._turn_active:                 # inert mid-turn — full prompt/stream lifecycle
+            return
+        if self._conn is None:
+            return
+        try:
+            resp = await self._conn.ext_method("harness/set_persona", {"id": event.id})
+        except Exception as e:
+            self._notify_line(f"could not switch persona: {e}")
+            return
+        if not resp.get("ok"):
+            self._notify_line(f"persona: {resp.get('error', 'switch failed')}")
+            return
+        self._session_id = resp["session_id"]
+        self._persona_seen = True
+        self._apply(PersonaResolved(resp["id"]))   # updates snapshot + ActivityRegion
+        self._refresh_persona()                    # _apply does NOT refresh the chip
+        model = resp.get("model")
+        if model:
+            self._worker_model_id = model
+            self._refresh_meta_line()
+        # close the rail + refocus the prompt
+        try:
+            rail = self.query_one("#agent-rail", AgentRail)
+            rail.display = False
+        except Exception:
+            pass
+        self._active_input().focus()
 
     async def action_reload(self) -> None:
         if self._busy:
