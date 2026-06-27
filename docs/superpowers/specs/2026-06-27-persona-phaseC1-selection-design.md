@@ -74,7 +74,7 @@ tui_main.main()                         [PARENT process — the TUI]
 
 run_traced._main()                      [STANDALONE dev path — third reader]
   ├─ resolve_workspace(args.persona)    → workspace_dir
-  ├─ worker_model_id ← per-persona resolve
+  ├─ worker_model_id ← engine default   # dev harness: WORKSPACE is per-persona, MODEL is not
   └─ resolve_persona/memory(workspace_dir)   # was: hardcoded default
 ```
 
@@ -83,7 +83,11 @@ model already crosses the boundary via the `VIBEPROXY_MODEL` env var
 (`tui_main` exports it; `acp_main` reads it via `vibeproxy.default_model()`).
 C1 keeps that channel — it only changes *which* `done.conf` key the parent reads.
 The child resolves the *workspace*, because that's what it constructs the agent
-with. `run_traced` is standalone (no parent) so it does both itself.
+with. `run_traced` is standalone (no parent) and resolves the *workspace*
+per-persona; it deliberately does **not** read a per-persona model — it is a dev
+harness that never persists model swaps, so its model stays the engine default
+(a real shell `VIBEPROXY_MODEL` still applies). Per-persona model persistence is
+a product-surface (TUI/ACP) concern only.
 
 ---
 
@@ -201,8 +205,10 @@ harness/acp_agent.py         set_model writes config.save_agent(
   self._workspace_dir.name, ...) and returns the real persisted state; set_yolo's
   pin targets the same key. new_session unchanged (records self._workspace_dir).
 
-harness/run_traced.py        add --persona; resolve workspace + per-persona model
-  identically, so the dev path is not pinned to default.
+harness/run_traced.py        add --persona; resolve the WORKSPACE per-persona
+  (persona + memory), so the dev path's workspace is not pinned to default. The
+  model stays the engine default — run_traced is a dev harness with no model
+  persistence; per-persona model is a TUI/ACP-only concern.
 
 harness/persona.py / memory.py / acp_session.py   UNCHANGED — they already
   resolve from the workspace_dir handed to them; C1 just hands a selected one.
@@ -297,7 +303,9 @@ it was redesigned:
   It does not — `tui_main` spawns `acp_main` as a subprocess and the model
   crosses via `VIBEPROXY_MODEL`. Corrected in §3.
 - **Forgotten third reader.** `run_traced` independently reads the model and the
-  default workspace. Now a first-class entrypoint in §3/§5.
+  default workspace. Now a first-class entrypoint in §3/§5 — its *workspace* is
+  per-persona; its *model* stays the engine default by design (dev harness, no
+  model persistence).
 - **Dual-home clobber.** `set_yolo` *also* writes `model` into `done.conf`; moving
   `set_model` to `persona.toml` would leave the model in two files that can
   disagree — the exact bug Phase C exists to prevent. Resolved by single-homing
