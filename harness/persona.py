@@ -44,6 +44,7 @@ class TurnContext:
     dispatch path consumes so persona reaches all of them without per-site
     re-wiring."""
     persona_block: str = ""
+    memory_block: str = ""
     skill_block: str = ""
     skills: "skills.SkillLoad" = field(default_factory=lambda: skills.SkillLoad())
 
@@ -57,15 +58,13 @@ def resolve_persona(workspace_dir: Path | None) -> PersonaLoad:
     return compose_persona(workspace_dir)
 
 
-def compose_context(persona_block: str, skill_roots: list[Path],
+def compose_context(persona_block: str, memory_block: str, skill_roots: list[Path],
                     skill_names: list[str]) -> TurnContext:
-    """Bundle an ALREADY-RESOLVED persona block with a fresh skill compose. Takes
-    the resolved block (not a workspace) so the caller owns persona timing/caching
-    — persona resolves once per session, skills per turn. This is the chokepoint
-    every agent dispatch path routes through."""
+    """Bundle already-resolved persona + memory blocks with a fresh skill compose.
+    Persona+memory resolve once per session (caller-cached); skills per turn."""
     skill_load = skills.compose(skill_roots, skill_names)
-    return TurnContext(persona_block=persona_block, skill_block=skill_load.block,
-                       skills=skill_load)
+    return TurnContext(persona_block=persona_block, memory_block=memory_block,
+                       skill_block=skill_load.block, skills=skill_load)
 
 
 def _trim(text: str, limit: int) -> tuple[str, bool]:

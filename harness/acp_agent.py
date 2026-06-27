@@ -17,6 +17,7 @@ from acp.schema import (
 )
 
 from harness import config
+from harness import memory as memory_mod
 from harness import persona
 from harness import skills
 from harness.acp_emit import tool_call_start, tool_call_done, message_chunk, with_meta
@@ -108,7 +109,8 @@ class HarnessAgent(acp.Agent):
         )
 
     async def new_session(self, cwd, additional_directories=None, mcp_servers=None, **kw):
-        return acp.NewSessionResponse(session_id=self._store.new(cwd=cwd))
+        return acp.NewSessionResponse(
+            session_id=self._store.new(cwd=cwd, workspace_dir=self._workspace_dir))
 
     async def load_session(self, cwd, session_id, additional_directories=None,
                            mcp_servers=None, **kw):
@@ -150,10 +152,26 @@ class HarnessAgent(acp.Agent):
         # branches — mirroring how skill_load only fires on the agent path.
         persona_first_load = None
         if state.persona_block is None:
+            # resolve from the PER-SESSION workspace (state.workspace_dir), not the
+            # per-agent self._workspace_dir — so persona and memory agree on the
+            # session's workspace (the Phase-B isolation invariant). new_session
+            # records state.workspace_dir = self._workspace_dir at session start.
             persona_first_load = await loop.run_in_executor(
-                None, persona.resolve_persona, self._workspace_dir)
+                None, persona.resolve_persona, state.workspace_dir)
             state.persona_block = persona_first_load.block
             state.persona_load = persona_first_load
+
+        # Memory: compose once per session (cached). None => not-yet-read. Both the
+        # chat and agent dispatch paths read state.memory_block, so the COMPOSE must
+        # happen before routing; the telemetry EMIT is deferred until after
+        # classification so memory_load is ordered after task_classified and is
+        # skipped on the clarify/ambiguous branches — mirroring persona_load.
+        if state.memory_block is None:
+            from datetime import date
+            mload = await loop.run_in_executor(
+                None, lambda: memory_mod.resolve_memory(state.workspace_dir, today=date.today()))
+            state.memory_block = mload.block
+            state.memory_load = mload
 
         # 1) classify in the executor (sync litellm call must not block the loop)
         try:
@@ -182,6 +200,14 @@ class HarnessAgent(acp.Agent):
                                             "skipped": state.persona_load.skipped}}))
             state.persona_load_emitted = True
 
+        if (not state.memory_load_emitted and state.memory_load
+                and state.memory_load.injected and personalized):
+            await self._conn.session_update(session_id,
+                with_meta(message_chunk(""),
+                          {"memory_load": {"injected": state.memory_load.injected,
+                                           "skipped": state.memory_load.skipped}}))
+            state.memory_load_emitted = True
+
         if cls.needs_clarification or cls.task_type == "ambiguous":
             q = cls.clarifying_question or "Could you clarify the task?"
             await self._conn.session_update(session_id, message_chunk(q))
@@ -197,7 +223,7 @@ class HarnessAgent(acp.Agent):
             # hand the router's catalog so "what skills do we have?" is answered
             # from data, not the model (see ChatHandler.is_capability_question)
             handler = ChatHandler(self._worker_model_id, catalog=self._router.catalog,
-                                  persona_block=state.persona_block or "")
+                                  persona_block=(state.persona_block or "") + (state.memory_block or ""))
             pieces: list[str] = []
 
             def pump() -> None:
@@ -224,13 +250,13 @@ class HarnessAgent(acp.Agent):
         # offload compose_context: it does filesystem I/O (skills); keep the event loop free
         ctx = await loop.run_in_executor(
             None, persona.compose_context, state.persona_block or "",
-            self._skills_dir, cls.skills)
+            state.memory_block or "", self._skills_dir, cls.skills)
         await self._conn.session_update(session_id,
             with_meta(message_chunk(""),
                       {"skill_load": {"injected": ctx.skills.injected,
                                       "skipped": ctx.skills.skipped}}))
         engine = await self._run_agent_turn(loop, session_id, state, text, ctx.skill_block,
-                                            transcript, ctx.persona_block)
+                                            transcript, ctx.persona_block, ctx.memory_block)
         stop_reason = engine["stop_reason"]
         if stop_reason == "refusal":
             # streamed-on-screen == stored: never fold prior-turn prose in.
@@ -247,7 +273,7 @@ class HarnessAgent(acp.Agent):
         return acp.PromptResponse(stop_reason=stop_reason)
 
     async def _run_agent_turn(self, loop, session_id, state, text, skill_block, prior,
-                              persona_block="") -> dict:
+                              persona_block="", memory_block="") -> dict:
         # Tool-call ids are TURN-LOCAL: the counter resets each turn and the
         # "current id" lives here (not on SessionState), so the start/done/permission
         # handshake within this turn pairs correctly and ids restart at tc1 per turn.
@@ -373,7 +399,8 @@ class HarnessAgent(acp.Agent):
                 # too; the factory ignores the arg in mock mode.
                 agent = TracingAgent(self._model_factory(self._worker_model_id), env,
                                      emitter=emitter, skill_block=skill_block,
-                                     persona_block=persona_block, **cfg)
+                                     persona_block=persona_block, memory_block=memory_block,
+                                     **cfg)
                 agent_ref["agent"] = agent
                 model = agent.model
                 # mock model has no on_delta attr → bind nothing → mock mode unchanged.

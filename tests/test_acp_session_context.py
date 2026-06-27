@@ -320,6 +320,80 @@ def test_persona_load_emits_on_first_personalized_turn_after_clarify(tmp_path):
     assert keys.index("task_classified", 1) < keys.index("persona_load")
 
 
+# --------------------------------------------------------------------------
+# Task 6 (integration): memory wiring into HarnessAgent
+# --------------------------------------------------------------------------
+
+def test_memory_reaches_agent_path(tmp_path, monkeypatch):
+    # a workspace with MEMORY.md content -> the memory_block actually reaches the
+    # TracingAgent (not just cached on SessionState). Spy on the TracingAgent ctor.
+    ws = tmp_path / "ws"; ws.mkdir()
+    (ws / "MEMORY.md").write_text("REMEMBER: prefers tabs", encoding="utf-8")
+    # run_engine does `from harness.tracing_agent import TracingAgent` (lazy), so
+    # patch the SOURCE module — that is the binding the lazy import resolves.
+    import harness.tracing_agent as tamod
+    captured = {}
+    real_TA = tamod.TracingAgent
+    def spy_tracing(*a, **k):
+        captured.update(k)
+        return real_TA(*a, **k)
+    monkeypatch.setattr(tamod, "TracingAgent", spy_tracing)
+
+    agent = _build(_ScriptedRouter([_agent_fix()]), worker_model_id=None)
+    agent._workspace_dir = ws
+    sid = asyncio.run(agent.new_session(cwd=str(tmp_path))).session_id
+    _prompt(agent, sid, "do a thing")
+    # cached on the session AND threaded into the TracingAgent
+    assert "REMEMBER: prefers tabs" in (agent._store.get(sid).memory_block or "")
+    assert "REMEMBER: prefers tabs" in captured.get("memory_block", "")
+
+
+def test_persona_and_memory_resolve_from_same_session_workspace(tmp_path):
+    # Codex regression: persona must resolve from state.workspace_dir (per session),
+    # not self._workspace_dir — so if the agent's workspace changes between
+    # new_session and prompt, the session keeps ITS recorded workspace for BOTH
+    # persona and memory (no mixed context).
+    wsA = tmp_path / "A"; wsA.mkdir()
+    (wsA / "SOUL.md").write_text("A-SOUL", encoding="utf-8")
+    (wsA / "MEMORY.md").write_text("A-MEM", encoding="utf-8")
+    wsB = tmp_path / "B"; wsB.mkdir()
+    (wsB / "SOUL.md").write_text("B-SOUL", encoding="utf-8")
+
+    agent = _build(_ScriptedRouter([_agent_fix()]), worker_model_id=None)
+    agent._workspace_dir = wsA
+    sid = asyncio.run(agent.new_session(cwd=str(tmp_path))).session_id  # records wsA
+    agent._workspace_dir = wsB        # agent moves AFTER the session was created
+    _prompt(agent, sid, "do a thing")
+    st = agent._store.get(sid)
+    # both persona and memory came from wsA (the session's recorded workspace)
+    assert "A-SOUL" in (st.persona_block or "")
+    assert "B-SOUL" not in (st.persona_block or "")
+    assert "A-MEM" in (st.memory_block or "")
+
+
+def test_memory_load_event_gated_off_for_empty_memory(tmp_path):
+    # seeded-but-empty (no memory content) -> NO memory_load event (the no-op)
+    ws = tmp_path / "ws"; ws.mkdir()
+    (ws / "SOUL.md").write_text("BE TERSE", encoding="utf-8")   # persona but no memory
+    agent = _build(_ScriptedRouter([_agent_fix()]), worker_model_id=None)
+    agent._workspace_dir = ws
+    sid = asyncio.run(agent.new_session(cwd=str(tmp_path))).session_id
+    _prompt(agent, sid, "do a thing")
+    assert "memory_load" not in _meta_keys_in_order(agent)
+
+
+def test_memory_load_emits_after_task_classified(tmp_path):
+    ws = tmp_path / "ws"; ws.mkdir()
+    (ws / "MEMORY.md").write_text("durable fact", encoding="utf-8")
+    agent = _build(_ScriptedRouter([_agent_fix()]), worker_model_id=None)
+    agent._workspace_dir = ws
+    sid = asyncio.run(agent.new_session(cwd=str(tmp_path))).session_id
+    _prompt(agent, sid, "do a thing")
+    keys = _meta_keys_in_order(agent)
+    assert "memory_load" in keys
+    assert keys.index("task_classified") < keys.index("memory_load")
+
+
 def test_seeded_default_workspace_is_byte_identical_noop(monkeypatch, tmp_path):
     # seeding ships only inert templates -> chat path has no system message AND
     # no persona_load event fires. The Phase A no-op guarantee must survive seeding.
@@ -342,3 +416,23 @@ def test_seeded_default_workspace_is_byte_identical_noop(monkeypatch, tmp_path):
     assert captured["messages"] == [{"role": "user", "content": "hi"}]
     # and no persona_load event emitted
     assert "persona_load" not in _meta_keys_in_order(agent)
+
+
+def test_seeded_default_workspace_memory_is_byte_identical_noop(monkeypatch, tmp_path):
+    # the seeded default (inert templates, NO memory content) must stay
+    # byte-identical: no system message, no persona_load, no memory_load.
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    from harness import persona, paths
+    persona.seed_default_workspace()
+    captured = {}
+    def fake_completion(**kwargs):
+        captured.update(kwargs); return iter([])
+    import litellm
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+    agent = _build(_ScriptedRouter([_chat()]), worker_model_id="gpt-5.4")
+    agent._workspace_dir = paths.default_workspace_dir()
+    sid = asyncio.run(agent.new_session(cwd=".")).session_id
+    _prompt(agent, sid, "hi")
+    assert captured["messages"] == [{"role": "user", "content": "hi"}]
+    keys = _meta_keys_in_order(agent)
+    assert "persona_load" not in keys and "memory_load" not in keys
