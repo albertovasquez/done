@@ -88,7 +88,10 @@ class HarnessTui(App):
         self._version = version
         self._yolo = yolo                          # live gate (TUI mirror of the agent's)
         self._launch_persona = persona or "default"  # the persona id this process launched as
-        self._yolo_pinned = _config.yolo_pinned()  # persisted pin, for the chip's '· pin'
+        # FIX 5: read the pin for the LAUNCH persona (not always the default persona).
+        # After a switch the child process re-execs with persona= set to the target,
+        # so this correctly reads the target's pin on startup.
+        self._yolo_pinned = _config.yolo_pinned(self._launch_persona)
         self._client = TuiClient(self)
         self._conn = None
         self._cm = None                       # the spawn_agent_process context manager
@@ -510,9 +513,12 @@ class HarnessTui(App):
                 # Otherwise let Tab do normal focus traversal (don't stop).
                 return
             # Esc from the rail (when slash menu is closed) → hide rail, return focus.
+            # FIX 4: only close the rail when no turn is active; if a turn is running,
+            # let Esc fall through to action_cancel (the "Cancel turn" binding).
             if event.key == "escape":
                 rail = self.query_one("#agent-rail", AgentRail)
-                if rail.display and isinstance(self.focused, AgentRail):
+                if rail.display and isinstance(self.focused, AgentRail) \
+                        and not self._turn_active:
                     rail.display = False
                     self._active_input().focus()
                     event.stop()
@@ -934,7 +940,7 @@ class HarnessTui(App):
                 else paths.config_dir() / "agents" / pid
             return persona_config.read_name(ws)
         return persona_rows(persona_select.list_personas(),
-                            self._snapshot.active_id, name_of)
+                            self._current_persona(), name_of)
 
     def action_toggle_rail(self) -> None:
         rail = self.query_one("#agent-rail", AgentRail)

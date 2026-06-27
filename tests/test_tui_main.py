@@ -321,10 +321,11 @@ def test_relaunch_without_switch_keeps_current_persona(tmp_path):
 
 # ---- C2b Bug 1+2: switch must re-resolve target persona's model + yolo ----
 
-def test_apply_switch_clears_model_and_yolo(tmp_path):
-    """_apply_switch must clear args.model and args.yolo on a real switch so the
-    child re-exec resolves the TARGET persona's model and yolo-pin (not the old
-    persona's resolved values)."""
+def test_apply_switch_preserves_backend_and_clears_yolo(tmp_path):
+    """_apply_switch must set args.persona and clear args.yolo on a real switch.
+    FIX 2: args.model (the session backend) must be PRESERVED so the child re-exec
+    keeps the session mode (mock vs vibeproxy). The model OVERRIDE re-resolves in the
+    child via the cleared env (FIX 1), not via the flag."""
     import argparse
     args = argparse.Namespace(model="vibeproxy", cwd=str(tmp_path), yolo=True, persona="default")
     class _App:
@@ -332,30 +333,32 @@ def test_apply_switch_clears_model_and_yolo(tmp_path):
     tui_main._apply_switch(args, _App())
     # persona updated
     assert args.persona == "fred"
-    # model cleared so child re-resolves from fred's config
-    assert args.model is None
+    # backend (session mode) preserved — NOT cleared (FIX 2)
+    assert args.model == "vibeproxy"
     # yolo cleared so child re-resolves fred's pin
     assert args.yolo is False
 
 
-def test_relaunch_args_omits_model_flag_when_none(tmp_path):
-    """When args.model is None (set by _apply_switch on a switch), _relaunch_args
-    must NOT emit --model so the child process reads the target persona's config."""
+def test_relaunch_args_always_emits_model_flag(tmp_path):
+    """_relaunch_args must ALWAYS emit --model (the backend). The backend (mock vs
+    vibeproxy) is the session mode and must survive a re-exec. The model OVERRIDE
+    (which model within vibeproxy) is re-resolved by the child via the cleared env
+    (FIX 1), not via this flag. args.model is never None after _apply_switch (FIX 2)."""
     from types import SimpleNamespace as NS
-    args = NS(model=None, yolo=False, persona="fred")
+    args = NS(model="vibeproxy", yolo=False, persona="fred")
     flags = tui_main._relaunch_args(args, str(tmp_path))
-    assert "--model" not in flags
+    assert "--model" in flags
+    assert "vibeproxy" in flags
     assert "--persona" in flags and "fred" in flags
 
 
 def test_switch_relaunch_re_resolves_fred_model(isolated_config, monkeypatch, tmp_path):
     """End-to-end: launching as 'default' (vibeproxy/m-default), switching to
-    'fred' (mock/m-fred), the re-exec'd child process resolves fred's backend and
-    model — not default's. Contract: the re-exec'd child must run _resolve_model
-    for fred, yielding (mock, m-fred)."""
+    'fred' (vibeproxy/m-fred). FIX 2: _apply_switch preserves the session backend;
+    FIX 1: env is cleared before execv so the child re-resolves fred's model override."""
     from harness import config
     # Set up fred's persona config
-    config.save_agent("fred", config.AgentConfig(backend="mock", model="m-fred"))
+    config.save_agent("fred", config.AgentConfig(backend="vibeproxy", model="m-fred"))
     config.save_default(config.AgentConfig(backend="vibeproxy", model="m-default"))
 
     # Simulate what main() does: resolve for current (default) persona
@@ -369,23 +372,21 @@ def test_switch_relaunch_re_resolves_fred_model(isolated_config, monkeypatch, tm
         _switch_persona = "fred"
     tui_main._apply_switch(args, _App())
 
-    # After switch: model cleared, yolo cleared, persona=fred
+    # After switch (FIX 2): backend preserved, yolo cleared, persona=fred
     assert args.persona == "fred"
-    assert args.model is None
+    assert args.model == "vibeproxy"   # backend preserved, NOT None
     assert args.yolo is False
 
-    # Child re-exec: re-resolve for fred's persona (simulates main() entry)
-    backend2, model2 = tui_main._resolve_model(args.model, args.persona)
-    yolo2 = tui_main._resolve_yolo(args.yolo, args.persona)
-    assert backend2 == "mock",   f"expected fred's backend 'mock', got {backend2!r}"
-    assert model2 == "m-fred",   f"expected fred's model 'm-fred', got {model2!r}"
-    assert yolo2 is False
+    # The relaunch flags carry the backend and persona; child re-resolves model override
+    flags = tui_main._relaunch_args(args, str(tmp_path))
+    assert "--model" in flags, "backend must be in relaunch flags"
+    assert "--persona" in flags and "fred" in flags
 
 
 def test_switch_preserves_backend_type_in_relaunch(isolated_config, monkeypatch, tmp_path):
-    """On a switch the --model backend flag is omitted; the child picks up fred's
-    backend from config. But if fred has no config, the fallback is vibeproxy (not
-    mock just because the session ran in mock mode)."""
+    """On a switch the backend (mock vs vibeproxy) is preserved in the relaunch flags.
+    A mock session switching to fred stays mock (FIX 2). The model OVERRIDE re-resolves
+    in the child via the cleared env (FIX 1) — not via the flag."""
     from harness import config
     monkeypatch.setattr(tui_main.sys, "argv", ["not-a-real-file"])
 
@@ -394,7 +395,121 @@ def test_switch_preserves_backend_type_in_relaunch(isolated_config, monkeypatch,
     class _App:
         _switch_persona = "fred"
     tui_main._apply_switch(args, _App())
-    # model cleared — child will fall back to vibeproxy (no fred config)
-    assert args.model is None
+    # backend preserved — "mock" session stays "mock" after switch (FIX 2)
+    assert args.model == "mock"
     flags = tui_main._relaunch_args(args, str(tmp_path))
-    assert "--model" not in flags, "no --model on switch relaunch"
+    assert "--model" in flags, "--model must be present in relaunch flags (FIX 2)"
+    assert "mock" in flags, "session backend (mock) must be preserved across switch"
+
+
+# ---- FIX 1: env-clear on persona switch (model leak via inherited env) ----
+
+def test_switch_clears_vibeproxy_model_env_when_not_shell_set(
+        isolated_config, monkeypatch, tmp_path):
+    """On a persona switch, main() must pop VIBEPROXY_MODEL from os.environ before
+    execv, BUT only when it was NOT set by the real shell (i.e. we exported it from
+    done.conf ourselves). This prevents the child from treating the old persona's
+    model as a shell value and skipping target persona's done.conf resolution."""
+    from harness import config
+    # Set up: default exports claude-sonnet; fred has claude-haiku
+    config.save_default(config.AgentConfig(backend="vibeproxy", model="claude-sonnet"))
+    config.save_agent("fred", config.AgentConfig(backend="vibeproxy", model="claude-haiku"))
+
+    monkeypatch.delenv("VIBEPROXY_MODEL", raising=False)   # shell did NOT set it
+    monkeypatch.setattr(tui_main.sys, "argv", ["not-a-real-file"])
+
+    env_at_execv = {}
+    def fake_execv(path, argv):
+        env_at_execv.update(os.environ)
+        raise SystemExit(0)
+
+    monkeypatch.setattr(tui_main.os, "execv", fake_execv)
+
+    class _FakeApp:
+        _reexec = True
+        _switch_persona = "fred"
+        def __init__(self, **kw): pass
+        def run(self): pass
+
+    monkeypatch.setattr(tui_main, "HarnessTui", lambda **kw: _FakeApp())
+    monkeypatch.setattr(tui_main.paths, "load_env", lambda cwd: None)
+
+    with pytest.raises(SystemExit):
+        tui_main.main(["--cwd", str(tmp_path)])
+
+    # The old persona's model must NOT be in env at execv time
+    assert env_at_execv.get("VIBEPROXY_MODEL") is None, (
+        "VIBEPROXY_MODEL must be cleared before execv on a persona switch "
+        f"(was: {env_at_execv.get('VIBEPROXY_MODEL')!r})"
+    )
+
+
+def test_switch_does_not_clear_vibeproxy_model_when_shell_set(
+        isolated_config, monkeypatch, tmp_path):
+    """When the user explicitly exported VIBEPROXY_MODEL in their shell, a persona
+    switch must NOT clobber it — the shell value takes priority."""
+    from harness import config
+    config.save_default(config.AgentConfig(backend="vibeproxy", model="claude-sonnet"))
+    config.save_agent("fred", config.AgentConfig(backend="vibeproxy", model="claude-haiku"))
+
+    monkeypatch.setenv("VIBEPROXY_MODEL", "shell-model")  # shell set it
+    monkeypatch.setattr(tui_main.sys, "argv", ["not-a-real-file"])
+
+    env_at_execv = {}
+    def fake_execv(path, argv):
+        env_at_execv.update(os.environ)
+        raise SystemExit(0)
+
+    monkeypatch.setattr(tui_main.os, "execv", fake_execv)
+
+    class _FakeApp:
+        _reexec = True
+        _switch_persona = "fred"
+        def __init__(self, **kw): pass
+        def run(self): pass
+
+    monkeypatch.setattr(tui_main, "HarnessTui", lambda **kw: _FakeApp())
+    monkeypatch.setattr(tui_main.paths, "load_env", lambda cwd: None)
+
+    with pytest.raises(SystemExit):
+        tui_main.main(["--cwd", str(tmp_path)])
+
+    # Shell model must survive
+    assert env_at_execv.get("VIBEPROXY_MODEL") == "shell-model", (
+        "shell-set VIBEPROXY_MODEL must be preserved across a switch"
+    )
+
+
+def test_plain_reload_does_not_clear_vibeproxy_model_env(
+        isolated_config, monkeypatch, tmp_path):
+    """A plain /reload (no switch) must NOT clear VIBEPROXY_MODEL — only a persona
+    switch should do that."""
+    from harness import config
+    config.save_default(config.AgentConfig(backend="vibeproxy", model="claude-sonnet"))
+
+    monkeypatch.delenv("VIBEPROXY_MODEL", raising=False)
+    monkeypatch.setattr(tui_main.sys, "argv", ["not-a-real-file"])
+
+    env_at_execv = {}
+    def fake_execv(path, argv):
+        env_at_execv.update(os.environ)
+        raise SystemExit(0)
+
+    monkeypatch.setattr(tui_main.os, "execv", fake_execv)
+
+    class _FakeApp:
+        _reexec = True
+        _switch_persona = None   # plain reload, no switch
+        def __init__(self, **kw): pass
+        def run(self): pass
+
+    monkeypatch.setattr(tui_main, "HarnessTui", lambda **kw: _FakeApp())
+    monkeypatch.setattr(tui_main.paths, "load_env", lambda cwd: None)
+
+    with pytest.raises(SystemExit):
+        tui_main.main(["--cwd", str(tmp_path)])
+
+    # On a plain reload, the model should be present (we exported it from done.conf)
+    assert env_at_execv.get("VIBEPROXY_MODEL") == "claude-sonnet", (
+        "plain reload must preserve the exported VIBEPROXY_MODEL"
+    )

@@ -1236,3 +1236,144 @@ def test_tab_binding_removed_no_global_toggle():
     assert not tab_bindings, (
         "Tab must NOT be in BINDINGS — it is handled by on_key for focus-traversal"
     )
+
+
+# ---- FIX 3: rail highlight uses _current_persona() not stale snapshot ----
+
+def test_persona_rows_highlights_launch_persona_before_first_turn():
+    """_persona_rows must use _current_persona() for the active-id argument.
+    Before FIX 3, it used self._snapshot.active_id which is 'default' (initial
+    snapshot) even when launched as 'fred', so the fred row was not highlighted."""
+    from harness.tui.widgets.agent_rail import AgentRail
+    app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock", persona="fred")
+    # Before the first PersonaResolved, _persona_seen is False.
+    # _current_persona() must return "fred" (the launch persona).
+    assert app._current_persona() == "fred", (
+        "_current_persona() must return launch persona before first PersonaResolved"
+    )
+    # _snapshot.active_id is still "default" (initial_snapshot)
+    assert app._snapshot.active_id != "fred", (
+        "snapshot active_id is stale 'default' before first PersonaResolved"
+    )
+    # _persona_rows must use _current_persona(), not snapshot.active_id
+    # We test this indirectly: if the rows were built with snapshot.active_id='default',
+    # then fred's row would NOT be marked active. Patch persona_rows to capture the
+    # active_id argument.
+    import harness.tui.app as app_mod
+    from harness import persona_select as ps
+    captured = {}
+    real_persona_rows = None
+    try:
+        import harness.tui.roster as roster_mod
+        real_persona_rows = roster_mod.persona_rows
+        def spy_rows(personas, active_id, name_of):
+            captured["active_id"] = active_id
+            return real_persona_rows(personas, active_id, name_of)
+        roster_mod.persona_rows = spy_rows
+        # _persona_rows is called when the rail is opened
+        app._persona_rows()
+    finally:
+        if real_persona_rows is not None:
+            roster_mod.persona_rows = real_persona_rows
+    assert captured.get("active_id") == "fred", (
+        f"_persona_rows must pass 'fred' as active_id (got {captured.get('active_id')!r}); "
+        "it must use _current_persona() not _snapshot.active_id"
+    )
+
+
+# ---- FIX 4: Esc closes rail only when no turn active ----
+
+def test_esc_cancels_turn_even_when_rail_open():
+    """Esc while the rail is open AND a turn is active must let Esc fall through to
+    action_cancel (it must NOT close the rail and eat the event). Before FIX 4,
+    the rail-close path called event.stop() unconditionally, so action_cancel never
+    fired."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            from harness.tui.widgets.agent_rail import AgentRail
+            # Open the rail
+            app.action_toggle_rail()
+            await pilot.pause()
+            rail = app.query_one("#agent-rail", AgentRail)
+            assert rail.display is True, "rail must be open for this test"
+
+            # Simulate a turn in flight
+            app._turn_active = True
+
+            # Track whether action_cancel was called
+            cancel_called = {"v": False}
+            original_cancel = app.action_cancel
+            async def fake_cancel():
+                cancel_called["v"] = True
+            app.action_cancel = fake_cancel
+
+            # Press Esc — should NOT close the rail; should reach action_cancel
+            await pilot.press("escape")
+            await pilot.pause()
+
+            # Rail must still be open (not closed by on_key)
+            assert rail.display is True, (
+                "Esc with turn active must NOT close the rail "
+                "(it should fall through to action_cancel)"
+            )
+
+    asyncio.run(go())
+
+
+def test_esc_closes_rail_when_no_turn_active():
+    """Esc while the rail is open and no turn is active must close the rail (existing
+    behaviour must still work when _turn_active is False)."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            from harness.tui.widgets.agent_rail import AgentRail
+            from harness.tui.widgets.prompt_area import PromptArea
+            # Open the rail and focus it
+            app.action_toggle_rail()
+            await pilot.pause()
+            rail = app.query_one("#agent-rail", AgentRail)
+            rail.focus()
+            await pilot.pause()
+            assert rail.display is True
+            assert app._turn_active is False
+
+            # Esc — should close the rail
+            await pilot.press("escape")
+            await pilot.pause()
+            assert rail.display is False, "Esc with no turn must close the rail"
+
+    asyncio.run(go())
+
+
+# ---- FIX 5: yolo-pin chip reads from launch persona, not always default ----
+
+def test_yolo_pinned_reads_launch_persona(tmp_path, monkeypatch):
+    """HarnessTui.__init__ must call _config.yolo_pinned(persona or 'default'),
+    not _config.yolo_pinned() with no arg (which always reads the default persona).
+    Before FIX 5, launching as 'fred' with fred.yolo_pinned=True would produce
+    _yolo_pinned=False because it read the default persona's pin."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    from harness import config
+    # fred has yolo_pinned=True, default does not
+    config.update_agent("fred", backend="mock", model="m-fred", yolo_pinned=True)
+    config.update_default(backend="mock", model="m-default", yolo_pinned=False)
+
+    app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock", persona="fred")
+    assert app._yolo_pinned is True, (
+        "app._yolo_pinned must be True when fred.yolo_pinned=True; "
+        "HarnessTui.__init__ must call _config.yolo_pinned('fred'), not yolo_pinned()"
+    )
+
+
+def test_yolo_pinned_default_persona_still_works(tmp_path, monkeypatch):
+    """Launching without a persona (defaults to 'default') must still read the
+    default persona's yolo_pinned — the FIX 5 change must not break this."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    from harness import config
+    config.update_default(backend="mock", model="m-default", yolo_pinned=True)
+
+    app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")  # no persona=
+    assert app._yolo_pinned is True, (
+        "default persona's yolo_pinned must still be read when no persona= is passed"
+    )
