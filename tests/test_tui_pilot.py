@@ -946,3 +946,36 @@ def test_statusbar_children_share_one_row():
             # left-to-right order: mode chip, then cwd, then version
             assert kids["statusbar-mode"].x < kids["statusbar-left"].x < kids["statusbar-right"].x
     asyncio.run(go())
+
+
+def test_agent_rail_renders_rows_and_posts_selection():
+    from harness.tui.widgets.agent_rail import AgentRail, PersonaSelected
+    from harness.tui.roster import PersonaRow
+    from textual.app import App
+
+    posted = []
+
+    class _Probe(App):
+        def compose(self):
+            yield AgentRail(id="rail")
+        def on_persona_selected(self, msg: PersonaSelected):
+            posted.append(msg.id)
+
+    async def go():
+        app = _Probe()
+        async with app.run_test() as pilot:
+            rail = app.query_one("#rail", AgentRail)
+            rail.set_rows((
+                PersonaRow(id="default", name="default", active=False),
+                PersonaRow(id="fred", name="Fred R.", active=True),
+            ))
+            await pilot.pause()
+            # the rendered content shows both names
+            text = rail._rail_text()           # a helper that returns the rendered lines as one str
+            assert "default" in text and "Fred R." in text
+            # selecting the "fred" row posts PersonaSelected("fred")
+            rail.select_id("fred")             # a direct selection entrypoint the widget exposes
+            await pilot.pause()
+            assert posted == ["fred"]
+
+    asyncio.run(go())
