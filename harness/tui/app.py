@@ -36,6 +36,7 @@ from harness.tui.render import render_update, harness_chips, format_cwd
 from harness.tui.state import (
     initial_snapshot, reduce, TurnStarted, TurnEnded, ItemReceived,
     TokensUpdated, DecisionOpened, decision_from_meta,
+    PersonaResolved, persona_from_meta,
 )
 from harness.tui.theme import HARNESS_THEME, COLORS
 from harness.tui.widgets.activity_region import ActivityRegion
@@ -102,6 +103,7 @@ class HarnessTui(App):
         self._stream_closed = True            # True => the next message delta starts a fresh widget
         self._boundary_after = False          # True => an in-turn boundary (tool/thought/stream_reset) closed the block; next prose opens a FRESH widget (vs. a late delta of the prior answer, which extends in place)
         self._tokens = 0                      # last-known token count from usage updates
+        self._persona_seen = False            # True after the first real PersonaResolved lands
         self._snapshot = initial_snapshot()   # the presentation model (pure, immutable)
         self._commands = build_registry()     # slash-command registry
         self._slash = None                    # the SlashMenu widget while open, else None
@@ -222,6 +224,7 @@ class HarnessTui(App):
         chip = StatusChip.for_yolo(self._yolo, self._yolo_pinned)
         chip.id = "statusbar-mode"
         await bar.mount(chip)
+        await bar.mount(Static(self._status_persona(), id="statusbar-persona", markup=True))
         await bar.mount(Static(self._status_left(), id="statusbar-left", markup=True))
         await bar.mount(Static(self._status_right(), id="statusbar-right", markup=True))
 
@@ -243,6 +246,18 @@ class HarnessTui(App):
     def _refresh_status(self) -> None:
         try:
             self.query_one("#statusbar-right", Static).update(self._status_right())
+        except Exception:
+            pass
+
+    def _status_persona(self) -> str:
+        if not getattr(self, "_persona_seen", False):
+            return ""              # pre-first-chip: chip is blank/hidden
+        a = self._snapshot.active
+        return f"[$muted]persona: {a.id}[/]" if a is not None else ""
+
+    def _refresh_persona(self) -> None:
+        try:
+            self.query_one("#statusbar-persona", Static).update(self._status_persona())
         except Exception:
             pass
 
@@ -777,6 +792,12 @@ class HarnessTui(App):
         dv = decision_from_meta(getattr(msg.update, "field_meta", None))
         if dv is not None:
             self._apply(DecisionOpened(dv))
+        # fold a persona resolution if present (structured path — NOT harness_chips)
+        pid = persona_from_meta(getattr(msg.update, "field_meta", None))
+        if pid:
+            self._apply(PersonaResolved(pid))
+            self._persona_seen = True
+            self._refresh_persona()
         for chip in harness_chips(getattr(msg.update, "field_meta", None)):
             self._append_line(_c("muted", f"\\[{chip}]"))
         item = render_update(msg.update)
