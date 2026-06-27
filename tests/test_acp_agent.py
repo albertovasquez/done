@@ -326,3 +326,42 @@ def test_set_model_updates_active_session_state(isolated_config):
 
     # The active session's state must reflect the new model so the next prompt uses it
     assert agent._store.get(sid).worker_model == "m-new"
+
+
+# --- create_persona tests (Task 2) ---
+
+@pytest.fixture
+def agent_default(isolated_config):
+    """A bare HarnessAgent with _active_persona='default' (no workspace)."""
+    agent = _make_agent(backend="mock")
+    agent._cwd = "/x"
+    return agent
+
+
+def test_create_persona_creates_and_activates(agent_default, isolated_config):
+    resp = asyncio.run(agent_default.ext_method("harness/create_persona", {"id": "fred"}))
+    assert resp["ok"] is True and resp["id"] == "fred"
+    assert resp["session_id"]
+    assert agent_default._active_persona == "fred"
+    from harness import paths
+    assert (paths.config_dir() / "agents" / "fred").is_dir()
+
+
+def test_create_persona_duplicate_keeps_active(agent_default, isolated_config):
+    asyncio.run(agent_default.ext_method("harness/create_persona", {"id": "fred"}))
+    before = agent_default._active_persona   # "fred" (activated by first create)
+    resp = asyncio.run(agent_default.ext_method("harness/create_persona", {"id": "fred"}))
+    assert resp["ok"] is False
+    assert agent_default._active_persona == before
+
+
+def test_create_persona_invalid_keeps_active(agent_default, isolated_config):
+    before = agent_default._active_persona   # "default"
+    resp = asyncio.run(agent_default.ext_method("harness/create_persona", {"id": "default"}))
+    assert resp["ok"] is False
+    assert agent_default._active_persona == before
+
+
+def test_create_persona_missing_id(agent_default, isolated_config):
+    resp = asyncio.run(agent_default.ext_method("harness/create_persona", {}))
+    assert resp["ok"] is False

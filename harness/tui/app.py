@@ -1022,6 +1022,11 @@ class HarnessTui(App):
         if not resp.get("ok"):
             self._notify_line(f"persona: {resp.get('error', 'switch failed')}")
             return
+        self._apply_persona_switch(resp)
+
+    def _apply_persona_switch(self, resp: dict) -> None:
+        """Apply a successful set_persona/create_persona result: repoint the session,
+        update the indicator + footer, close the rail, refocus. Shared by switch + create."""
         self._session_id = resp["session_id"]
         self._persona_seen = True
         self._apply(PersonaResolved(resp["id"]))   # updates snapshot + ActivityRegion
@@ -1037,6 +1042,31 @@ class HarnessTui(App):
         except Exception:
             pass
         self._active_input().focus()
+
+    def on_new_persona_requested(self, event) -> None:
+        event.stop()
+        from harness.tui.widgets.new_persona_modal import NewPersonaModal
+
+        if self._turn_active:               # guard at open-time (I3)
+            self._notify_line("finish the current turn before creating a persona")
+            return
+
+        def _done(resp):
+            if resp:                        # resp is the {ok:true,...} dict on success
+                self._apply_persona_switch(resp)
+
+        self.push_screen(NewPersonaModal(on_create=self._do_create_persona), _done)
+
+    async def _do_create_persona(self, name: str) -> dict:
+        """App-side create callback invoked by NewPersonaModal's worker.
+
+        Returns the ext_method resp dict so the modal can interpret ok/error.
+        Does NOT call _apply_persona_switch (the modal dismisses with resp and
+        _done in on_new_persona_requested applies it).
+        """
+        if self._conn is None:
+            return {}
+        return await self._conn.ext_method("harness/create_persona", {"id": name})
 
     async def action_reload(self) -> None:
         if self._busy:

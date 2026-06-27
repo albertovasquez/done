@@ -9,6 +9,7 @@ is deferred to C2c). Mirrors select_modal's ListView usage."""
 from __future__ import annotations
 
 from textual import on
+from textual.binding import Binding
 from textual.message import Message
 from textual.widgets import Label, ListItem, ListView
 
@@ -24,6 +25,10 @@ class PersonaSelected(Message):
         super().__init__()
 
 
+class NewPersonaRequested(Message):
+    """Posted when the user presses `n` in the rail to create a new persona."""
+
+
 def _row_label(r: PersonaRow) -> str:
     return f"{ACTIVE_GLYPH if r.active else IDLE_GLYPH} {r.name}"
 
@@ -31,6 +36,8 @@ def _row_label(r: PersonaRow) -> str:
 class AgentRail(ListView):
     """A selectable persona list. Rows are set via set_rows(); choosing a row
     posts PersonaSelected(id)."""
+
+    BINDINGS = [Binding("n", "new_persona", "New persona")]
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -51,6 +58,9 @@ class AgentRail(ListView):
     def select_id(self, persona_id: str) -> None:
         """Programmatic selection entrypoint (used by tests + enter/click)."""
         self.post_message(PersonaSelected(persona_id))
+
+    def action_new_persona(self) -> None:
+        self.post_message(NewPersonaRequested())
 
     @on(ListView.Selected)
     def _on_selected(self, event: ListView.Selected) -> None:

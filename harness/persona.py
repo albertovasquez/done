@@ -14,6 +14,7 @@ import re
 from pathlib import Path
 
 from harness import paths
+from harness import persona_select   # _VALID_ID, RESERVED_KEY, InvalidPersonaId
 from harness import skills
 
 logger = logging.getLogger("harness.persona")
@@ -22,6 +23,38 @@ PERSONA_FILES = ["SOUL.md", "IDENTITY.md", "USER.md"]   # order = injection orde
 MAX_FILE_CHARS = 8000                                   # per-file trim ceiling
 
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+
+
+class PersonaExists(Exception):
+    """Raised by create_persona when the target workspace already exists.
+    str(e) is the offending id. The opposite failure of UnknownPersona."""
+
+
+def _copy_persona_templates(dest: Path) -> None:
+    """Copy the bundled inert template trio into `dest`, byte-for-byte, creating
+    the dir and skipping any file that already exists. The ONLY shared seeding
+    logic — callers own validation and raise-policy (seed swallows, create reports)."""
+    src = paths.bundled_persona_templates_dir()
+    dest.mkdir(parents=True, exist_ok=True)
+    for name in PERSONA_FILES:
+        s, d = src / name, dest / name
+        if s.is_file() and not d.exists():
+            d.write_bytes(s.read_bytes())
+
+
+def create_persona(persona_id: str) -> Path:
+    """Create a NEW persona workspace under config_dir()/agents/<id> with the inert
+    template trio, and return its path. Validation: charset (^[a-z0-9_-]+$) AND the
+    reserved id "default" is rejected (the charset gate alone would allow it). No
+    clobber: if the target path already exists (file or dir) -> PersonaExists.
+    Explicit creation REPORTS failure (OSError propagates) — unlike seed_default_workspace."""
+    if persona_id == persona_select.RESERVED_KEY or not persona_select._VALID_ID.match(persona_id):
+        raise persona_select.InvalidPersonaId(persona_id)
+    target = paths.config_dir() / "agents" / persona_id
+    if target.exists():
+        raise PersonaExists(persona_id)
+    _copy_persona_templates(target)
+    return target
 
 
 def _meaningful(raw: str) -> bool:
@@ -79,18 +112,13 @@ def _trim(text: str, limit: int) -> tuple[str, bool]:
 
 def seed_default_workspace() -> None:
     """Copy the bundled inert templates into ~/.config/harness/agents/default/ on
-    first run. No-op if the dir already exists (never clobber a real workspace).
-    Never overwrites a file. Best-effort: never raises into the startup path."""
+    first run. No-op if the dir already exists (never clobber / never backfill).
+    Best-effort: never raises into the startup path."""
     dest = paths.default_workspace_dir()
     if dest.exists():
-        return                                  # user has a workspace; do not clobber
+        return                                  # user has a workspace; do not clobber/backfill
     try:
-        src = paths.bundled_persona_templates_dir()
-        dest.mkdir(parents=True, exist_ok=True)
-        for name in PERSONA_FILES:
-            s, d = src / name, dest / name
-            if s.is_file() and not d.exists():
-                d.write_text(s.read_text(encoding="utf-8"), encoding="utf-8")
+        _copy_persona_templates(dest)
     except OSError as e:
         # Read-only home etc. — never break startup, but a silent failure here
         # means the default persona templates never appear ("why is my persona

@@ -322,6 +322,18 @@ Search + scrollable list modal; the base both modals extend.
   the base both modals extend — reuse it before building any new picker; don't
   hand-roll a list overlay.
 
+### `NewPersonaModal`   `✅ shipped` (persona-create)
+Name-a-new-persona overlay: an `Input` + a status line. Lifecycle: input → creating
+(the `◐◓◑◒` spinner reused from `ActivityStatus`, reduced-motion static `◐`) →
+`dismiss(id)` on success / inline `$error` on failure. Opened by `n` in the
+`AgentRail`; on success the app creates the workspace (inert template trio) and
+switches to it (the C2c `_apply_persona_switch` path). Sibling of
+`SelectModal`/`PermissionModal`; the ONE create-input modal (no existing modal takes
+a free-text *create* input with a create-then-switch lifecycle).
+- **In:** none (collects a name); **Out:** the created id via `dismiss` (or None on esc).
+- **When to use:** to *create* a persona. For PICKING an existing one use the rail;
+  for a generic list pick use `SelectModal`.
+
 ### `SlashMenu`  *(exists today — input/nav)*
 Filtered command list, mounted/removed by the app as `/` is typed/cleared.
 - **In:** `list[Command]`; `update_query`, `move`, `highlighted_command`.
@@ -498,6 +510,7 @@ Verified against `harness/tui/app.py` + `harness/tui/widgets/`. Tags:
 | | `ProgressRow` | 📐 designed-only | no class |
 | **D** decisions | `PermissionModal` | ✅ shipped | wired in `app.py` |
 | | `SelectModal` | ✅ shipped | wired in `app.py` |
+| | `NewPersonaModal` | ✅ shipped | `widgets/new_persona_modal.py`; opened by `n` in the rail (persona-create) |
 | | `DecisionPrompt` | 🟡 built·unwired | class exists; reducer fills `decision`, but no mount |
 | **—** input/nav | `SlashMenu` | ✅ shipped | wired in `app.py` |
 | | `PromptArea` | ✅ shipped | wired in `app.py` |

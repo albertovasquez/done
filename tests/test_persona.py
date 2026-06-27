@@ -2,8 +2,15 @@ import sys
 sys.path.insert(0, "upstream/src")
 sys.path.insert(0, ".")
 
+import pytest
 from pathlib import Path
 from harness.persona import PersonaLoad, compose_persona, MAX_FILE_CHARS
+
+
+@pytest.fixture
+def isolated_config(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    return tmp_path
 
 
 def _write(ws: Path, name: str, body: str):
@@ -205,3 +212,79 @@ def test_compose_context_carries_memory_block(tmp_path):
     ctx = compose_context("PERSONA", "MEMORY", [tmp_path], [])
     assert ctx.persona_block == "PERSONA"
     assert ctx.memory_block == "MEMORY"
+
+
+# ---------------------------------------------------------------------------
+# create_persona tests (Task 1)
+# ---------------------------------------------------------------------------
+from harness import persona
+from harness.persona_select import InvalidPersonaId
+
+
+def test_create_persona_makes_dir_and_copies_trio(isolated_config):
+    ws = persona.create_persona("fred")
+    assert ws == paths.config_dir() / "agents" / "fred"
+    assert ws.is_dir()
+    for name in persona.PERSONA_FILES:
+        assert (ws / name).is_file()
+
+
+def test_create_persona_copies_bytes_identical(isolated_config):
+    ws = persona.create_persona("fred")
+    src = paths.bundled_persona_templates_dir()
+    for name in persona.PERSONA_FILES:
+        assert (ws / name).read_bytes() == (src / name).read_bytes()
+
+
+def test_create_persona_rejects_default(isolated_config):
+    with pytest.raises(InvalidPersonaId):
+        persona.create_persona("default")
+
+
+@pytest.mark.parametrize("bad", ["fred.smith", "Fred", "has space", "a/b"])
+def test_create_persona_rejects_bad_charset(isolated_config, bad):
+    with pytest.raises(InvalidPersonaId):
+        persona.create_persona(bad)
+
+
+def test_create_persona_rejects_existing_dir(isolated_config):
+    persona.create_persona("fred")
+    with pytest.raises(persona.PersonaExists):
+        persona.create_persona("fred")
+
+
+def test_create_persona_rejects_existing_file_collision(isolated_config):
+    target = paths.config_dir() / "agents" / "fred"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("i am a file, not a dir")
+    with pytest.raises(persona.PersonaExists):
+        persona.create_persona("fred")
+
+
+# ---------------------------------------------------------------------------
+# seed_default_workspace refactor tests (Task 1)
+# ---------------------------------------------------------------------------
+
+def test_seed_default_noop_when_exists_does_not_backfill(isolated_config):
+    dest = paths.default_workspace_dir()
+    dest.mkdir(parents=True, exist_ok=True)
+    (dest / "SOUL.md").write_text("user content")   # only one file present
+    persona.seed_default_workspace()
+    # existing dir => no-op: missing trio files are NOT backfilled
+    assert (dest / "SOUL.md").read_text() == "user content"
+    assert not (dest / "IDENTITY.md").exists()
+
+
+def test_seed_default_seeds_byte_identical_on_first_run(isolated_config):
+    persona.seed_default_workspace()
+    dest = paths.default_workspace_dir()
+    src = paths.bundled_persona_templates_dir()
+    for name in persona.PERSONA_FILES:
+        assert (dest / name).read_bytes() == (src / name).read_bytes()
+
+
+def test_seed_default_never_raises_on_oserror(isolated_config, monkeypatch):
+    monkeypatch.setattr(persona, "_copy_persona_templates",
+                        lambda dest: (_ for _ in ()).throw(OSError("read-only")))
+    # must NOT raise into the startup path
+    persona.seed_default_workspace()
