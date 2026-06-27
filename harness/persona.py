@@ -9,11 +9,14 @@ per-file read is wrapped so one bad/missing file can never abort a turn.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import logging
 import re
 from pathlib import Path
 
 from harness import paths
 from harness import skills
+
+logger = logging.getLogger("harness.persona")
 
 PERSONA_FILES = ["SOUL.md", "IDENTITY.md", "USER.md"]   # order = injection order
 MAX_FILE_CHARS = 8000                                   # per-file trim ceiling
@@ -88,8 +91,11 @@ def seed_default_workspace() -> None:
             s, d = src / name, dest / name
             if s.is_file() and not d.exists():
                 d.write_text(s.read_text(encoding="utf-8"), encoding="utf-8")
-    except OSError:
-        pass                                    # read-only home etc. — never break startup
+    except OSError as e:
+        # Read-only home etc. — never break startup, but a silent failure here
+        # means the default persona templates never appear ("why is my persona
+        # blank and /persona shows nothing to edit?").
+        logger.warning("could not seed default persona workspace at %s (%s)", dest, e)
 
 
 def compose_persona(workspace_dir: Path) -> PersonaLoad:

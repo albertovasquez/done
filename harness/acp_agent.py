@@ -556,6 +556,11 @@ class HarnessAgent(acp.Agent):
                     if hasattr(model, "on_delta"):
                         model.on_delta = None
             except Exception:  # engine/construction failure → refusal; capture any prose
+                # The refusal otherwise hides WHY the turn died (bad model id,
+                # litellm/network error, engine crash). Log the traceback — this
+                # runs on the worker thread, so logger.exception is the right sink.
+                logger.exception("agent engine failed (model=%r, persona=%r)",
+                                 self._worker_model_id, self._persona_key())
                 return {"stop_reason": "refusal", "exit_status": "refusal",
                         "assistant": flatten_agent_messages(getattr(agent, "messages", [])),
                         "streamed": streamed["buf"]}
