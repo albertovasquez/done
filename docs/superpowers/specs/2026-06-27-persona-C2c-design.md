@@ -35,11 +35,12 @@ Three forks were resolved with the maintainer before any code:
    The TUI points `self._session_id` at the returned id. (Rejected: extending
    `new_session` with a persona arg — `new_session` always mints, forcing
    client-side id-per-persona bookkeeping.)
-3. **Session reuse — resume existing.** The agent keeps **one durable session per
-   persona** for the process lifetime (a `persona → session_id` map). Switching back to
-   a persona returns the SAME session (history/transcript/memory intact). This is the
-   OpenClaw/Hermes "N stateful seats" model and what "fleet" implies. (Rejected: always
-   mint fresh — loses the persona's conversation on switch-back.)
+3. **Session reuse — resume existing.** The agent keeps **one durable seat per persona**
+   for the process lifetime (a `persona → Seat{session_id, model}` map). Switching back to
+   a persona returns the SAME session AND the SAME resolved model (history/transcript/
+   memory intact). This is the OpenClaw/Hermes "N stateful seats" model and what "fleet"
+   implies. (Rejected: always mint fresh — loses the persona's conversation on
+   switch-back.)
 
 **The standard this follows (research, conclusive):** OpenClaw / Hermes / OpenCode /
 Codex #12047 all switch agents IN-PROCESS, resolving per-agent model at session-start.
@@ -60,10 +61,54 @@ accept a per-session workspace (Phase B). The gap is: `new_session` always passe
 (`acp_main.py:108-131`), not per-session. C2c closes both.
 
 `self._workspace_dir` stays as the **launch persona** — the first/default seat — not
-removed. With no `--persona` and no persona files it is `None`, the one seat is keyed
-`"default"`, the model is the engine default, and behavior is **byte-identical** to
-today (the no-op guarantee). C2c's multiplexing machinery stays dormant until a second
-persona is actually selected.
+removed. With no `--persona` and no persona files it resolves to the default workspace
+(`persona_select.resolve_workspace(None)` → `default_workspace_dir()`; the agent has
+always run with this path, NOT a literal `None`), the one seat is keyed `"default"`, the
+model is the engine default, the default templates are inert, and behavior is
+**byte-identical** to today (the no-op guarantee). C2c's multiplexing machinery stays
+dormant until a second persona is actually selected.
+
+**The active seat is agent-owned state (closes the three model/persist holes Codex
+found).** Today the agent is single-persona, so `_worker_model_id` is one process-global
+field and `_persona_key()` reads the one launch workspace — there is no notion of "which
+seat is active." A naive C2c (resolve model per-session but keep the single field, derive
+`_persona_key` from "the active session" that doesn't exist) leaks state. C2c therefore
+adds **one piece of agent state: `self._active_persona`** (the persona id of the seat the
+client is currently driving), plus **per-seat model storage** so each seat remembers its
+own resolved model. Concretely:
+
+- `PersonaSessions` stores, per persona: its `session_id` AND its resolved `model`
+  (a `Seat` = `{session_id, model}`). `set_persona(id)` sets `self._active_persona = id`
+  (only on success — a failed switch leaves it unchanged).
+- `_worker_model_id` is no longer the source of truth. The chat/agent paths read the
+  **active seat's** model (`PersonaSessions.model_of(self._active_persona)`), and
+  `set_model` writes the **active seat's** model + persists under the active persona.
+  This makes "switch to bob, switch back to ana → ana still runs `m-ana`" hold.
+- `_persona_key()` returns `self._active_persona` (which is `"default"` at launch).
+  No "active session" guesswork; it is explicit agent state. NOT a branch.
+
+**The launch-model crossing must change, or per-seat resolution is dead on arrival.**
+Today `tui_main.py` resolves the *launch* persona's `done.conf` model and exports it into
+`VIBEPROXY_MODEL` (`tui_main.py:100-105`) so the child's startup ladder picks it up. But
+the child cannot tell that exported value from a *real* shell `VIBEPROXY_MODEL`
+(`acp_main.py:84` captures `shell_set_model` from `os.environ`), so it wins the rung-1
+"real shell env" check. At N=1 that is correct (it IS the launch persona's model). **At
+N>1 it is the split-brain Codex flagged:** `VIBEPROXY_MODEL` is process-global, so when
+C2c resolves a *different* persona's model it would resolve `ana`/`bob` to the launch
+persona's exported model every time, ignoring their own `done.conf`. Fix (spec-level):
+
+- The shell-env rung must mean **only a real, user-exported `VIBEPROXY_MODEL`** — a
+  deliberate "force this model for everything." C2c stops `tui_main` from laundering the
+  launch persona's persisted model through `VIBEPROXY_MODEL`. The launch persona resolves
+  its model the same way every other seat does: through `resolve_session_model(launch_id)`
+  reading `done.conf[launch_id]` directly in the child. The TUI still passes the launch
+  persona id (`--persona`) and the *real* shell provenance; it no longer pre-resolves and
+  re-exports the persisted model.
+- Result: a real `VIBEPROXY_MODEL=x` still forces `x` for ALL seats (the documented
+  global override). Absent that, each seat gets its own `done.conf[persona].model`. The
+  C1 precedence ladder is preserved; the laundering that conflated "persisted launch
+  model" with "shell override" is removed. The footer's launch display reads the same
+  resolved value (so no behavior change the user sees at N=1).
 
 ## 4. Components & data flow
 
@@ -71,14 +116,17 @@ Each unit by responsibility, the seam it touches, and its dependencies.
 
 ### Engine side (`harness/acp_agent.py` + a new small module)
 
-- **`PersonaSessions` — the seat map.** A tiny structure owned by `HarnessAgent`:
-  `persona_id → session_id`, plus `get_or_create(persona_id, *, cwd, store, resolve_ws)
-  → session_id`. On miss: resolve the workspace (`persona_select.resolve_workspace`),
-  mint a session (`store.new(cwd, workspace_dir=ws)`), record it. On hit: return the
-  stored id (the seat-resume invariant). Pure/unit-testable; no I/O of its own beyond
-  the injected `store`/`resolve_ws`. *Lives in a new module
-  `harness/persona_sessions.py`* (keeps `acp_agent.py` focused).
-  - *Depends on:* `SessionStore`, `persona_select.resolve_workspace`.
+- **`PersonaSessions` — the seat map.** A tiny structure owned by `HarnessAgent`,
+  mapping `persona_id → Seat`, where `Seat = {session_id, model}` (each seat remembers
+  its OWN resolved model — the per-seat storage that fixes the process-global model
+  leak). API: `get_or_create(persona_id, *, cwd, store, resolve_ws, resolve_model)
+  → Seat`; `model_of(persona_id) → str | None`; `set_model(persona_id, model)`. On miss:
+  resolve the workspace (`persona_select.resolve_workspace`), mint a session
+  (`store.new(cwd, workspace_dir=ws)`), resolve+store the model (`resolve_model`), record
+  the seat. On hit: return the stored seat (the seat-resume invariant — same session AND
+  same model). Pure/unit-testable; no I/O of its own beyond the injected callables.
+  *Lives in a new module `harness/persona_sessions.py`* (keeps `acp_agent.py` focused).
+  - *Depends on:* `SessionStore`, `persona_select.resolve_workspace`, `resolve_session_model`.
 
 - **`resolve_session_model(persona_id, *, shell_set_model) → str | None`.** The C1
   precedence ladder (`acp_main.py:108-131`) extracted into one reusable resolver the
@@ -91,28 +139,48 @@ Each unit by responsibility, the seam it touches, and its dependencies.
     for the launch persona, so there is exactly ONE model-ladder implementation.
 
 - **`ext_method("harness/set_persona", {id})`** — the only new ACP surface. Validates
-  `id`, `get_or_create`s the seat, resolves+remembers its model, returns
-  `{ok, id, session_id, model}`. On `UnknownPersona`/`InvalidPersonaId` → `{ok: false,
-  error, session_id: <active, unchanged>}`. Mirrors the `set_model` shape exactly
-  (`acp_agent.py:60-109`).
+  `id`, `get_or_create`s the seat, and on success sets `self._active_persona = id`,
+  returning `{ok, id, session_id, model}`. On `UnknownPersona`/`InvalidPersonaId` →
+  `{ok: false, error, session_id: <active, unchanged>}` and `_active_persona` is left
+  unchanged. Mirrors the `set_model` shape exactly (`acp_agent.py:60-109`).
 
-- **`_persona_key()` → per-session.** Today returns `self._workspace_dir.name` (the
-  single persona). The persist sites (`set_model`/`set_yolo`) must persist under the
-  **active session's** persona, so this is reworked to derive from the active session's
-  `workspace_dir.name` (falling back to `"default"`). NOT a branch — `"default"` is
-  just the id.
+- **`_persona_key()` → the active seat.** Today returns `self._workspace_dir.name` (the
+  single persona). Reworked to return `self._active_persona` — explicit agent state set
+  by `set_persona` (and `"default"` at launch). The persist sites (`set_model`/
+  `set_yolo`) thus persist under the persona the client is actually driving. NOT a
+  branch — `"default"` is just the id.
+
+- **The model read sites move to the active seat.** `self._worker_model_id` stops being
+  the source of truth: the chat handler (`acp_agent.py:243`) and the agent path read
+  `PersonaSessions.model_of(self._active_persona)`; `set_model` writes that seat's model
+  (`PersonaSessions.set_model(self._active_persona, m)`) before persisting. This is what
+  makes per-seat model actually take effect — resolution alone is not enough.
 
 ### Client side (`harness/tui/app.py`)
 
-- **`on_persona_selected(event)`** (app.py:953, today a no-op) — becomes: guard on
-  `self._busy` (inert mid-turn, like `action_reload`); else call
-  `ext_method("harness/set_persona", {id})`; on `ok`, point `self._session_id` at the
-  returned `session_id` and refresh the footer model from the returned `model`; on
-  `!ok`, keep the current seat and surface a brief notice; close the rail. **One
-  round-trip, no re-exec.**
+- **`on_persona_selected(event)`** (app.py:953, today a no-op) — becomes: **guard on
+  `self._turn_active`** (NOT `_busy` — `_busy` is only the submit gate + clear/reload;
+  the prompt/stream lifecycle is tracked by `_turn_active`, set at app.py:442 and the
+  window where a mid-stream `_session_id` repoint would drop late deltas and misdirect
+  cancel). If a turn is active, the switch is inert (rail may open; selection no-ops
+  until the turn settles). Else: call `ext_method("harness/set_persona", {id})`; on
+  `ok`, point `self._session_id` at the returned `session_id`, refresh the footer model
+  from the returned `model`, **and `self._apply(PersonaResolved(id))`** so the indicator
+  + rail highlight update immediately (see below); on `!ok`, keep the current seat and
+  surface a brief notice; close the rail. **One round-trip, no re-exec.**
+
+- **Active-persona update must not depend on the per-session chip.** The engine emits the
+  `persona` _meta chip once per session (`state.persona_emitted`, acp_agent.py:202-206),
+  so on **switch-BACK** to an already-emitted seat **no chip fires** and the TUI's
+  `active_id` would go stale (it updates only at app.py:840-842). Fix: the TUI applies
+  `PersonaResolved(id)` directly from the **successful `set_persona` response** (the line
+  above). The engine chip remains the per-session truth for a seat's first turn; the
+  switch response covers every switch. Both carry the same id, so they agree — no
+  conflict, no double-count (the reducer is idempotent on a re-applied active_id).
 
 - **`self._session_id`** stays a single value — repointed on switch. `prompt`/`cancel`
-  already read it (app.py:735, 903), so they follow the active seat for free.
+  already read it (app.py:735, 903), so they follow the active seat for free. The
+  `_turn_active` guard guarantees the repoint never races an in-flight turn.
 
 ### Reducer (`harness/tui/state.py`) — the inherited watch-for (§6)
 
@@ -126,24 +194,28 @@ Each unit by responsibility, the seam it touches, and its dependencies.
 user clicks "ana" in rail
   → AgentRail posts PersonaSelected("ana")            (shipped C2b widget, unchanged)
   → app.on_persona_selected:
-       if self._busy: return                          (inert mid-turn)
+       if self._turn_active: return                    (inert mid-turn — full lifecycle)
        resp = conn.ext_method("harness/set_persona", {"id":"ana"})
           → agent: PersonaSessions.get_or_create("ana")
                miss → resolve_workspace("ana"), store.new(cwd, ws),
-                      resolve_session_model("ana")
-               hit  → return remembered session_id     (seat resumed)
-          → resp = {ok:true, id:"ana", session_id, model:"..."}
+                      resolve_session_model("ana") → Seat{session_id, model}
+               hit  → return remembered Seat            (seat resumed: session + model)
+          → self._active_persona = "ana"               (only on ok)
+          → resp = {ok:true, id:"ana", session_id, model:"m-ana"}
        self._session_id = resp["session_id"]           # repoint — no restart
        footer model updated from resp["model"]
-       rail closed
-  → next prompt() runs in ana's session: ana's workspace, memory, model
-  → engine emits persona _meta chip "ana" (C2a seam, per session)
-       → persona_from_meta → PersonaResolved("ana")
-       → reduce sets FleetSnapshot.active_id="ana" → PersonaIndicator + rail highlight
+       self._apply(PersonaResolved("ana"))             # indicator+rail update NOW
+       rail closed                                      #   (no dependence on a chip)
+  → next prompt() runs in ana's seat: ana's workspace, memory, AND model
+       (agent reads PersonaSessions.model_of("ana"), not a process-global field)
+  → first turn of a NEW seat also emits the persona chip (C2a seam, once/session);
+     on switch-BACK the chip is suppressed, which is why the response-driven
+     PersonaResolved above is the load-bearing update.
 ```
 
-The active highlight stays **engine-truthful**: it reflects the seat that actually
-served the turn (the `persona` _meta chip), not merely what the client clicked.
+The active highlight is **truthful on every switch**: it is driven by the successful
+`set_persona` response (which the agent only returns after binding the seat), and the
+per-session engine chip still confirms a seat's first turn. Both carry the same id.
 
 ## 5. Design-system alignment (`components.md` — the approved catalog)
 
@@ -175,13 +247,24 @@ multi-agent tuple it can produce **two agents sharing one id** (reproduced: agen
 **Fix:** stop the `PersonaResolved` case from renaming an existing *different* agent
 into a duplicate. The case sets `active_id` and, if no agent already carries that id,
 seeds one — but the in-place `replace(a, id=event.id, ...)` over a multi-agent tuple is
-what creates the collision. The implementation plan chooses the mechanism — either
-(a) a separate immutable `agent_id` the fold matches on (so display `id` can change
-without colliding identity), or (b) de-dup after the remap — but the **binding
-requirement is invariant, not mechanism:** *after any sequence of `PersonaResolved`
-events, no two agents share an id, and `active_id` always resolves to exactly one
-agent.* Covered by the dup-id regression test (§9), which asserts the invariant
-directly so either mechanism passes.
+what creates the collision (`.active` resolves by `id` at state.py:79).
+
+**The right model: `PersonaResolved(id)` means "the agent with this id is now active,"
+NOT "rename whoever is active to this id."** When that persona already has a seat in the
+tuple (the switch-BACK case), the event must just **point `active_id` at the existing
+agent** and preserve its state — it must NOT graft the previously-active agent's tokens/
+activity onto it. Only when no agent carries that id does the case seed a fresh one. This
+makes the "rename in place" pattern obsolete: switching is selection, not mutation.
+
+The implementation plan chooses the representation (a separate immutable `agent_id` the
+fold keys on, or matching on `id` with no in-place rename), but the **binding requirements
+are two, and the regression test asserts both:**
+1. After any sequence of `PersonaResolved` events, **no two agents share an id**, and
+   `active_id` resolves to **exactly one** agent.
+2. Switching to a persona that **already has an agent preserves that agent's state**
+   (tokens, activity) — it is selected, not overwritten with the prior active agent's
+   state. (Codex's counterexample: `[a(tokens=10), b(tokens=99)]` active `a`, then
+   `PersonaResolved("b")` must yield active `b` with `tokens=99`, not `tokens=10`.)
 
 ## 7. Scope — v1 vs deferred (the maintainer's "reduce scope" steer)
 
@@ -211,28 +294,39 @@ is gravy.
   returns `{ok:false, error, session_id:<active unchanged>}`; the TUI keeps the current
   seat and shows a brief notice. A bad switch never orphans a session or breaks the turn
   (mirrors `set_model`/`set_yolo` `ok` reporting).
-- **Switch mid-turn.** `on_persona_selected` is **inert while `self._busy`** (the guard
-  `action_reload` already uses). The rail may open; selection no-ops until the turn
-  settles. Matches cooperative-concurrency scope.
+- **Switch mid-turn.** `on_persona_selected` is **inert while `self._turn_active`** (set
+  for the whole prompt/stream lifecycle at app.py:442 — NOT `_busy`, which only gates
+  submit + clear/reload and would leave the streaming window open). A repoint mid-stream
+  would drop late deltas (app.py:822 filters by `_session_id`) and misdirect a cancel
+  (app.py:901 targets `_session_id`); the `_turn_active` guard closes that window. The
+  rail may open; selection no-ops until the turn settles. Matches cooperative-concurrency
+  scope. (If a future v2 wants mid-turn switching, it needs per-session delta routing,
+  not a single `_session_id` — out of scope here.)
 - **Model resolution failure** (e.g. `done.conf` unreadable for that persona). Fall
   through the ladder to the engine default — never `--model ""`. The seat is still
   created; only the model degrades, and `ok` still reports the resolved model so the
   footer is truthful.
 - **No-op guarantee** (restated as a boundary). No `--persona` + no persona files →
-  exactly one `default` seat, engine-default model, zero injection, byte-identical to
-  today.
+  exactly one `default` seat (workspace = `default_workspace_dir()`, the path the agent
+  has always used — not a literal `None`), engine-default model, inert default templates,
+  zero injection, byte-identical to today. `_active_persona` is `"default"` and never
+  changes unless a second persona is selected.
 
 ## 9. Testing (TDD, per unit)
 
 | Unit | Test |
 |---|---|
-| `PersonaSessions.get_or_create` | miss mints + stores; **hit returns the SAME id** (seat-resume invariant); distinct personas → distinct ids |
+| `PersonaSessions.get_or_create` | miss mints + stores a `Seat{session_id, model}`; **hit returns the SAME seat** (same session AND same model — resume invariant); distinct personas → distinct ids + independently-resolved models |
+| `PersonaSessions.model_of` / `set_model` | per-seat: setting ana's model never changes bob's; `model_of(active)` follows `_active_persona` |
 | `resolve_session_model` | `done.conf[ana]` vs `done.conf[default]` resolve independently; missing → engine default; full C1 ladder precedence preserved (incl. `shell_set_model` rung); `mock` → `None` |
-| `set_persona` ext-method | valid id → `{ok, id, session_id, model}`; unknown → `{ok:false}` + active session unchanged; invalid charset → `{ok:false}`; the returned session is bound to that persona's workspace |
-| `_persona_key` per-session | `set_model` while ana's seat is active persists under `[agents.ana]`, not the launch persona |
-| reducer `PersonaResolved` | the **dup-id repro** (`[a,b]` + `PersonaResolved("b")` MUST NOT be `['b','b']`); `active_id` always resolves to exactly one agent; N=1 unchanged |
-| TUI `on_persona_selected` | repoints `_session_id` to the returned id; inert while `_busy`; `!ok` keeps current seat |
-| no-op | no persona/flag → one default seat, engine default, byte-identical |
+| launch-model crossing | with NO real shell `VIBEPROXY_MODEL`, two personas with distinct `done.conf` models each resolve their OWN model (the split-brain regression: launch persona's model must NOT win for the other seat); a REAL shell `VIBEPROXY_MODEL=x` forces `x` for both |
+| `set_persona` ext-method | valid id → `{ok, id, session_id, model}` + `_active_persona` updated; unknown → `{ok:false}` + active session AND `_active_persona` unchanged; invalid charset → `{ok:false}`; returned session bound to that persona's workspace |
+| `_persona_key` = active seat | `set_model` while ana is active persists under `[agents.ana]`; after switch back to default, `set_model` persists under `[agents.default]` |
+| model read site | after switch default→ana→default, a prompt resolves `default`'s model (per-seat storage; NOT ana's, the process-global leak) |
+| reducer `PersonaResolved` | **(a)** dup-id repro: `[a,b]` + `PersonaResolved("b")` MUST NOT be `['b','b']`, `active_id` resolves to exactly one agent; **(b)** state-preservation: `[a(tokens=10), b(tokens=99)]` active `a` + `PersonaResolved("b")` → active `b` with `tokens=99`; N=1 unchanged |
+| TUI `on_persona_selected` | repoints `_session_id` to the returned id; applies `PersonaResolved(id)` from the response; inert while **`_turn_active`**; `!ok` keeps current seat + indicator |
+| switch-back indicator | switch default→ana→default updates the indicator on the way back even though default's seat suppresses the per-session chip (response-driven `PersonaResolved`) |
+| no-op | no persona/flag → one default seat (default workspace path), engine default, byte-identical |
 
 **Test-harness reminders (carried from C1/C2):** prompt-driving emit tests live in
 `tests/test_acp_session_context.py` (`_FakeConn`/`_ScriptedRouter`/`_build`/`_prompt`),
@@ -274,11 +368,19 @@ false-positive).
 ## 12. Definition of done
 
 - One process serves N personas; selecting a persona in the rail (or `/persona <id>`)
-  switches **in-process** to it — its own session, memory, model — without re-execing.
-  Switching back resumes that seat.
-- Per-session model resolves from `done.conf[persona]` at session-start; one model-ladder
-  implementation (shared with the launch path).
-- The reducer-id watch-for (§6) is fixed: no duplicate ids at N>1.
-- No re-exec; no second model home; no per-persona branch; no-op preserved.
+  switches **in-process** to it — its own session, memory, **and per-seat model** —
+  without re-execing. Switching back resumes that seat (same session AND model).
+- The agent owns an explicit `_active_persona`; `_persona_key`, model reads, and
+  `set_model`/`set_yolo` persistence all key on it — no "active session" guesswork.
+- Per-seat model resolves from `done.conf[persona]` via one shared
+  `resolve_session_model` (the launch path uses it too); the launch-model laundering
+  through `VIBEPROXY_MODEL` is removed, so per-seat resolution can't be clobbered.
+- The reducer fix (§6) holds BOTH invariants: no duplicate ids at N>1, AND switch-back
+  preserves the target agent's state.
+- The switch updates the indicator/rail via the `set_persona` response (not a per-session
+  chip), so switch-BACK highlights correctly.
+- The mid-turn guard is `_turn_active` (full prompt/stream lifecycle), not `_busy`.
+- No re-exec; no second model home; no per-persona branch; no-op preserved (default
+  workspace path, inert templates).
 - `components.md` `AgentRail` row refreshed to `✅ shipped`.
 - Codex-reviewed spec + plan; PR against `main`; full suite green; shipped.
