@@ -8,8 +8,9 @@
 
 Surface a live, model-authored **plan checklist** in the pinned `ActivityRegion`
 above the composer: the agent declares the steps of multi-step work up front, the
-steps tick off in place as they complete, and the checklist clears when the turn
-ends. This is the bottom-of-screen "current work" indicator the user screenshotted
+steps tick off in place as they complete, and the checklist disappears when the
+agent goes idle (data cleared on the next turn start). This is the bottom-of-screen
+"current work" indicator the user screenshotted
 (`▣ Push + PR / □ CI + merge / □ Sync + prune`).
 
 The TUI half is **mostly already built** — the `TaskTree` widget, its
@@ -87,12 +88,15 @@ Four small, independently testable changes. Each maps to an existing seam.
 Today `render_update` returns `None` for plan updates (line 61, comment:
 `"plan, current_mode_update, etc. — forward-compat"`). Add a branch:
 
-- Detect the ACP plan update (`type(update).__name__ == "AgentPlanUpdate"`, or
-  `getattr(update, "session_update", "") == "plan"` — match the duck-typing style
-  already used in this file).
+- Detect the ACP plan update with `type(update).__name__ == "AgentPlanUpdate"`.
+  This matches how `render_update` already dispatches — by type name (render.py:38),
+  **not** by a `session_update` attribute. (Verified: app.py and render.py both
+  branch on `type(update).__name__`.)
 - Return a `RenderedItem` carrying the entries. Add `kind="plan"` and a field to
   hold the entries as a tuple of `(content, status)` pairs (e.g. extend
   `RenderedItem` with `entries: tuple[tuple[str, str], ...] = ()`).
+- Update the `RenderedItem.kind` docstring enumeration (render.py:13) to include
+  `"plan"`.
 - Pure; tested with plain stubs like the rest of `render_update`.
 
 ### 2. `harness/tui/state.py` — `PlanUpdated` event, replace-semantics
@@ -102,12 +106,20 @@ Today `render_update` returns `None` for plan updates (line 61, comment:
 - Reducer maps each entry → `TaskItem(label=content, status=<mapped>,
   tool_id="")` and **replaces** `a.plan` wholesale. Status map:
   `pending→pending`, `in_progress→in_progress`, `completed→done`.
-- `TurnStarted` already resets transient state — add `plan=()` to its `replace(...)`
-  so the checklist clears at turn start (and thus at the end of the previous turn).
-- The `ItemReceived` handling for `kind="plan"` dispatches to the same
-  replace logic (or the app translates a `kind="plan"` RenderedItem into a
-  `PlanUpdated` event before calling `reduce` — pick whichever matches the existing
-  app→reduce wiring; see "Open implementation choice" below).
+- `TurnStarted` resets transient state (`tool`, `decision`, `tasks`, `tools`,
+  `elapsed` — state.py:165) — add `plan=()` to its `replace(...)`. **Clearing is
+  turn-START-driven, not turn-end-driven:** `TurnEnded` only sets terminal state
+  and clears `tool`/`activity_label` (state.py:177); it does not clear `plan`. The
+  checklist is *visually hidden* the moment the agent goes idle/terminal (the
+  `ActivityRegion` hides the whole region — activity_region.py:42), and the plan
+  *data* is cleared on the next `TurnStarted`. This is the correct, race-free
+  behavior; the field never needs clearing on `TurnEnded`.
+- Plan folding happens **inside `ItemReceived`** for `kind="plan"` (replace
+  `a.plan`), symmetric with the existing `kind="tool"` handling. This is the only
+  viable route without new wiring: `on_session_update` always converts a non-None
+  `RenderedItem` into `ItemReceived(item)` (app.py:847–851) — there is no live path
+  that emits a custom event from a rendered item. (See "Resolved: render→reduce
+  wiring" below.)
 - **`tasks`/`tools` and their tool-call append logic are untouched.**
 
 ### 3. `harness/tui/widgets/activity_region.py` — show the checklist when a plan exists
@@ -134,18 +146,17 @@ persona/skills injection composes):
 
 Wording to be finalized against the existing prompt's voice during implementation.
 
-## Open implementation choice (resolve during planning, not now)
+## Resolved: render→reduce wiring (no app.py change)
 
-`render.py` produces `RenderedItem`s; `state.py` consumes either `RenderedItem`s
-(via `ItemReceived`) or dedicated events. The existing reducer handles tools
-through `ItemReceived` with `kind="tool"`. Two consistent options:
-
-1. Handle `kind="plan"` inside `ItemReceived` (symmetric with `kind="tool"`).
-2. Emit a dedicated `PlanUpdated` event from the app layer after `render_update`
-   returns a `kind="plan"` item.
-
-Prefer whichever matches how the app currently turns `RenderedItem`s into reducer
-calls. This is a wiring detail, not a design fork — both yield the same snapshot.
+`on_session_update` calls `render_update(msg.update)` and, for any non-None item,
+unconditionally folds it via `self._apply(ItemReceived(item))` (app.py:847–851).
+There is **no** existing path that translates a `RenderedItem` into a dedicated
+event. Therefore plan folding lives **inside the `ItemReceived` reducer branch**
+for `kind="plan"` — exactly parallel to the existing `kind="tool"` handling. A
+separate `PlanUpdated` event was considered and rejected: it would require adding
+a new branch to `on_session_update` (app.py), which this design avoids. Net:
+**app.py is not modified.** (This corrects an earlier draft that listed the event
+route as an open choice — it is not viable without an unlisted app.py edit.)
 
 ## Error handling & edge cases
 
@@ -156,7 +167,10 @@ calls. This is a wiring detail, not a design fork — both yield the same snapsh
 - **Plan + tools in the same turn:** independent fields, no interaction. Plan shows
   in the checklist; tools show in the `ctrl+o` detail view.
 - **Idle/terminal:** `ActivityRegion.update_from` already hides the whole region
-  when idle, which hides the checklist too.
+  when idle (activity_region.py:42), which hides the checklist immediately when the
+  turn finishes. The plan *data* persists in `snapshot.plan` until the next
+  `TurnStarted` resets it — hidden first, cleared next turn. No flicker, no stale
+  display.
 
 ## Testing
 
@@ -165,6 +179,10 @@ Pure-core units (no Textual, no async), in the style of the existing
 
 - `render.py`: an `AgentPlanUpdate`-shaped stub → `RenderedItem(kind="plan",
   entries=...)`; non-plan updates still return `None`.
+  **Existing test to change:** `tests/test_tui_render.py:57`
+  (`test_render_unknown_returns_none`) currently asserts `AgentPlanUpdate` → `None`.
+  That assertion becomes false; split it — keep an unknown-update→`None` case with a
+  genuinely unknown type, and add the new `AgentPlanUpdate`→`kind="plan"` case.
 - `state.py`: `PlanUpdated` replaces `plan`; re-emit updates statuses in place;
   status mapping (pending/in_progress/completed); `TurnStarted` clears `plan`;
   tool-call append to `tasks` is unaffected by a plan update.
