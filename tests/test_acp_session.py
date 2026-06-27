@@ -63,3 +63,19 @@ def test_session_state_persona_block_defaults_none():
     from harness.acp_session import SessionState
     s = SessionState(cwd="/tmp")
     assert s.persona_block is None      # sentinel: not-yet-composed (NOT "")
+
+
+def test_session_state_has_workspace_and_memory_fields():
+    from harness.acp_session import SessionState
+    s = SessionState(cwd="/tmp")
+    assert s.workspace_dir is None
+    assert s.memory_block is None        # sentinel: not-yet-composed
+    assert s.memory_load is None
+    assert s.memory_load_emitted is False
+
+
+def test_store_new_records_workspace_dir(tmp_path):
+    from harness.acp_session import SessionStore
+    store = SessionStore()
+    sid = store.new(cwd=".", workspace_dir=tmp_path)
+    assert store.get(sid).workspace_dir == tmp_path

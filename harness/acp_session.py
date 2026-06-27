@@ -10,6 +10,8 @@ from uuid import uuid4
 
 if TYPE_CHECKING:
     from harness.persona import PersonaLoad
+    from harness.memory import MemoryLoad
+    from pathlib import Path
 
 
 @dataclass
@@ -21,15 +23,19 @@ class SessionState:
     persona_block: str | None = None  # None = not-yet-composed; "" = composed-empty
     persona_load: "PersonaLoad | None" = None
     persona_load_emitted: bool = False
+    workspace_dir: "Path | None" = None  # the persona workspace this session uses (Phase B isolation core)
+    memory_block: str | None = None      # None = not-yet-composed; "" = composed-empty
+    memory_load: "MemoryLoad | None" = None
+    memory_load_emitted: bool = False
 
 
 class SessionStore:
     def __init__(self) -> None:
         self._sessions: dict[str, SessionState] = {}
 
-    def new(self, cwd: str) -> str:
+    def new(self, cwd: str, workspace_dir=None) -> str:
         session_id = uuid4().hex
-        self._sessions[session_id] = SessionState(cwd=cwd)
+        self._sessions[session_id] = SessionState(cwd=cwd, workspace_dir=workspace_dir)
         return session_id
 
     def get(self, session_id: str) -> SessionState:
