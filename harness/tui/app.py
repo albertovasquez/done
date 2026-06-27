@@ -1022,6 +1022,11 @@ class HarnessTui(App):
         if not resp.get("ok"):
             self._notify_line(f"persona: {resp.get('error', 'switch failed')}")
             return
+        self._apply_persona_switch(resp)
+
+    def _apply_persona_switch(self, resp: dict) -> None:
+        """Apply a successful set_persona/create_persona result: repoint the session,
+        update the indicator + footer, close the rail, refocus. Shared by switch + create."""
         self._session_id = resp["session_id"]
         self._persona_seen = True
         self._apply(PersonaResolved(resp["id"]))   # updates snapshot + ActivityRegion
@@ -1037,6 +1042,29 @@ class HarnessTui(App):
         except Exception:
             pass
         self._active_input().focus()
+
+    def on_new_persona_requested(self, event) -> None:
+        event.stop()
+        from harness.tui.widgets.new_persona_modal import NewPersonaModal
+
+        def _created(name):
+            if name:
+                self.run_worker(self._create_persona(name), thread=False)
+
+        self.push_screen(NewPersonaModal(), _created)
+
+    async def _create_persona(self, name: str) -> None:
+        if self._conn is None:
+            return
+        try:
+            resp = await self._conn.ext_method("harness/create_persona", {"id": name})
+        except Exception as e:
+            self._notify_line(f"could not create persona: {e}")
+            return
+        if not resp.get("ok"):
+            self._notify_line(f"persona: {resp.get('error', 'create failed')}")
+            return
+        self._apply_persona_switch(resp)
 
     async def action_reload(self) -> None:
         if self._busy:
