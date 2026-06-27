@@ -75,8 +75,7 @@ def _model_label(model: str, worker_model_id: str | None) -> str:
 class HarnessTui(App):
     CSS_PATH = "app.tcss"  # relative to this module's dir (harness/tui/)
     BINDINGS = [("escape", "cancel", "Cancel turn"),
-                ("ctrl+o", "toggle_details", "Tool details"),
-                Binding("tab", "toggle_rail", "Agents", priority=False)]
+                ("ctrl+o", "toggle_details", "Tool details")]
 
     def __init__(self, agent_cmd: list[str], cwd: str, model: str,
                  worker_model_id: str | None = None, version: str = "0.5.0",
@@ -498,6 +497,25 @@ class HarnessTui(App):
             if event.key == "escape" and self._active_input().value:
                 self._active_input().value = ""
                 event.stop()
+                return
+            # Focus-traversal model for the agents rail:
+            # Tab from the prompt (when rail is hidden) → reveal and focus the rail.
+            if event.key == "tab":
+                rail = self.query_one("#agent-rail", AgentRail)
+                if isinstance(self.focused, PromptArea) and not rail.display:
+                    rail.set_rows(self._persona_rows())
+                    rail.display = True
+                    rail.focus()
+                    event.stop()
+                # Otherwise let Tab do normal focus traversal (don't stop).
+                return
+            # Esc from the rail (when slash menu is closed) → hide rail, return focus.
+            if event.key == "escape":
+                rail = self.query_one("#agent-rail", AgentRail)
+                if rail.display and isinstance(self.focused, AgentRail):
+                    rail.display = False
+                    self._active_input().focus()
+                    event.stop()
             return
         if event.key == "down":
             self._slash.move(1); event.stop()
@@ -926,6 +944,7 @@ class HarnessTui(App):
             rail.focus()
         else:
             rail.display = False
+            self._active_input().focus()
 
     async def on_persona_selected(self, event: PersonaSelected) -> None:
         event.stop()

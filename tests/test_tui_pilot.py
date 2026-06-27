@@ -1027,22 +1027,80 @@ def test_agent_rail_listview_selected_event_path():
 # ---- Task 4: rail mount, tab toggle, persona selection wiring ----
 
 def test_rail_hidden_by_default_and_tab_toggles():
-    """Rail starts hidden; the toggle action opens and closes it.
-    With Bug-5 fix (priority=False on Tab binding), Tab from PromptArea is
-    consumed by the widget for focus traversal, so we invoke action_toggle_rail
-    directly (or press Tab when focus is NOT in the prompt) to test the toggle."""
+    """Rail starts hidden; Tab from the prompt reveals it (focus-traversal model).
+    Esc from the rail hides it and returns focus to the prompt."""
     async def go():
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
         async with app.run_test() as pilot:
-            rail = app.query_one("#agent-rail")
+            from harness.tui.widgets.agent_rail import AgentRail
+            from harness.tui.widgets.prompt_area import PromptArea
+            rail = app.query_one("#agent-rail", AgentRail)
             assert rail.display is False       # hidden by default
-            # Toggle via direct action call (focus-independent path)
+
+            # Tab from the prompt (landing-input has focus on startup) → reveals rail
+            prompt = app.query_one("#landing-input", PromptArea)
+            prompt.focus()
+            await pilot.pause()
+            assert isinstance(app.focused, PromptArea), "prompt should be focused"
+            await pilot.press("tab")
+            await pilot.pause()
+            assert rail.display is True        # rail revealed
+            assert isinstance(app.focused, AgentRail), "rail should have focus"
+
+            # Esc from the rail → hides rail and returns focus to prompt
+            await pilot.press("escape")
+            await pilot.pause()
+            assert rail.display is False       # rail hidden
+            assert isinstance(app.focused, PromptArea), "focus back to prompt"
+    asyncio.run(go())
+
+
+def test_tab_from_prompt_reveals_rail_and_focuses_it():
+    """Tab pressed while prompt is focused and rail is hidden: rail opens and
+    gets focus. Second path: action_toggle_rail still works as a direct caller."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            from harness.tui.widgets.agent_rail import AgentRail
+            from harness.tui.widgets.prompt_area import PromptArea
+            rail = app.query_one("#agent-rail", AgentRail)
+            assert rail.display is False
+
+            # Focus prompt, press Tab → rail should open and be focused
+            app.query_one("#landing-input", PromptArea).focus()
+            await pilot.pause()
+            await pilot.press("tab")
+            await pilot.pause()
+            assert rail.display is True, "rail must be displayed after tab from prompt"
+            assert isinstance(app.focused, AgentRail), "AgentRail must hold focus"
+
+            # action_toggle_rail still closes it (used by /persona no-arg)
             app.action_toggle_rail()
             await pilot.pause()
-            assert rail.display is True        # opens
+            assert rail.display is False
+    asyncio.run(go())
+
+
+def test_esc_from_rail_hides_and_refocuses_prompt():
+    """Esc while the rail is focused hides the rail and returns focus to the prompt."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            from harness.tui.widgets.agent_rail import AgentRail
+            from harness.tui.widgets.prompt_area import PromptArea
+            # Open the rail via action (direct path, no key interception needed)
             app.action_toggle_rail()
             await pilot.pause()
-            assert rail.display is False       # closes
+            rail = app.query_one("#agent-rail", AgentRail)
+            assert rail.display is True
+            # Rail should have focus (action_toggle_rail calls rail.focus())
+            assert isinstance(app.focused, AgentRail), "rail must be focused after open"
+
+            # Press Esc → hide rail, return focus to prompt
+            await pilot.press("escape")
+            await pilot.pause()
+            assert rail.display is False, "rail must hide on Esc"
+            assert isinstance(app.focused, PromptArea), "focus must return to prompt"
     asyncio.run(go())
 
 
@@ -1145,37 +1203,36 @@ def test_switch_allowed_when_no_turn_active():
 
 # ---- C2b Bug 5: tab must not intercept PromptArea focus traversal ----
 
-def test_tab_does_not_toggle_rail_when_prompt_has_focus():
-    """With Bug-5 fix (Binding priority=False), when the PromptArea has keyboard
-    focus pressing Tab must NOT open the agent rail — the PromptArea's
-    tab_behavior='focus' consumes Tab first for focus traversal."""
+def test_tab_from_prompt_opens_rail_focus_traversal_model():
+    """Focus-traversal model (C2b): Tab from the prompt reveals the agent rail
+    and moves focus to it. The app's on_key intercepts Tab only when the prompt
+    has focus and the rail is hidden — so Tab literally navigates 'to the agents'."""
     async def go():
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause()
+            from harness.tui.widgets.agent_rail import AgentRail
             # PromptArea has focus at boot (on_mount focuses it)
             inp = app.query_one("#landing-input", PromptArea)
             inp.focus()
             await pilot.pause()
-            rail = app.query_one("#agent-rail")
+            rail = app.query_one("#agent-rail", AgentRail)
             assert rail.display is False, "rail starts hidden"
-            # Tab while prompt has focus: PromptArea consumes it (focus traversal)
-            # The rail must stay hidden
+            # Tab while prompt has focus: app.on_key intercepts → reveal+focus rail
             await pilot.press("tab")
             await pilot.pause()
-            assert rail.display is False, (
-                "tab with prompt focused must NOT open rail (focus traversal, not priority binding)")
+            assert rail.display is True, (
+                "tab with prompt focused must reveal the rail (focus-traversal model)")
+            assert isinstance(app.focused, AgentRail), "focus must move to the rail"
     asyncio.run(go())
 
 
-def test_tab_binding_priority_is_false():
-    """Structural check: the Tab binding must have priority=False so PromptArea's
-    tab_behavior='focus' can consume Tab for focus traversal before the app-level
-    binding fires. This is the fix for Bug 5."""
+def test_tab_binding_removed_no_global_toggle():
+    """Structural check: the Tab binding is no longer in HarnessTui.BINDINGS.
+    Tab is now handled by on_key (focus-aware interception), not a global binding."""
     from textual.binding import Binding
     tab_bindings = [b for b in HarnessTui.BINDINGS
                     if isinstance(b, Binding) and b.key == "tab"]
-    assert tab_bindings, "Tab binding must exist on HarnessTui"
-    assert not tab_bindings[0].priority, (
-        "Tab binding must have priority=False so PromptArea consumes Tab first"
+    assert not tab_bindings, (
+        "Tab must NOT be in BINDINGS — it is handled by on_key for focus-traversal"
     )
