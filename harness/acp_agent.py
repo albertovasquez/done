@@ -195,6 +195,16 @@ class HarnessAgent(acp.Agent):
         await self._conn.session_update(session_id,
             with_meta(message_chunk(""), {"task_classified": meta}))
 
+        # Active-persona identity chip (C2a): the persona the agent ACTUALLY resolved.
+        # Unlike persona_load, this is NOT gated on injected/personalized — an identity
+        # indicator must show for EVERY session (incl. default) and on every dispatch
+        # path (chat/agent/clarify/ambiguous). Once per session.
+        if not state.persona_emitted:
+            pid = state.workspace_dir.name if state.workspace_dir else "default"
+            await self._conn.session_update(session_id,
+                with_meta(message_chunk(""), {"persona": {"id": pid}}))
+            state.persona_emitted = True
+
         # Deferred persona_load emit: after task_classified, only once per session
         # for a NON-EMPTY persona AND only on personalized dispatch paths
         # (chat/agent — never clarify/ambiguous). GATED on injected so the empty
