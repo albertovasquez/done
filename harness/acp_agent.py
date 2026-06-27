@@ -7,6 +7,7 @@ in the executor so the async loop stays responsive to session/cancel."""
 from __future__ import annotations
 
 import asyncio
+import logging
 import platform
 from pathlib import Path
 
@@ -23,19 +24,22 @@ from harness import memory as memory_mod
 from harness import persona
 from harness import skills
 from harness.acp_emit import (tool_call_start, tool_call_done, message_chunk,
-                              with_meta, plan_update)
+                              with_meta, plan_update, trace_event)
 from harness.acp_env import AcpEnvironment
 from harness.acp_session import SessionStore
 from harness.router import Router, Classification
 from harness.chat_handler import ChatHandler
 from harness.transcript import flatten_agent_messages
 
+logger = logging.getLogger("harness.acp_agent")
+
 
 class HarnessAgent(acp.Agent):
     def __init__(self, *, model_factory, agent_cfg, skills_dir: list[Path], router: Router,
                  worker_model_id, yolo: bool = False, backend: str = "vibeproxy",
                  workspace_dir: Path | None = None, cwd: str | None = None,
-                 shell_set_model: bool = False, shell_env: str | None = None):
+                 shell_set_model: bool = False, shell_env: str | None = None,
+                 debug: bool = False):
         self._model_factory = model_factory
         self._agent_cfg = agent_cfg
         self._skills_dir = skills_dir
@@ -47,6 +51,7 @@ class HarnessAgent(acp.Agent):
         self._cwd = cwd
         self._shell_set_model = shell_set_model
         self._shell_env = shell_env
+        self._debug = debug               # --debug: relay a JSONL trace over with_meta
         self._store = SessionStore()
         from harness.persona_sessions import PersonaSessions
         self._persona_sessions = PersonaSessions()
@@ -57,6 +62,15 @@ class HarnessAgent(acp.Agent):
         """True when the permission gate should allow without prompting the
         client (yolo mode). Kept tiny + pure so the gate is unit-testable."""
         return self._yolo
+
+    async def _trace(self, session_id, type, **data):
+        """Relay one trace event to the TUI sole-writer, only when --debug. Rides
+        the existing with_meta channel; a no-op (and zero wire bytes) when debug
+        is off, preserving the byte-identical-wire invariant."""
+        if not self._debug:
+            return
+        await self._conn.session_update(
+            session_id, with_meta(message_chunk(""), {"trace": trace_event(type, **data)}))
 
     def _persona_key(self) -> str:
         """The done.conf agent key the active seat persists under: the persona the
@@ -90,6 +104,10 @@ class HarnessAgent(acp.Agent):
                     config.save_agent(self._persona_key(),
                                       config.AgentConfig(backend=self._backend, model=model))
                 except Exception:
+                    # ok=False reaches the TUI, but the REASON is otherwise lost —
+                    # a silent persist failure means the pin won't stick next launch.
+                    logger.exception("failed to persist model pin for persona %r",
+                                     self._persona_key())
                     ok = False
             return {"ok": ok, "model": self._worker_model_id}
         if method == "harness/set_yolo":
@@ -119,10 +137,14 @@ class HarnessAgent(acp.Agent):
                     else:
                         config.update_agent(self._persona_key(), yolo_pinned=False)
                 except Exception:
+                    logger.exception("failed to persist yolo pin (=%s) for persona %r",
+                                     pin, self._persona_key())
                     ok = False             # surface the failure; do NOT claim success
             try:
                 pinned = config.yolo_pinned(self._persona_key())
             except Exception:
+                logger.exception("failed to read back yolo pin for persona %r",
+                                 self._persona_key())
                 pinned = False
             return {"ok": ok, "active": self._yolo, "pinned": pinned}
         if method == "harness/set_persona":
@@ -239,6 +261,11 @@ class HarnessAgent(acp.Agent):
             cls: Classification = await loop.run_in_executor(
                 None, lambda: self._router.classify(text, history=transcript))
         except Exception as e:  # router/VibeProxy unreachable
+            # A turn that dies before it even classifies is one of the most
+            # confusing failures to debug — log it (always) AND trace it (--debug),
+            # not just flash a user message that scrolls away.
+            logger.exception("router classify failed for persona %r", self._persona_key())
+            await self._trace(session_id, "router.failed", sid=session_id, error=str(e))
             await self._conn.session_update(session_id,
                 message_chunk(f"router unavailable: {e}"))
             return acp.PromptResponse(stop_reason="refusal")
@@ -247,6 +274,9 @@ class HarnessAgent(acp.Agent):
                 "confidence": cls.confidence}
         await self._conn.session_update(session_id,
             with_meta(message_chunk(""), {"task_classified": meta}))
+        await self._trace(session_id, "task.classified", sid=session_id,
+                          task_type=cls.task_type, skills=cls.skills,
+                          confidence=cls.confidence)
 
         # Active-persona identity chip (C2a): the persona the agent ACTUALLY resolved.
         # Unlike persona_load, this is NOT gated on injected/personalized — an identity
@@ -288,6 +318,7 @@ class HarnessAgent(acp.Agent):
             # boilerplate, not model output, so it must not pollute later context.
             self._store.extend(session_id, [
                 {"role": "user", "content": text, "origin": "clarify"}])
+            await self._trace(session_id, "clarify", sid=session_id, question=q)
             return acp.PromptResponse(stop_reason="end_turn")
 
         # Render base_block once — used by both chat and agent paths below.
@@ -325,6 +356,7 @@ class HarnessAgent(acp.Agent):
             self._store.extend(session_id, [
                 {"role": "user", "content": text, "origin": "chat"},
                 {"role": "assistant", "content": answer, "origin": "chat"}])
+            await self._trace(session_id, "chat.done", sid=session_id)
             return acp.PromptResponse(stop_reason="end_turn")
 
         # agent path
@@ -352,6 +384,7 @@ class HarnessAgent(acp.Agent):
         self._store.extend(session_id, [
             {"role": "user", "content": text, "origin": "agent"},
             {"role": "assistant", "content": assistant, "origin": "agent"}])
+        await self._trace(session_id, "run.finished", sid=session_id, stop_reason=stop_reason)
         return acp.PromptResponse(stop_reason=stop_reason)
 
     async def _run_agent_turn(self, loop, session_id, state, text, skill_block, prior,
@@ -480,7 +513,23 @@ class HarnessAgent(acp.Agent):
         def run_engine() -> dict:
             from harness.tracing_agent import TracingAgent
             from harness.events import Emitter
-            emitter = Emitter("/dev/null", clock=lambda: 0.0, console=False)  # ACP carries the stream
+            # ACP carries the user-facing stream; the engine's own event stream
+            # (llm.call/llm.return/action/action.done/run.*) is normally discarded.
+            # Under --debug, relay each event to the TUI sole-writer over the same
+            # with_meta channel instead of dropping it to /dev/null.
+            if self._debug:
+                from harness.relay_emitter import RelayEmitter
+
+                def _relay(ev: dict) -> None:
+                    upd = with_meta(message_chunk(""),
+                                    {"trace": {"type": ev["type"],
+                                               "data": {"sid": session_id, **ev["data"]}}})
+                    asyncio.run_coroutine_threadsafe(
+                        self._conn.session_update(session_id, upd), loop).result()
+
+                emitter = RelayEmitter("/dev/null", clock=lambda: 0.0, relay=_relay)
+            else:
+                emitter = Emitter("/dev/null", clock=lambda: 0.0, console=False)
             cfg = dict(self._agent_cfg)
             agent = None  # bound before construction so the except can reference it
             try:
@@ -507,6 +556,11 @@ class HarnessAgent(acp.Agent):
                     if hasattr(model, "on_delta"):
                         model.on_delta = None
             except Exception:  # engine/construction failure → refusal; capture any prose
+                # The refusal otherwise hides WHY the turn died (bad model id,
+                # litellm/network error, engine crash). Log the traceback — this
+                # runs on the worker thread, so logger.exception is the right sink.
+                logger.exception("agent engine failed (model=%r, persona=%r)",
+                                 self._worker_model_id, self._persona_key())
                 return {"stop_reason": "refusal", "exit_status": "refusal",
                         "assistant": flatten_agent_messages(getattr(agent, "messages", [])),
                         "streamed": streamed["buf"]}
@@ -521,7 +575,8 @@ class HarnessAgent(acp.Agent):
 
 def build_harness_agent(*, model_factory, agent_cfg, skills_dir: list[Path],
                         router: Router, worker_model_id=None,
-                        workspace_dir: Path | None = None) -> HarnessAgent:
+                        workspace_dir: Path | None = None,
+                        debug: bool = False) -> HarnessAgent:
     """Factory: wire the agent from resolved dependencies."""
     return HarnessAgent(
         model_factory=model_factory,
@@ -530,4 +585,5 @@ def build_harness_agent(*, model_factory, agent_cfg, skills_dir: list[Path],
         router=router,
         worker_model_id=worker_model_id,
         workspace_dir=workspace_dir,
+        debug=debug,
     )

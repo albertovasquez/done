@@ -60,6 +60,14 @@ def default_workspace_dir() -> Path:
     return config_dir() / "agents" / "default"
 
 
+def runs_dir() -> Path:
+    """The harness/runs/ directory where per-run artifacts (the CLI's
+    events.jsonl, the TUI's --debug trace.jsonl) live. Package-relative so it
+    matches run_traced.py's REPO_ROOT/harness/runs target in an editable
+    checkout. Does NOT create the directory."""
+    return Path(importlib.resources.files("harness")) / "runs"
+
+
 def mini_yaml_path() -> Path:
     """Locate the engine's config/mini.yaml WITHOUT importing minisweagent
     (its __init__ runs dotenv/global-config side effects). Uses find_spec, which

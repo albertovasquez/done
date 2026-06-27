@@ -72,6 +72,17 @@ def _model_label(model: str, worker_model_id: str | None) -> str:
     return "default model"
 
 
+def extract_agent_trace(tracer, update) -> None:
+    """If `update` carries a relayed trace payload (field_meta['harness']['trace'],
+    stamped by the agent's _trace / RelayEmitter), write it with source='agent'.
+    No-op when the payload is absent or the tracer is a NullTracer."""
+    meta = getattr(update, "field_meta", None)
+    if isinstance(meta, dict):
+        tr = (meta.get("harness") or {}).get("trace")
+        if isinstance(tr, dict) and "type" in tr:
+            tracer.emit("agent", tr["type"], **(tr.get("data") or {}))
+
+
 class HarnessTui(App):
     CSS_PATH = "app.tcss"  # relative to this module's dir (harness/tui/)
     BINDINGS = [("escape", "cancel", "Cancel turn"),
@@ -79,9 +90,12 @@ class HarnessTui(App):
 
     def __init__(self, agent_cmd: list[str], cwd: str, model: str,
                  worker_model_id: str | None = None, version: str = "0.5.0",
-                 yolo: bool = False, persona: str | None = None) -> None:
+                 yolo: bool = False, persona: str | None = None,
+                 debug: bool = False) -> None:
         super().__init__()
         self.agent_cmd = agent_cmd
+        self._debug = debug                   # --debug: write runs/<ts>/trace.jsonl
+        self._tracer = None                   # opened lazily in _connect (Task 4)
         self.cwd = cwd
         self.model = model
         self._worker_model_id = worker_model_id
@@ -176,10 +190,29 @@ class HarnessTui(App):
         new = await self._conn.new_session(cwd=self.cwd, mcp_servers=[])
         self._session_id = new.session_id
 
+    def _ensure_tracer(self) -> None:
+        """Open the --debug trace file once per process (the TUI is the sole
+        writer). Reconnects (reload/clear) reuse the same file. When debug is
+        off, install a NullTracer so every call site is an unconditional no-op."""
+        if self._tracer is not None:
+            return
+        from harness.debug_trace import make_tracer, NullTracer
+        if self._debug:
+            import os as _os
+            import time as _time
+            from harness import paths
+            # pid suffix so two launches in the same second don't collide on one
+            # run dir (Emitter opens mode "w" → the second would truncate the first).
+            run_dir = paths.runs_dir() / f"{_time.strftime('%Y%m%d-%H%M%S')}-{_os.getpid()}"
+            self._tracer = make_tracer(True, run_dir)
+        else:
+            self._tracer = NullTracer()
+
     async def _connect(self) -> None:
         """Spawn the agent subprocess, initialize, open a session, re-apply the
         preserved model, and bump the generation. Failure-atomic: if anything
         after __aenter__ raises, tear the half-open context down before re-raising."""
+        self._ensure_tracer()
         self._cm = acp.spawn_agent_process(
             self._client, self.agent_cmd[0], *self.agent_cmd[1:],
             env=dict(os.environ), cwd=self.cwd,
@@ -225,6 +258,11 @@ class HarnessTui(App):
         try:
             await self._connect()
         except Exception as e:                # startup failure is fatal but must not crash the UI
+            # _connect opened the tracer before spawning, so this lands in the
+            # trace file too — a failed spawn/init is otherwise just a UI line.
+            self.log(f"agent startup failed: {e!r}")
+            if self._tracer is not None:
+                self._tracer.emit("dn", "spawn.failed", error=str(e))
             self._fatal(f"could not start agent: {e}")
 
     async def _mount_status_contents(self) -> None:
@@ -731,6 +769,8 @@ class HarnessTui(App):
         # spawning a stray block under this prompt (see _stream_message).
         gen = self._send_gen                      # this turn belongs to this generation
         self._show_working()                      # spinner until the first token
+        if self._tracer is not None:
+            self._tracer.emit("dn", "tx.prompt", sid=self._session_id, text=text)
         try:
             resp = await self._conn.prompt(
                 prompt=[acp.text_block(text)], session_id=self._session_id)
@@ -822,6 +862,13 @@ class HarnessTui(App):
         if msg.session_id is not None and self._session_id is not None \
                 and msg.session_id != self._session_id:
             return
+        # --debug trace: record the relayed agent event (if any) + the dn-side
+        # receipt, BEFORE any early return below (e.g. stream_reset) so nothing is
+        # dropped. NullTracer makes both calls no-ops when debug is off.
+        if self._tracer is not None:
+            extract_agent_trace(self._tracer, msg.update)
+            self._tracer.emit("dn", "rx.update", sid=msg.session_id,
+                              kind=type(msg.update).__name__)
         # token usage, if the agent surfaced any under _meta
         self._maybe_update_tokens(getattr(msg.update, "field_meta", None))
         # an explicit per-step boundary signal: Task 4 emits an empty message_chunk
@@ -887,19 +934,26 @@ class HarnessTui(App):
     def on_permission_request(self, msg: PermissionRequest) -> None:
         self._pending_perm = msg.future
 
+        # The agent sends the real command in tool_call.title (e.g. "$ sed ...");
+        # strip a leading "$ " so the modal doesn't double it. Hoisted above
+        # _resolve so the --debug trace can record the command with the decision.
+        title = getattr(msg.tool_call, "title", "") or ""
+        command = title[2:] if title.startswith("$ ") else title
+
         def _resolve(chosen) -> None:
             self._pending_perm = None
+            if self._tracer is not None:
+                self._tracer.emit("dn", "perm", command=command,
+                                  decision="allowed" if chosen else "denied")
             if not msg.future.done():
                 msg.future.set_result(chosen)
 
-        # The agent sends the real command in tool_call.title (e.g. "$ sed ...");
-        # strip a leading "$ " so the modal doesn't double it.
-        title = getattr(msg.tool_call, "title", "") or ""
-        command = title[2:] if title.startswith("$ ") else title
         self.push_screen(PermissionModal(command, msg.options), _resolve)
 
     async def action_cancel(self) -> None:
         if self._conn is not None and self._session_id is not None:
+            if self._tracer is not None:
+                self._tracer.emit("dn", "tx.cancel", sid=self._session_id)
             await self._conn.cancel(session_id=self._session_id)
 
     async def action_clear(self) -> None:
@@ -993,5 +1047,12 @@ class HarnessTui(App):
         if self._cm is not None:
             try:
                 await self._cm.__aexit__(None, None, None)
-            except Exception:
-                pass
+            except Exception as e:
+                # low-stakes at exit, but record it (was a bare swallow) so a
+                # subprocess that won't die cleanly leaves a breadcrumb.
+                self.log(f"agent teardown raised on exit: {e!r}")
+                if self._tracer is not None:
+                    self._tracer.emit("dn", "teardown.error", error=str(e))
+        if self._tracer is not None:
+            self._tracer.close()              # flush the trace file on app exit
+            self._tracer = None

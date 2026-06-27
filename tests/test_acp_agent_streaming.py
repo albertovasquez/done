@@ -187,7 +187,7 @@ def test_on_delta_cleared_after_turn(tmp_path):
     assert model.on_delta is None, "on_delta was not cleared after the turn"
 
 
-def test_failure_records_streamed_buffer_not_prior_turn(tmp_path):
+def test_failure_records_streamed_buffer_not_prior_turn(tmp_path, caplog):
     """A turn that streams 'AB' then FAILS must record 'AB' (this turn's streamed
     buffer) as the assistant transcript — never a prior turn's assistant prose."""
     model = _StreamThenFailModel(["A", "B"])
@@ -202,8 +202,13 @@ def test_failure_records_streamed_buffer_not_prior_turn(tmp_path):
         {"role": "user", "content": "earlier question", "origin": "agent"},
         {"role": "assistant", "content": "OLD ANSWER", "origin": "agent"}])
 
-    resp = _prompt(agent, sid, "do the thing")
+    with caplog.at_level("ERROR", logger="harness.acp_agent"):
+        resp = _prompt(agent, sid, "do the thing")
     assert resp.stop_reason == "refusal", f"expected refusal, got {resp.stop_reason}"
+    # the engine failure must be logged with a traceback, not swallowed into a
+    # bare refusal with no diagnostic
+    assert any("agent engine failed" in r.message for r in caplog.records), \
+        f"engine failure must be logged; got {[r.message for r in caplog.records]}"
 
     transcript = agent._store.get(sid).transcript
     last_assistant = [m for m in transcript if m["role"] == "assistant"][-1]

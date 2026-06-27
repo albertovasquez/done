@@ -19,6 +19,13 @@ dependencies = [
     "litellm>=1.75.5",
 ]
 
+[project.optional-dependencies]
+# Developer tooling. `textual-dev` provides `textual console` (live TUI log
+# redirect) — pairs with the --debug trace file (see docs/debugging.md).
+dev = [
+    "textual-dev>=1.7",
+]
+
 [project.scripts]
 # Type `dn` from any directory to launch the Textual ACP client (the TUI).
 # It operates on YOUR current working directory as the project.

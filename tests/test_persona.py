@@ -175,7 +175,7 @@ def test_seed_does_not_clobber_existing_dir(monkeypatch, tmp_path):
     assert not (ws / "IDENTITY.md").exists()
 
 
-def test_seed_never_raises_on_oserror(monkeypatch, tmp_path):
+def test_seed_never_raises_on_oserror(monkeypatch, tmp_path, caplog):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
     def boom(*a, **k):
@@ -184,7 +184,11 @@ def test_seed_never_raises_on_oserror(monkeypatch, tmp_path):
     # pathlib.Path; monkeypatch auto-restores after the test, so the global patch
     # is safe here. (This is intentional — do not "simplify" it away.)
     monkeypatch.setattr("harness.persona.Path.mkdir", boom)
-    seed_default_workspace()   # must not raise — best-effort startup
+    with caplog.at_level("WARNING", logger="harness.persona"):
+        seed_default_workspace()   # must not raise — best-effort startup
+    # ...but the failure must be surfaced (else "why is my persona blank?")
+    assert any("could not seed default persona" in r.message for r in caplog.records), \
+        f"seed failure must warn; got {[r.message for r in caplog.records]}"
 
 
 def test_meaningful_and_trim_are_importable_helpers():

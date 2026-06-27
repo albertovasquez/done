@@ -15,12 +15,15 @@ into the boot path; callers handle write failures (see save_default)."""
 
 from __future__ import annotations
 
+import logging
 import os
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
 from harness import paths
+
+logger = logging.getLogger("harness.config")
 
 SCHEMA_VERSION = 1
 RESERVED_KEY = "default"
@@ -52,7 +55,12 @@ def load() -> dict[str, AgentConfig]:
         return {}
     try:
         data = tomllib.loads(raw.decode("utf-8"))
-    except (tomllib.TOMLDecodeError, UnicodeDecodeError):
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
+        # A file that EXISTS but won't parse is a real problem: every persisted
+        # model/yolo pin silently resolves to {} (defaults). A missing file
+        # (OSError above) is normal first-run and stays quiet; a corrupt one warns.
+        logger.warning("done.conf at %s is unparseable (%s); ignoring all persisted "
+                       "agent config this session", path, e)
         return {}
     agents_raw = data.get("agents")
     if not isinstance(agents_raw, dict):
@@ -183,3 +191,26 @@ def yolo_pinned(persona_id: str = "default") -> bool:
     table is absent or the file is unreadable."""
     cur = load_agent(persona_id)
     return cur.yolo_pinned if cur is not None else False
+
+
+def harness_debug() -> bool | None:
+    """The top-level `[harness] debug` flag from done.conf — a GLOBAL (not
+    per-persona) setting that pins the --debug trace on. Returns None when the
+    file/section/key is absent or unreadable, so a caller can apply its own
+    precedence (flag > env > this > off). Reads raw TOML rather than load() since
+    load() only surfaces [agents.*] tables."""
+    try:
+        raw = conf_path().read_bytes()
+    except OSError:
+        return None
+    if not raw.strip():
+        return None
+    try:
+        data = tomllib.loads(raw.decode("utf-8"))
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError):
+        return None
+    section = data.get("harness")
+    if not isinstance(section, dict):
+        return None
+    val = section.get("debug")
+    return val if isinstance(val, bool) else None

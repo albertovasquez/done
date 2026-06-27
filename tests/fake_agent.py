@@ -48,6 +48,15 @@ class FakeAgent(acp.Agent):
             "task_type": "chat_question", "skills": [], "confidence": 1.0}}}
         await self._conn.session_update(session_id, upd)
 
+        # 1b) when asked, relay a --debug trace payload so the client's
+        # extract_agent_trace path can be exercised end-to-end over a real
+        # subprocess (the production agent does this via with_meta/RelayEmitter).
+        if "TRACE" in text:
+            tupd = update_agent_message_text("")
+            tupd.field_meta = {"harness": {"trace": {
+                "type": "llm.call", "data": {"sid": session_id, "n": 1}}}}
+            await self._conn.session_update(session_id, tupd)
+
         # 2) optionally drive a permission round-trip
         if "PERMISSION" in text:
             options = [

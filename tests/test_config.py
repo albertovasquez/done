@@ -24,6 +24,52 @@ def isolated_config(tmp_path, monkeypatch):
     return tmp_path
 
 
+def test_harness_debug_absent_returns_none(tmp_path):
+    assert config.harness_debug() is None          # no file
+
+
+def test_harness_debug_no_section_returns_none(tmp_path):
+    _write(tmp_path, "schema_version = 1\n")
+    assert config.harness_debug() is None
+
+
+def test_harness_debug_true(tmp_path):
+    _write(tmp_path, "[harness]\ndebug = true\n")
+    assert config.harness_debug() is True
+
+
+def test_harness_debug_false(tmp_path):
+    _write(tmp_path, "[harness]\ndebug = false\n")
+    assert config.harness_debug() is False
+
+
+def test_harness_debug_non_bool_returns_none(tmp_path):
+    _write(tmp_path, '[harness]\ndebug = "yes"\n')
+    assert config.harness_debug() is None
+
+
+def test_harness_debug_malformed_returns_none(tmp_path):
+    _write(tmp_path, "this is = = not toml [[[")
+    assert config.harness_debug() is None
+
+
+def test_load_corrupt_file_warns(tmp_path, caplog):
+    """A done.conf that exists but won't parse silently resets every pin to {} —
+    that must be surfaced as a warning, not swallowed."""
+    _write(tmp_path, "this is = = not toml [[[")
+    with caplog.at_level("WARNING", logger="harness.config"):
+        assert config.load() == {}
+    assert any("unparseable" in r.message for r in caplog.records), \
+        f"corrupt done.conf must warn; got {[r.message for r in caplog.records]}"
+
+
+def test_load_missing_file_is_quiet(tmp_path, caplog):
+    """A missing file is normal first-run state and must NOT warn (only corrupt does)."""
+    with caplog.at_level("WARNING", logger="harness.config"):
+        assert config.load() == {}
+    assert not caplog.records, f"missing file must be quiet; got {[r.message for r in caplog.records]}"
+
+
 def test_conf_path_under_config_dir(tmp_path):
     assert config.conf_path() == tmp_path / "harness" / "done.conf"
 

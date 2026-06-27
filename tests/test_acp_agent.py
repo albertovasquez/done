@@ -71,15 +71,60 @@ def test_set_model_empty_model_does_not_persist():
     assert config.load_default() is None  # nothing written for a no-op swap
 
 
-def test_set_model_reports_failure(monkeypatch):
+def test_set_model_reports_failure(monkeypatch, caplog):
     def boom(*a, **k):
         raise OSError("disk full")
     monkeypatch.setattr(config, "save_agent", boom)
     agent = _make_agent()
-    result = asyncio.run(agent.ext_method("harness/set_model", {"model": "x"}))
+    with caplog.at_level("ERROR", logger="harness.acp_agent"):
+        result = asyncio.run(agent.ext_method("harness/set_model", {"model": "x"}))
     # swap still applies in-session, but the response reports it did NOT persist
     assert result["model"] == "x"
     assert result["ok"] is False
+    # the REASON must be logged, not just signalled via ok=False (silent persist
+    # failure = the pin won't stick next launch, with no diagnostic)
+    assert any("persist model pin" in r.message for r in caplog.records), \
+        f"persist failure must be logged; got {[r.message for r in caplog.records]}"
+
+
+def test_router_failure_logs_and_traces(caplog):
+    """When the router raises (VibeProxy unreachable), prompt() must: return a
+    refusal, log the exception (always), and emit a router.failed trace event
+    (under --debug) — not just flash a user message that scrolls away."""
+    import acp
+
+    class _BoomRouter:
+        def classify(self, *a, **k):
+            raise RuntimeError("vibeproxy down")
+
+    class _FakeConn:
+        def __init__(self):
+            self.updates = []
+        async def session_update(self, session_id, update, **kw):
+            self.updates.append(update)
+
+    agent = HarnessAgent(
+        model_factory=lambda *a, **k: None, agent_cfg={}, skills_dir=[],
+        router=_BoomRouter(), worker_model_id="m", backend="vibeproxy", debug=True)
+    conn = _FakeConn()
+    agent.on_connect(conn)
+    sid = agent._store.new(cwd=".", workspace_dir=None)
+
+    async def go():
+        prompt = [acp.text_block("do a thing")]
+        return await agent.prompt(prompt, sid)
+
+    with caplog.at_level("ERROR", logger="harness.acp_agent"):
+        resp = asyncio.run(go())
+
+    assert resp.stop_reason == "refusal"
+    assert any("router classify failed" in r.message for r in caplog.records), \
+        f"router failure must be logged; got {[r.message for r in caplog.records]}"
+    # the router.failed trace event was relayed (debug=True)
+    traces = [getattr(u, "field_meta", None) for u in conn.updates]
+    assert any(isinstance(m, dict)
+               and (m.get("harness") or {}).get("trace", {}).get("type") == "router.failed"
+               for m in traces), f"router.failed trace missing; got {traces}"
 
 
 def test_set_yolo_active_true_sets_gate_no_persist():
