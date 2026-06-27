@@ -1026,6 +1026,81 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ---
 
+### Task 8.5: TUI — classify the new tools' subtype (reuse `ToolCallRow` glyphs)
+
+**Files:**
+- Modify: `harness/tui/state.py:90-106` (`infer_subtype`)
+- Test: `tests/test_tui_state.py` (add; or extend the existing state test if present — grep `infer_subtype` in `tests/`)
+
+**Interfaces:**
+- Consumes: nothing new. The `action` event's title for file tools is `display_label(args)` → `"read <path>"` / `"write <path>"` / `"edit <path>"` (Tasks 2–4, 6).
+- Produces: `infer_subtype("read x")=="read"`, `infer_subtype("write x")=="edit"`, `infer_subtype("edit x")=="edit"`. The shipped `ToolCallRow.line_for` already maps `subtype→GLYPH` (`◇ read`, `✎ edit`, `$` shell fallback), so no widget change is needed — only the classifier learns the new first-words.
+
+> WHY: `infer_subtype` (display-only) currently classifies by the command's first
+> word — `cat/head→read`, `sed/apply_patch→edit`. The new tools' titles start with
+> `read`/`write`/`edit`, which hit no branch and fall to the `$` shell glyph. The
+> catalog (`harness/tui/styles/components.md`, glyph map + `ToolCallRow`) already
+> defines `◇ read` / `✎ edit`; we reuse those by teaching the classifier the new
+> verbs. `write` maps to the `edit` subtype (`✎`) — the closest SHIPPED glyph; do
+> NOT invent a new one (components.md rule: reuse before invent).
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# tests/test_tui_state.py  (add; reuse the module's existing imports if it exists)
+import sys
+sys.path.insert(0, "upstream/src")
+sys.path.insert(0, ".")
+
+from harness.tui.state import infer_subtype
+
+
+def test_infer_subtype_classifies_file_tools():
+    assert infer_subtype("read harness/api.py") == "read"
+    assert infer_subtype("edit harness/api.py") == "edit"
+    assert infer_subtype("write harness/api.py") == "edit"   # closest shipped glyph (✎)
+
+def test_infer_subtype_still_classifies_shell_and_bash_first_words():
+    assert infer_subtype("$ pytest -q") == "test"
+    assert infer_subtype("grep -rn foo") == "search"
+    assert infer_subtype("cat README.md") == "read"
+    assert infer_subtype("echo hi") == "shell"
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `.venv/bin/python -m pytest tests/test_tui_state.py -k infer_subtype -q`
+Expected: FAIL — `infer_subtype("read ...")` returns `"shell"`, not `"read"`.
+
+- [ ] **Step 3: Write minimal implementation**
+
+In `harness/tui/state.py`, add two branches to `infer_subtype` (after the `first`
+is computed, before the existing `pytest`/`sed` checks so the explicit tool verbs
+win):
+
+```python
+    if first == "read":
+        return "read"
+    if first in ("write", "edit"):
+        return "edit"
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `.venv/bin/python -m pytest tests/test_tui_state.py -k infer_subtype -q`
+Expected: PASS (2 tests). Then the TUI suite for regressions: `.venv/bin/python -m pytest tests/ -k "tui or state or tool_call" -q`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add harness/tui/state.py tests/test_tui_state.py
+git commit -m "feat(tui): classify read/write/edit tool subtypes (reuse ToolCallRow glyphs)
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
+```
+
+---
+
 ### Task 9: Full-suite green + primary-checkout check
 
 **Files:**
