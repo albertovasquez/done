@@ -497,7 +497,23 @@ class HarnessAgent(acp.Agent):
         def run_engine() -> dict:
             from harness.tracing_agent import TracingAgent
             from harness.events import Emitter
-            emitter = Emitter("/dev/null", clock=lambda: 0.0, console=False)  # ACP carries the stream
+            # ACP carries the user-facing stream; the engine's own event stream
+            # (llm.call/llm.return/action/action.done/run.*) is normally discarded.
+            # Under --debug, relay each event to the TUI sole-writer over the same
+            # with_meta channel instead of dropping it to /dev/null.
+            if self._debug:
+                from harness.relay_emitter import RelayEmitter
+
+                def _relay(ev: dict) -> None:
+                    upd = with_meta(message_chunk(""),
+                                    {"trace": {"type": ev["type"],
+                                               "data": {"sid": session_id, **ev["data"]}}})
+                    asyncio.run_coroutine_threadsafe(
+                        self._conn.session_update(session_id, upd), loop).result()
+
+                emitter = RelayEmitter("/dev/null", clock=lambda: 0.0, relay=_relay)
+            else:
+                emitter = Emitter("/dev/null", clock=lambda: 0.0, console=False)
             cfg = dict(self._agent_cfg)
             agent = None  # bound before construction so the except can reference it
             try:
