@@ -128,8 +128,8 @@ def term(inner_html: str, label: str = "") -> str:
 
 def component_card(name: str, status: str, desc: str, mock_html: str) -> str:
     badge = {"shipped": "✅ shipped", "unwired": "🟡 built · unwired",
-             "designed": "📐 designed-only"}.get(status, status)
-    cls = {"shipped": "ok", "unwired": "warn", "designed": "dim"}[status]
+             "designed": "📐 designed-only", "inlined": "◻ inlined in app.py"}.get(status, status)
+    cls = {"shipped": "ok", "unwired": "warn", "designed": "dim", "inlined": "dim"}[status]
     return f"""<div class="card">
       <div class="card-head"><h3>{html.escape(name)}</h3><span class="badge {cls}">{badge}</span></div>
       <p class="desc">{desc}</p>
@@ -215,6 +215,60 @@ def mock_user_message() -> str:
             f'Build me a brand-book page for the design system</span>')
     return term(f'<div class="line">{line}</div>',
                 "User message — accent ▌ bar + bold")
+
+
+def mock_answer_stream() -> str:
+    """AnswerStream + chips — inlined in app.py (no widget), shown for completeness."""
+    fg, acc, muted, code = (hex_for("foreground"), hex_for("accent"),
+                            hex_for("muted"), hex_for("code"))
+    prose = (f'<span style="color:{fg}">Here\'s the fix. The bug was an off-by-one '
+             f'in the loop bound:</span>')
+    codeln = (f'<span style="color:{code}">  for i in range(n + 1):  # was range(n)</span>')
+    chips = (f'<span style="color:{acc}">code_fix</span>'
+             f'<span style="color:{muted}"> · skills: debugging, tdd</span>')
+    return term(f'<div class="line">{prose}</div>'
+                f'<div class="line">{codeln}</div>'
+                f'<div class="line" style="margin-top:.4em">{chips}</div>',
+                "AnswerStream + chips — streamed markdown (inlined in app.py)")
+
+
+def mock_select_modal() -> str:
+    fg, muted, acc = hex_for("foreground"), hex_for("muted"), hex_for("accent")
+    title = f'<span style="color:{fg};font-weight:700">Select model</span>&nbsp;&nbsp;&nbsp;<span style="color:{muted}">esc</span>'
+    search = f'<span style="color:{muted}">Search</span>'
+    rows = (f'<div class="line"><span style="color:{acc}">●</span> claude-opus-4-8</div>'
+            f'<div class="line">&nbsp;&nbsp;claude-sonnet-4-6</div>'
+            f'<div class="line">&nbsp;&nbsp;mock</div>')
+    footer = f'<span style="color:{muted}">↑↓ move · enter select · esc cancel</span>'
+    return term(f'<div class="line">{title}</div>'
+                f'<div class="line" style="margin-top:.3em">{search}</div>'
+                f'{rows}'
+                f'<div class="line" style="margin-top:.3em">{footer}</div>',
+                "SelectModal — searchable picker (● = current). PermissionModal is a sibling (Allow / Reject).")
+
+
+def mock_slash_menu() -> str:
+    acc, muted = hex_for("accent"), hex_for("muted")
+    def row(name, desc):
+        return (f'<div class="line"><span style="color:{acc}">/{name}</span>'
+                f'&nbsp;&nbsp;&nbsp;<span style="color:{muted}">{desc}</span></div>')
+    return term(row("model", "switch the model") + row("yolo", "toggle permission bypass")
+                + row("reload", "reload the agent"),
+                "SlashMenu — filtered command list (typed after '/')")
+
+
+def mock_status_bar() -> str:
+    acc, muted, err = hex_for("accent"), hex_for("muted"), hex_for("error")
+    path_dim, path = hex_for("path-dim"), hex_for("path")
+    bypass = GLYPH["bypass"]
+    mode = (f'<span style="color:{acc};font-weight:700">Build</span>'
+            f'<span style="color:{muted}"> · claude-opus-4-8 vibeproxy</span>')
+    yolo = f'<span style="color:{err};font-weight:700">{bypass} bypass permissions on</span>'
+    cwd = (f'<span style="color:{path_dim}">~/Work/Quiubo/</span>'
+           f'<span style="color:{path}">harness</span>')
+    return term(f'<div class="line">{mode}</div>'
+                f'<div class="line">{yolo}&nbsp;&nbsp;&nbsp;&nbsp;{cwd}</div>',
+                "Status bar / footer meta — mode · model · bypass · cwd (inlined in app.py)")
 
 
 def mock_activity_region() -> str:
@@ -356,7 +410,34 @@ def section_components() -> str:
     return ("<section><h2>Components (shipped today)</h2>"
             "<p class='note'>Rendered from the widgets' <em>own</em> markup "
             "strings, translated to HTML — so these match what the TUI draws. "
-            "Tags: ✅ shipped · 🟡 built-but-unwired · 📐 designed-only.</p>"
+            "Tags: ✅ shipped · 🟡 built-but-unwired · 📐 designed-only · "
+            "◻ inlined in app.py.</p>"
+            '<div class="cards">' + "".join(cards) + "</div></section>")
+
+
+def section_surfaces() -> str:
+    """The larger surfaces we actually use — modals, the composer menu, the
+    footer, and the inlined response stream — beyond the atomic primitives."""
+    cards = [
+        component_card("AnswerStream + chips", "inlined",
+            "The streamed agent response + DoneDone's request-type / skills chips. "
+            "Drawn directly in app.py (no standalone widget).",
+            mock_answer_stream()),
+        component_card("SelectModal / PermissionModal", "shipped",
+            "Searchable picker (● = current). PermissionModal is a sibling with "
+            "Allow / Reject options; both shipped & wired.",
+            mock_select_modal()),
+        component_card("SlashMenu", "shipped",
+            "Filtered command list shown as you type after '/'. Shipped & wired.",
+            mock_slash_menu()),
+        component_card("Status bar / footer", "inlined",
+            "Mode · model · permission-bypass posture · cwd. Inlined in app.py.",
+            mock_status_bar()),
+    ]
+    return ("<section><h2>Surfaces (modals · composer · footer)</h2>"
+            "<p class='note'>The larger surfaces beyond the atomic primitives — "
+            "what you actually see every session. Mocks are faithful to the "
+            "widgets' markup / layout.</p>"
             '<div class="cards">' + "".join(cards) + "</div></section>")
 
 
@@ -440,6 +521,7 @@ def build_html(stamp: str) -> str:
 {section_glyphs()}
 {section_status()}
 {section_components()}
+{section_surfaces()}
 <footer>
   {n_colors} tokens · {n_glyphs} glyphs · {len(list(AgentState))} agent states ·
   {len(list(ToolStatus))} tool statuses. Source of truth:

@@ -15,6 +15,31 @@ shared tokens — don't invent one-off widgets or hardcode colors.
   `AgentSnapshot`). `AgentSnapshot` now carries `tools: tuple[ToolView, ...]` (all
   of a turn's tools, by id) alongside `tool` (the live single tool).
 
+## For agents — read this first
+
+**This file is the canonical source for "what component/token do I use, and may I
+add one?"** (Not `brandbook.html` — that is the *human*, rendered view; this text
+is the machine-readable one.) The rule:
+
+> **Reuse before you invent.** First find the component below; extend it or
+> compose existing ones; only add a **new** entry (with rationale in the spec) if
+> nothing fits. Never hardcode a color or glyph — use the tokens
+> (`theme.py` / `tokens.py`).
+
+**Status tags — do not "reuse" something that isn't shipped.** Every entry below
+is tagged; only `✅` components actually exist and run today:
+
+- **`✅ shipped`** — a wired widget class you can use now.
+- **`🟡 built · unwired`** — the class exists but nothing mounts it. Wire it before
+  relying on it; don't assume it renders.
+- **`📐 designed-only`** — spec/catalog entry with **no implementation**. Build it
+  (per spec) before use; treat as a plan, not an API.
+- **`◻ inlined`** — a real surface, but drawn directly in `app.py` (no standalone
+  widget). Change it there, not in `widgets/`.
+
+When in doubt, the ground truth is the code: a component is `✅` only if its class
+is imported/mounted in `harness/tui/app.py` (or mounted by a widget that is).
+
 ## Principles (apply to every component)
 
 1. **Dumb & reactive.** A component reads a slice of a snapshot and renders it. It
@@ -280,18 +305,38 @@ Bottom hairline bar; gains keybinding-hint segments
 
 ---
 
-## Catalog at a glance
+## Catalog at a glance — with real status
 
-```
-A primitives   StatusChip (+ for_yolo footer mode chip) · StateDot/ActivityGlyph · Hairline/SectionLabel
-B responses    AnswerStream* · UserMessage*
-C work         ActivityRegion⭐ (owns ActivityStatus⭐ · TaskTree⭐ · ToolCallRow) · ProgressRow
-D decisions    DecisionPrompt⭐ · PermissionModal* · SelectModal*
-E future       ScheduleBadge · CronRow
-F shell/nav    AppShell · AgentRail · SidebarToggle · FleetHeader · StatusBar*
+Verified against `harness/tui/app.py` + `harness/tui/widgets/`. Tags:
+`✅ shipped` · `🟡 built·unwired` · `📐 designed-only` · `◻ inlined in app.py`.
 
-   * = exists today, kept/promoted     ⭐ = headline new, ships in the on-ramp
-```
+| Group | Component | Status | Where |
+|---|---|---|---|
+| **A** primitives | `StatusChip` (+ `for_yolo`) | ✅ shipped | `widgets/status_chip.py`, used in `app.py` |
+| | `StateDot` | 🟡 built·unwired | class exists, not mounted |
+| | `ActivityGlyph` | 🟡 built·unwired | class exists, not mounted |
+| | `Hairline` / `SectionLabel` | 📐 designed-only | no class |
+| **B** responses | `AnswerStream` (streaming Markdown) | ◻ inlined | drawn in `app.py` (`_stream_message`) |
+| | `UserMessage` (`▌` accent line) | ◻ inlined | drawn in `app.py` |
+| **C** work | `ActivityRegion` | ✅ shipped | wired in `app.py` |
+| | `ActivityStatus` | ✅ shipped | mounted by `ActivityRegion` |
+| | `ToolCallRow` | ✅ shipped | mounted by `ActivityRegion` (ctrl+o) |
+| | `TaskTree` | 🟡 built·unwired | `display=False` always (status-only decision) |
+| | `ProgressRow` | 📐 designed-only | no class |
+| **D** decisions | `PermissionModal` | ✅ shipped | wired in `app.py` |
+| | `SelectModal` | ✅ shipped | wired in `app.py` |
+| | `DecisionPrompt` | 🟡 built·unwired | class exists; reducer fills `decision`, but no mount |
+| **—** input/nav | `SlashMenu` | ✅ shipped | wired in `app.py` |
+| | `PromptArea` | ✅ shipped | wired in `app.py` |
+| | `StatusBar` / footer meta | ◻ inlined | drawn in `app.py` |
+| **E** future | `ScheduleBadge` · `CronRow` | 📐 designed-only | no class; `schedule` snapshot field unpopulated |
+| **F** shell/nav | `AppShell` · `AgentRail` · `SidebarToggle` · `FleetHeader` | 📐 designed-only | no class (fleet phase) |
+
+**Reality check:** only the `✅` rows are usable today. `SlashMenu` / `PromptArea`
+ship but were missing from the original A–F grouping — listed here under
+input/nav. The `*`/`⭐` markers used in older revisions of this file meant
+"planned for the on-ramp," not "exists" — they were aspirational and have been
+replaced by the status column above.
 
 When a new UI need arises: **first find the component here; extend it or compose
 existing ones; only add a new entry to this catalog (with rationale in the spec) if
