@@ -83,12 +83,12 @@ class MiniSweAgentRunner:
         self.result = None
 
     def run(self, task: str, *, skill_block: str = "", persona_block: str = "",
-            **kwargs) -> Iterator[Event]:
+            memory_block: str = "", **kwargs) -> Iterator[Event]:
         q: "queue.Queue[Any]" = queue.Queue()
         emitter = QueueEmitter(q, clock=lambda: 0.0)
         agent = TracingAgent(self._model, self._env, emitter=emitter,
                              skill_block=skill_block, persona_block=persona_block,
-                             **self._agent_cfg)
+                             memory_block=memory_block, **self._agent_cfg)
 
         def _worker():
             result_dict = None
