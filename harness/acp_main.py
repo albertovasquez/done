@@ -70,10 +70,21 @@ async def _main(argv=None) -> None:
                         help="project dir the agent operates on (anchors .env)")
     parser.add_argument("--yolo", action="store_true",
                         help="auto-allow every command without prompting (no permission modal)")
+    parser.add_argument("--persona", default=None,
+                        help="persona workspace id to run as (default: the built-in default)")
     args = parser.parse_args(argv)
 
     cwd = str(Path(args.cwd).resolve()) if args.cwd else os.getcwd()
     paths.load_env(cwd)               # BEFORE importing engine-touching modules
+
+    import sys
+    from harness import persona_select
+    try:
+        workspace_dir = persona_select.resolve_workspace(args.persona)
+    except persona_select.UnknownPersona as e:
+        print(f'no persona "{e}" — run /persona to list available personas',
+              file=sys.stderr)
+        raise SystemExit(2)
 
     from harness import persona
     persona.seed_default_workspace()   # first-run: drop editable templates in the config dir
@@ -100,7 +111,7 @@ async def _main(argv=None) -> None:
         worker_model_id=worker_model_id,
         yolo=args.yolo,
         backend=args.model,
-        workspace_dir=paths.default_workspace_dir(),
+        workspace_dir=workspace_dir,
     )
     await acp.run_agent(agent)
 
