@@ -48,9 +48,13 @@ class _FakeApp:
         self.ran = True
 
 
-def _patch_common(monkeypatch, reexec):
+def _patch_common(monkeypatch, reexec, config_home):
     """Patch HarnessTui to a fake whose _reexec is controllable, and stub the
-    env/path side effects so main() can run headless."""
+    env/path side effects so main() can run headless. Isolates the config dir
+    (XDG_CONFIG_HOME) so _resolve_yolo/_resolve_model read an EMPTY done.conf —
+    otherwise a real ~/.config/harness/done.conf (e.g. a yolo pin) leaks in and
+    appends --yolo to the re-exec argv, breaking the argv assertions."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
     app = _FakeApp(reexec)
     monkeypatch.setattr(tui_main, "HarnessTui", lambda **kw: app)
     monkeypatch.setattr(tui_main.paths, "load_env", lambda cwd: None)
@@ -58,7 +62,7 @@ def _patch_common(monkeypatch, reexec):
 
 
 def test_main_reexecs_when_flag_set(monkeypatch, tmp_path):
-    app = _patch_common(monkeypatch, reexec=True)
+    app = _patch_common(monkeypatch, reexec=True, config_home=tmp_path / "cfg")
     calls = {}
     def fake_execv(path, argv):
         calls["path"] = path
@@ -73,7 +77,7 @@ def test_main_reexecs_when_flag_set(monkeypatch, tmp_path):
 
 
 def test_main_no_reexec_when_flag_unset(monkeypatch, tmp_path):
-    app = _patch_common(monkeypatch, reexec=False)
+    app = _patch_common(monkeypatch, reexec=False, config_home=tmp_path / "cfg")
     called = {"execv": False}
     monkeypatch.setattr(tui_main.os, "execv",
                         lambda *a: called.__setitem__("execv", True))
@@ -83,7 +87,7 @@ def test_main_no_reexec_when_flag_unset(monkeypatch, tmp_path):
 
 
 def test_main_reexec_oserror_exits_nonzero(monkeypatch, tmp_path, capsys):
-    _patch_common(monkeypatch, reexec=True)
+    _patch_common(monkeypatch, reexec=True, config_home=tmp_path / "cfg")
     def boom(path, argv):
         raise OSError("no such file")
     monkeypatch.setattr(tui_main.os, "execv", boom)
