@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>dn TUI — living brand book</title>
+<style>
+:root{ --bg:#0A1524; --fg:#E3E3E3; --muted:#5B6577; --surface:#16243A; --accent:#286CE9; }
+*{box-sizing:border-box}
+body{margin:0;background:#070e1a;color:var(--fg);
+  font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.wrap{max-width:1080px;margin:0 auto;padding:48px 28px 96px}
+header.top{border-bottom:1px solid var(--surface);padding-bottom:24px;margin-bottom:8px}
+.mark{font-size:13px;letter-spacing:.32em;text-transform:uppercase;color:var(--muted)}
+h1{font-size:30px;margin:.3em 0 .15em;font-weight:650}
+.sub{color:var(--muted);font-size:14px}
+.sub code{background:var(--surface);padding:1px 6px;border-radius:4px;color:#9DB8E8}
+section{margin-top:52px}
+h2{font-size:21px;border-left:3px solid var(--accent);padding-left:12px;margin:0 0 6px}
+h3{font-size:13px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);
+  margin:26px 0 12px;font-weight:600}
+.note{color:var(--muted);font-size:13.5px;max-width:70ch;margin:.2em 0 0}
+.note code,code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.92em;
+  background:var(--surface);padding:1px 5px;border-radius:4px;color:#9DB8E8}
+/* swatches */
+.swatches{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:12px}
+.swatch{border:1px solid var(--surface);border-radius:8px;overflow:hidden;background:#0c1626}
+.chip{height:62px;display:flex;align-items:flex-end;justify-content:flex-end;
+  padding:6px 8px;font-family:ui-monospace,monospace;font-size:11px;font-weight:600}
+.swatch .meta{padding:8px 10px;display:flex;flex-direction:column;gap:2px}
+.tok{font-family:ui-monospace,monospace;font-size:12.5px;color:var(--fg)}
+.role{font-size:11.5px;color:var(--muted)}
+/* terminal mocks */
+.term{background:var(--bg);border:1px solid var(--surface);border-radius:8px;
+  padding:16px 18px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-size:14px;line-height:1.7;overflow-x:auto}
+.term-label{font-size:11.5px;color:var(--muted);margin:0 0 6px 2px}
+.term .line{white-space:pre}
+.term .dim,.dim{color:var(--muted)}
+.glyphs{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:14px}
+.glyph{display:flex;flex-direction:column;align-items:center;gap:4px}
+.glyph .g{font-size:24px;color:var(--fg)}
+.glyph .gk{font-size:11px;color:var(--muted)}
+/* status tables */
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:28px}
+table.status{width:100%;border-collapse:collapse;font-size:13.5px}
+table.status td{padding:5px 8px;border-bottom:1px solid var(--surface)}
+td.mono{font-family:ui-monospace,monospace;color:var(--muted)}
+/* component cards */
+.cards{display:grid;gap:18px}
+.card{border:1px solid var(--surface);border-radius:10px;padding:18px 20px;background:#0c1626}
+.card-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.card h3{margin:0;color:var(--fg);text-transform:none;letter-spacing:0;font-size:15.5px}
+.card .desc{color:var(--muted);font-size:13px;margin:.35em 0 12px}
+.usage{margin:12px 0 0;font-size:13px;line-height:1.5;color:#c3cdda;
+  border-left:2px solid var(--accent);padding:6px 0 6px 12px;background:rgba(40,108,233,.06)}
+.usage-k{display:inline-block;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--accent);font-weight:700;margin-right:8px}
+.badge{font-size:11px;padding:3px 9px;border-radius:999px;white-space:nowrap}
+.badge.ok{background:rgba(126,231,135,.12);color:#7ee787}
+.badge.warn{background:rgba(227,179,65,.14);color:#e3b341}
+.badge.dim{background:var(--surface);color:var(--muted)}
+footer{margin-top:64px;padding-top:20px;border-top:1px solid var(--surface);
+  color:var(--muted);font-size:12.5px}
+@media(max-width:720px){.two-col{grid-template-columns:1fr}}
+</style></head>
+<body><div class="wrap">
+<header class="top">
+  <div class="mark">DoneDone · dn TUI</div>
+  <h1>Living brand book &amp; component gallery</h1>
+  <p class="sub">Generated from <code>theme.py</code> + <code>tokens.py</code> —
+     never hand-edit this file. Refresh with
+     <code>python -m harness.tui.styles.brandbook</code>.</p>
+</header>
+<section><h2>Palette</h2><p class='note'>Brand core + sanctioned product-status + derived tokens. Generated from <code>theme.py</code>; do not hand-edit.</p><h3>Brand core</h3><div class="swatches"><div class="swatch">
+      <div class="chip" style="background:#286CE9;color:#E3E3E3">#286CE9</div>
+      <div class="meta"><span class="tok">$primary</span><span class="role">accent · running · wordmark</span></div>
+    </div><div class="swatch">
+      <div class="chip" style="background:#286CE9;color:#E3E3E3">#286CE9</div>
+      <div class="meta"><span class="tok">$accent</span><span class="role">accent bar · active</span></div>
+    </div><div class="swatch">
+      <div class="chip" style="background:#E3E3E3;color:#0A1524">#E3E3E3</div>
+      <div class="meta"><span class="tok">$foreground</span><span class="role">body text</span></div>
+    </div><div class="swatch">
+      <div class="chip" style="background:#8690A3;color:#0A1524">#8690A3</div>
+      <div class="meta"><span class="tok">$secondary</span><span class="role">secondary / muted text</span></div>
+    </div><div class="swatch">
+      <div class="chip" style="background:#0A1524;color:#E3E3E3">#0A1524</div>
+      <div class="meta"><span class="tok">$background</span><span class="role">app background (navy)</span></div>
+    </div><div class="swatch">
+      <div class="chip" style="background:#16243A;color:#E3E3E3">#16243A</div>
+      <div class="meta"><span class="tok">$surface</span><span class="role">boxes (user msg, compose)</span></div>
+    </div><div class="swatch">
+      <div class="chip" style="background:#E02F07;color:#E3E3E3">#E02F07</div>
+      <div class="meta"><span class="tok">$error</span><span class="role">error / failed / bypass-on</span></div>
+    </div></div><h3>Product status (sanctioned brand extension)</h3><div class="swatches"><div class="swatch">
+      <div class="chip" style="background:#7ee787;color:#0A1524">#7ee787</div>
+      <div class="meta"><span class="tok">$success</span><span class="role">done / completed</span></div>
+    </div><div class="swatch">
+      <div class="chip" style="background:#e3b341;color:#0A1524">#e3b341</div>
+      <div class="meta"><span class="tok">$warning</span><span class="role">caution (amber)</span></div>
+    </div><div class="swatch">
+      <div class="chip" style="background:#e3b341;color:#0A1524">#e3b341</div>
+      <div class="meta"><span class="tok">$scheduled</span><span class="role">cron / scheduled / attention</span></div>
+    </div></div><h3>Derived / functional tokens</h3><div class="swatches"><div class="swatch">
+      <div class="chip" style="background:#5B6577;color:#E3E3E3">#5B6577</div>
+      <div class="meta"><span class="tok">$muted</span><span class="role">placeholders · hints · meta</span></div>
+    </div><div class="swatch">
+      <div class="chip" style="background:#9DB8E8;color:#0A1524">#9DB8E8</div>
+      <div class="meta"><span class="tok">$code</span><span class="role">inline code / shell (blue tint)</span></div>
+    </div><div class="swatch">
+      <div class="chip" style="background:#3A4D6B;color:#E3E3E3">#3A4D6B</div>
+      <div class="meta"><span class="tok">$wordmark-dim</span><span class="role">wordmark left half</span></div>
+    </div><div class="swatch">
+      <div class="chip" style="background:#286CE9;color:#E3E3E3">#286CE9</div>
+      <div class="meta"><span class="tok">$wordmark-bright</span><span class="role">wordmark right half</span></div>
+    </div><div class="swatch">
+      <div class="chip" style="background:#286CE9;color:#E3E3E3">#286CE9</div>
+      <div class="meta"><span class="tok">$accent-bar</span><span class="role">accent bars</span></div>
+    </div><div class="swatch">
+      <div class="chip" style="background:#8a6d3b;color:#E3E3E3">#8a6d3b</div>
+      <div class="meta"><span class="tok">$path-dim</span><span class="role">cwd parent segments</span></div>
+    </div><div class="swatch">
+      <div class="chip" style="background:#d9a441;color:#0A1524">#d9a441</div>
+      <div class="meta"><span class="tok">$path</span><span class="role">cwd current dir</span></div>
+    </div></div></section>
+<section><h2>Glyph map</h2><p class='note'>From <code>tokens.GLYPH</code>. Status is always carried by <em>color + glyph + weight</em> together, so meaning survives monochrome terminals.</p><h3>State dots</h3><div class="term"><div class="glyphs"><div class="glyph"><span class="g">•</span><span class="gk">idle</span></div><div class="glyph"><span class="g">◐</span><span class="gk">active</span></div><div class="glyph"><span class="g">▌</span><span class="gk">responding</span></div><div class="glyph"><span class="g">›</span><span class="gk">tool</span></div><div class="glyph"><span class="g">✓</span><span class="gk">done</span></div><div class="glyph"><span class="g">✗</span><span class="gk">failed</span></div><div class="glyph"><span class="g">⏱</span><span class="gk">scheduled</span></div><div class="glyph"><span class="g">?</span><span class="gk">awaiting</span></div></div></div><h3>Tool subtypes (inferred, display-only)</h3><div class="term"><div class="glyphs"><div class="glyph"><span class="g">✎</span><span class="gk">edit</span></div><div class="glyph"><span class="g">⚑</span><span class="gk">test</span></div><div class="glyph"><span class="g">◇</span><span class="gk">read</span></div><div class="glyph"><span class="g">$</span><span class="gk">shell</span></div><div class="glyph"><span class="g">⌕</span><span class="gk">search</span></div></div></div><h3>Footer / brand</h3><div class="term"><div class="glyphs"><div class="glyph"><span class="g">▶▶</span><span class="gk">bypass</span></div><div class="glyph"><span class="g">▸</span><span class="gk">path</span></div></div></div></section>
+<section><h2>Status states</h2>
+      <p class='note'>Two vocabularies coexist today — <b>agent state</b>
+      (<code>tokens.STATUS_LABEL</code>) and <b>tool status</b>
+      (<code>STATUS_COLOR</code> / <code>TOOL_STATUS_LABEL</code>). They overlap
+      (running↔in_progress, queued↔pending) but are <em>not</em> unified — this
+      table makes the split visible (a known design-system cleanup item).</p>
+      <div class="two-col">
+        <div><h3>Agent state</h3><table class="status"><tr><td class="mono">idle</td><td><span style="color:#5B6577">• <b>IDLE</b></span></td></tr><tr><td class="mono">thinking</td><td><span style="color:#286CE9">◐ <b>THINKING</b></span></td></tr><tr><td class="mono">responding</td><td><span style="color:#286CE9">▌ <b>RESPONDING</b></span></td></tr><tr><td class="mono">running_tool</td><td><span style="color:#286CE9">◐ <b>RUNNING_TOOL</b></span></td></tr><tr><td class="mono">awaiting_permission</td><td><span style="color:#e3b341">? <b>AWAITING_PERMISSION</b></span></td></tr><tr><td class="mono">awaiting_decision</td><td><span style="color:#e3b341">? <b>AWAITING_DECISION</b></span></td></tr><tr><td class="mono">scheduled</td><td><span style="color:#e3b341">⏱ <b>SCHEDULED</b></span></td></tr><tr><td class="mono">done</td><td><span style="color:#7ee787">✓ <b>COMPLETED</b></span></td></tr><tr><td class="mono">failed</td><td><span style="color:#E02F07">✗ <b>FAILED</b></span></td></tr></table></div>
+        <div><h3>Tool status</h3><table class="status"><tr><td class="mono">pending</td><td><span style="color:#e3b341;font-weight:700">QUEUED</span></td></tr><tr><td class="mono">active</td><td><span style="color:#286CE9;font-weight:700">RUNNING</span></td></tr><tr><td class="mono">done</td><td><span style="color:#7ee787;font-weight:700">COMPLETED</span></td></tr><tr><td class="mono">failed</td><td><span style="color:#E02F07;font-weight:700">FAILED</span></td></tr></table></div>
+      </div></section>
+<section><h2>Components (shipped today)</h2><p class='note'>Rendered from the widgets' <em>own</em> markup strings, translated to HTML — so these match what the TUI draws. Tags: ✅ shipped · 🟡 built-but-unwired · 📐 designed-only · ◻ inlined in app.py.</p><div class="cards"><div class="card">
+      <div class="card-head"><h3>StatusChip</h3><span class="badge ok">✅ shipped</span></div>
+      <p class="desc">Uppercase status pill. The atomic status atom, reused everywhere.</p>
+      <div class="term-label">StatusChip.from_state — every AgentState</div><div class="term"><div class="line"><span style="color:#5B6577"><span style="font-weight:700">IDLE</span>[/]</span>&nbsp;&nbsp;<span style="color:#286CE9"><span style="font-weight:700">THINKING</span>[/]</span>&nbsp;&nbsp;<span style="color:#286CE9"><span style="font-weight:700">RESPONDING</span>[/]</span>&nbsp;&nbsp;<span style="color:#286CE9"><span style="font-weight:700">RUNNING_TOOL</span>[/]</span>&nbsp;&nbsp;<span style="color:#e3b341"><span style="font-weight:700">AWAITING_PERMISSION</span>[/]</span>&nbsp;&nbsp;<span style="color:#e3b341"><span style="font-weight:700">AWAITING_DECISION</span>[/]</span>&nbsp;&nbsp;<span style="color:#e3b341"><span style="font-weight:700">SCHEDULED</span>[/]</span>&nbsp;&nbsp;<span style="color:#7ee787"><span style="font-weight:700">COMPLETED</span>[/]</span>&nbsp;&nbsp;<span style="color:#E02F07"><span style="font-weight:700">FAILED</span>[/]</span></div></div>
+      <p class="usage"><span class="usage-k">When to use</span> for a *settled* status label (a state that just is). Use `ActivityStatus` instead when work is *live* (it carries elapsed/tokens and the looping glyph); a chip is static.</p>
+    </div><div class="card">
+      <div class="card-head"><h3>Tool status pills</h3><span class="badge ok">✅ shipped</span></div>
+      <p class="desc">ToolStatus → QUEUED / RUNNING / COMPLETED / FAILED.</p>
+      <div class="term-label">Tool status pills (ToolStatus)</div><div class="term"><div class="line"><span style="color:#e3b341"><span style="font-weight:700">QUEUED</span>[/]</span>&nbsp;&nbsp;<span style="color:#286CE9"><span style="font-weight:700">RUNNING</span>[/]</span>&nbsp;&nbsp;<span style="color:#7ee787"><span style="font-weight:700">COMPLETED</span>[/]</span>&nbsp;&nbsp;<span style="color:#E02F07"><span style="font-weight:700">FAILED</span>[/]</span></div></div>
+      
+    </div><div class="card">
+      <div class="card-head"><h3>StatusChip.for_yolo</h3><span class="badge ok">✅ shipped</span></div>
+      <p class="desc">Footer permission-mode line. Red = active bypass (loudest signal).</p>
+      <div class="term-label">StatusChip.for_yolo — footer permission-mode line</div><div class="term"><div class="line"><span style="color:#5B6577"><span style="font-weight:700">▶▶ bypass permissions off</span>[/]</span></div><div class="line"><span style="color:#E02F07"><span style="font-weight:700">▶▶ bypass permissions on</span>[/]</span></div><div class="line"><span style="color:#E02F07"><span style="font-weight:700">▶▶ bypass permissions on · pinned</span>[/]</span></div></div>
+      <p class="usage"><span class="usage-k">When to use</span> for a binary *session mode* the user toggles and must always see (bypass, later backend/fleet). Use `PermissionModal` instead for a one-off per-command yes/no — `for_yolo` is a persistent posture, not a prompt.</p>
+    </div><div class="card">
+      <div class="card-head"><h3>StateDot</h3><span class="badge warn">🟡 built · unwired</span></div>
+      <p class="desc">Leading state indicator (defined in status_chip.py, not yet mounted).</p>
+      <div class="term-label">StateDot — leading state indicator</div><div class="term"><div class="line"><span style="color:#5B6577">•</span><span class="dim">&nbsp;idle</span>&nbsp;&nbsp;&nbsp;<span style="color:#286CE9">◐</span><span class="dim">&nbsp;thinking</span>&nbsp;&nbsp;&nbsp;<span style="color:#286CE9">▌</span><span class="dim">&nbsp;responding</span>&nbsp;&nbsp;&nbsp;<span style="color:#286CE9">◐</span><span class="dim">&nbsp;running_tool</span>&nbsp;&nbsp;&nbsp;<span style="color:#e3b341">?</span><span class="dim">&nbsp;awaiting_permission</span>&nbsp;&nbsp;&nbsp;<span style="color:#e3b341">?</span><span class="dim">&nbsp;awaiting_decision</span>&nbsp;&nbsp;&nbsp;<span style="color:#e3b341">⏱</span><span class="dim">&nbsp;scheduled</span>&nbsp;&nbsp;&nbsp;<span style="color:#7ee787">✓</span><span class="dim">&nbsp;done</span>&nbsp;&nbsp;&nbsp;<span style="color:#E02F07">✗</span><span class="dim">&nbsp;failed</span></div></div>
+      <p class="usage"><span class="usage-k">When to use</span> `StateDot` to mark an agent&#x27;s state in a *list* (the fleet rail), where many states show at once. `ActivityGlyph` only for the *one* actively-working agent — never run two looping glyphs at once (brand restraint).</p>
+    </div><div class="card">
+      <div class="card-head"><h3>ActivityStatus</h3><span class="badge ok">✅ shipped</span></div>
+      <p class="desc">The live work line: one looping ◐ + label · elapsed · tokens · N done.</p>
+      <div class="term-label">ActivityStatus — the live work line (one looping ◐)</div><div class="term"><div class="line"><span style="color:#286CE9">◐</span> <span style="color:#E3E3E3">Asking clarifying questions…</span><span style="color:#5B6577">&nbsp;· 2 done</span> <span style="color:#5B6577">(1m 18s · ↓ 4.0k tokens)</span></div></div>
+      <p class="usage"><span class="usage-k">When to use</span> as the single live-work line while the agent is busy. Use a `StatusChip` instead once work has *settled* — `ActivityStatus` blanks itself when state is idle/done/failed and is not a record.</p>
+    </div><div class="card">
+      <div class="card-head"><h3>ActivityRegion</h3><span class="badge ok">✅ shipped</span></div>
+      <p class="desc">Pinned transient zone above the composer; status-only by default.</p>
+      <div class="term-label">ActivityRegion — pinned transient zone (status-only default)</div><div class="term"><div class="line"><span style="color:#5B6577">────────────────────────────────────────────</span></div><div class="line"><span style="color:#286CE9">◐</span> <span style="color:#E3E3E3">Running test…</span><span style="color:#5B6577">&nbsp;· 1 done (4s)</span><span style="color:#5B6577">&nbsp;&nbsp;&nbsp;&nbsp;ctrl+o details</span></div></div>
+      <p class="usage"><span class="usage-k">When to use</span> as *the* home for all in-flight tool/work activity — pinned and transient. Anything about &quot;what the agent is doing now&quot; belongs here, never in the transcript (principle #7). Settled records are a separate concern.</p>
+    </div><div class="card">
+      <div class="card-head"><h3>TaskTree</h3><span class="badge warn">🟡 built · unwired</span></div>
+      <p class="desc">Live plan checklist — desired look: activity line + items struck through as they finish. Built but unwired (status-only decision).</p>
+      <div class="term-label">TaskTree — desired look: activity line + checklist, completed items struck through (unwired)</div><div class="term"><div class="line"><span style="color:#e3b341">◦</span> <span style="color:#e3b341;font-weight:700">Stewing…</span> <span style="color:#5B6577">(4m 45s · ↓ 17.0k tokens)</span></div><div class="line">&nbsp;<span style="color:#5B6577">└</span></div><div class="line">&nbsp;&nbsp;<span style="color:#7ee787">✓</span> <span style="color:#5B6577;text-decoration:line-through">Save concept mockups into repo</span></div><div class="line">&nbsp;&nbsp;<span style="color:#7ee787">✓</span> <span style="color:#5B6577;text-decoration:line-through">Add agent/fleet/cron components to catalog</span></div><div class="line">&nbsp;&nbsp;<span style="color:#286CE9">▣</span> <span style="color:#E3E3E3">Render mocks in brand book</span></div><div class="line">&nbsp;&nbsp;<span style="color:#5B6577">□ Wire it up</span></div></div>
+      <p class="usage"><span class="usage-k">When to use</span> for a *multi-step plan* with known sub-steps. NOT for raw tool commands — the status-only decision retired that (the per-command summary was a whack-a-mole liability), which is why `TaskTree` is currently unwired; revive it only with real plan/subtask data, in the struck-through form above.</p>
+    </div><div class="card">
+      <div class="card-head"><h3>ToolCallRow</h3><span class="badge ok">✅ shipped</span></div>
+      <p class="desc">One tool call: subtype glyph + title + status (collapsed) / capped body (expanded).</p>
+      <div class="term-label">ToolCallRow — collapsed line + expanded capped body</div><div class="term"><div class="line"><span style="color:#286CE9">✎</span> <span style="color:#E3E3E3">harness/api.ts</span>&nbsp;&nbsp;&nbsp;<span style="color:#286CE9;font-weight:700">RUNNING</span></div><div class="line" style="margin-top:.5em"><span style="color:#7ee787">◇</span> <span style="color:#E3E3E3">app.py</span>&nbsp;&nbsp;&nbsp;<span style="color:#7ee787;font-weight:700">COMPLETED</span><br><span style="color:#9DB8E8">  def compose(self) -> ComposeResult:<br>      yield Header()<br>  … (+6 more lines)</span></div></div>
+      <p class="usage"><span class="usage-k">When to use</span> for one tool call&#x27;s detail *inside* `ActivityRegion` (ctrl+o). Don&#x27;t mount it directly in the transcript or app — it&#x27;s a child of the region, not a standalone surface.</p>
+    </div><div class="card">
+      <div class="card-head"><h3>UserMessage</h3><span class="badge ok">✅ shipped</span></div>
+      <p class="desc">Accent ▌ bar + bold text in the transcript (rendered inline in app.py).</p>
+      <div class="term-label">User message — accent ▌ bar + bold</div><div class="term"><div class="line"><span style="color:#286CE9;font-weight:700">▌ Build me a brand-book page for the design system</span></div></div>
+      <p class="usage"><span class="usage-k">When to use</span> for what the *human* sent, to anchor each turn. The `▌` accent bar is the user marker — don&#x27;t reuse it for agent output (that&#x27;s borderless).</p>
+    </div></div></section>
+<section><h2>Surfaces (modals · composer · footer)</h2><p class='note'>The larger surfaces beyond the atomic primitives — what you actually see every session. Mocks are faithful to the widgets' markup / layout.</p><div class="cards"><div class="card">
+      <div class="card-head"><h3>AnswerStream + chips</h3><span class="badge dim">◻ inlined in app.py</span></div>
+      <p class="desc">The streamed agent response + DoneDone's request-type / skills chips. Drawn directly in app.py (no standalone widget).</p>
+      <div class="term-label">AnswerStream + chips — streamed markdown (inlined in app.py)</div><div class="term"><div class="line"><span style="color:#E3E3E3">Here's the fix. The bug was an off-by-one in the loop bound:</span></div><div class="line"><span style="color:#9DB8E8">  for i in range(n + 1):  # was range(n)</span></div><div class="line" style="margin-top:.4em"><span style="color:#286CE9">code_fix</span><span style="color:#5B6577"> · skills: debugging, tdd</span></div></div>
+      <p class="usage"><span class="usage-k">When to use</span> for the agent&#x27;s *prose* answer. Tool calls and reasoning are NOT this — they go to `ActivityRegion` (principle #7); never push tool output into the transcript stream.</p>
+    </div><div class="card">
+      <div class="card-head"><h3>SelectModal / PermissionModal</h3><span class="badge ok">✅ shipped</span></div>
+      <p class="desc">Searchable picker (● = current). PermissionModal is a sibling with Allow / Reject options; both shipped & wired.</p>
+      <div class="term-label">SelectModal — searchable picker (● = current). PermissionModal is a sibling (Allow / Reject).</div><div class="term"><div class="line"><span style="color:#E3E3E3;font-weight:700">Select model</span>&nbsp;&nbsp;&nbsp;<span style="color:#5B6577">esc</span></div><div class="line" style="margin-top:.3em"><span style="color:#5B6577">Search</span></div><div class="line"><span style="color:#286CE9">●</span> claude-opus-4-8</div><div class="line">&nbsp;&nbsp;claude-sonnet-4-6</div><div class="line">&nbsp;&nbsp;mock</div><div class="line" style="margin-top:.3em"><span style="color:#5B6577">↑↓ move · enter select · esc cancel</span></div></div>
+      <p class="usage"><span class="usage-k">When to use</span> to pick *one item from a list* (model, persona, command). It&#x27;s the base both modals extend — reuse it before building any new picker; don&#x27;t hand-roll a list overlay.</p>
+    </div><div class="card">
+      <div class="card-head"><h3>SlashMenu</h3><span class="badge ok">✅ shipped</span></div>
+      <p class="desc">Filtered command list shown as you type after '/'. Shipped & wired.</p>
+      <div class="term-label">SlashMenu — filtered command list (typed after &#x27;/&#x27;)</div><div class="term"><div class="line"><span style="color:#286CE9">/model</span>&nbsp;&nbsp;&nbsp;<span style="color:#5B6577">switch the model</span></div><div class="line"><span style="color:#286CE9">/yolo</span>&nbsp;&nbsp;&nbsp;<span style="color:#5B6577">toggle permission bypass</span></div><div class="line"><span style="color:#286CE9">/reload</span>&nbsp;&nbsp;&nbsp;<span style="color:#5B6577">reload the agent</span></div></div>
+      <p class="usage"><span class="usage-k">When to use</span> for *command discovery while composing* (the `/` menu). It&#x27;s a transient composer affordance — use `SelectModal` instead for a full-screen pick that isn&#x27;t tied to typing in the prompt.</p>
+    </div><div class="card">
+      <div class="card-head"><h3>Status bar / footer</h3><span class="badge dim">◻ inlined in app.py</span></div>
+      <p class="desc">Mode · model · permission-bypass posture · cwd. Inlined in app.py.</p>
+      <div class="term-label">Status bar / footer meta — mode · model · bypass · cwd (inlined in app.py)</div><div class="term"><div class="line"><span style="color:#286CE9;font-weight:700">Build</span><span style="color:#5B6577"> · claude-opus-4-8 vibeproxy</span></div><div class="line"><span style="color:#E02F07;font-weight:700">▶▶ bypass permissions on</span>&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#8a6d3b">~/Work/Quiubo/</span><span style="color:#d9a441">harness</span></div></div>
+      
+    </div></div></section>
+<section><h2>Agents · fleet · crons</h2><p class='note'>From the fleet/drawer/cron concept mockups (2026-06-27). Only <b>PersonaIndicator</b> ships today (C2a); the rest are <b>📐 designed-only</b> — and are <em>composed from the primitives above</em> (a rail row is a StateDot + chip; the header derives its dots from the same <code>FleetSnapshot</code>). See <code>persona-C2-drawer-arc-design.md</code>.</p><div class="cards"><div class="card">
+      <div class="card-head"><h3>PersonaIndicator</h3><span class="badge ok">✅ shipped</span></div>
+      <p class="desc">Which agent/persona you're talking to — the engine's real resolved id.</p>
+      <div class="term-label">PersonaIndicator — which agent you&#x27;re addressing (shipped, C2a)</div><div class="term"><div class="line"><span style="color:#5B6577">persona: </span><span style="color:#286CE9;font-weight:700">fred</span></div></div>
+      <p class="usage"><span class="usage-k">When to use</span> as the always-visible &quot;who am I addressing&quot; anchor. This is the shipped seed of the whole fleet UI — the rail/drawer/header read the *same* `FleetSnapshot`. Don&#x27;t echo the launch flag; read the engine-reported id.</p>
+    </div><div class="card">
+      <div class="card-head"><h3>FleetHeader</h3><span class="badge dim">📐 designed-only</span></div>
+      <p class="desc">Wordmark + a fleet dropdown pill (derived dots + counts) + mode. Composed; counts derived from FleetSnapshot.</p>
+      <div class="term-label">FleetHeader — wordmark + fleet dropdown pill (derived dots/counts) + mode</div><div class="term"><div class="line"><span style="color:#286CE9;font-weight:700">DoneDone</span><span style="color:#5B6577"> v0.5.0</span>&nbsp;&nbsp;&nbsp;&nbsp;[ <span style="color:#E3E3E3">fred</span> <span style="color:#5B6577">·</span> <span style="color:#7ee787">●</span><span style="color:#286CE9">●</span><span style="color:#e3b341">●</span> <span style="color:#E3E3E3">3 running</span> <span style="color:#5B6577">▾</span> ]&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#286CE9">Build</span> <span style="color:#5B6577">· Vibeproxy</span></div></div>
+      <p class="usage"><span class="usage-k">When to use</span> as the fleet&#x27;s at-a-glance summary + drawer trigger. Counts are **derived** from `FleetSnapshot.agents`, never stored.</p>
+    </div><div class="card">
+      <div class="card-head"><h3>AgentRail (rail / drawer)</h3><span class="badge dim">📐 designed-only</span></div>
+      <p class="desc">The agents list — left rail or right drawer. Each row = StateDot + name + status word + sub-line; active highlighted; cron rows get ↻.</p>
+      <div class="term-label">AgentRail — agents list / drawer (active highlighted, cron row, state dots)</div><div class="term"><div class="line"><span style="color:#5B6577">AGENTS&nbsp;&nbsp;&nbsp;&nbsp;5 · esc to close</span></div><div class="line"><span style="color:#286CE9">▸</span> <span style="color:#286CE9">●</span> <span style="color:#E3E3E3">fred</span>&nbsp;&nbsp;&nbsp;<span style="color:#286CE9">active</span><br>&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#5B6577">editing harness/api.ts</span></div><div class="line">&nbsp;&nbsp;<span style="color:#7ee787">●</span> <span style="color:#E3E3E3">sam</span>&nbsp;&nbsp;&nbsp;<span style="color:#7ee787">running</span><br>&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#5B6577">tracing auth regression</span></div><div class="line">&nbsp;&nbsp;<span style="color:#b58cf0">●</span> <span style="color:#E3E3E3">nova</span>&nbsp;&nbsp;&nbsp;<span style="color:#b58cf0">running</span><br>&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#5B6577">generating migration</span></div><div class="line">&nbsp;&nbsp;<span style="color:#e3b341">↻</span> <span style="color:#e3b341">●</span> <span style="color:#E3E3E3">robbie</span>&nbsp;&nbsp;&nbsp;<span style="color:#e3b341">cron</span><br>&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#5B6577">nightly-sync · syncing</span></div><div class="line">&nbsp;&nbsp;<span style="color:#5B6577">●</span> <span style="color:#E3E3E3">dex</span>&nbsp;&nbsp;&nbsp;<span style="color:#5B6577">idle</span><br>&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#5B6577">queued: lint sweep</span></div><div class="line" style="margin-top:.4em"><span style="color:#5B6577">↑↓ select · ⏎ switch · n new</span></div></div>
+      <p class="usage"><span class="usage-k">When to use</span> to *see and switch between* agents/personas. Use the drawer form when chat is primary (toggle on demand); the left rail when the fleet dashboard is primary. One `StateDot` per row — never one looping `ActivityGlyph` per row.</p>
+    </div><div class="card">
+      <div class="card-head"><h3>ProgressRow</h3><span class="badge dim">📐 designed-only</span></div>
+      <p class="desc">A task with a known % — StateDot + StatusChip + ProgressBar + elapsed.</p>
+      <div class="term-label">ProgressRow — task with known % (StateDot + StatusChip + ProgressBar + elapsed)</div><div class="term"><div class="line"><span style="color:#286CE9">●</span> <span style="color:#E3E3E3;font-weight:700">Index repo dependencies</span>&nbsp;&nbsp;&nbsp;<span style="color:#286CE9;font-weight:700">RUNNING</span><br>&nbsp;&nbsp;<span style="color:#5B6577">Scanning package graphs and lockfiles</span><br>&nbsp;&nbsp;<span style="color:#286CE9">▓▓▓▓▓▓▓▓</span><span style="color:#5B6577">░░░░░  64% · 18:42</span></div></div>
+      <p class="usage"><span class="usage-k">When to use</span> when a task has a **known % complete** (use the `ProgressBar`). When progress is unknown, fall back to `ActivityStatus`/`ActivityGlyph` — don&#x27;t fake a bar. This is the dashboard&#x27;s per-task row; the pinned single-agent view uses `ActivityRegion` instead.</p>
+    </div><div class="card">
+      <div class="card-head"><h3>Cron task row + ScheduleBadge</h3><span class="badge dim">📐 designed-only</span></div>
+      <p class="desc">A scheduled task. No cron backend exists yet — this is the target look.</p>
+      <div class="term-label">Cron task row + ScheduleBadge (a task that is scheduled) · completed count</div><div class="term"><div class="line"><span style="color:#5B6577">□</span> <span style="color:#E3E3E3;font-weight:700">Weekly report cron</span><span style="color:#5B6577"> · emails reports</span>&nbsp;&nbsp;&nbsp;<span style="color:#e3b341">in 2d 14h</span> <span style="color:#e3b341;font-weight:700">SCHEDULED</span></div><div class="line" style="margin-top:.3em"><span style="color:#7ee787">□</span> <span style="color:#5B6577">2 completed · customer import, background audit</span></div></div>
+      <p class="usage"><span class="usage-k">When to use</span> to mark *one* future event inline next to its task/agent (e.g. a cron task in the task list, or a `scheduled · 1 job` rail sub-line). Use `CronRow` instead for a *dedicated list* of scheduled jobs.</p>
+    </div></div></section>
+<footer>
+  18 tokens · 15 glyphs · 9 agent states ·
+  4 tool statuses. Source of truth:
+  <code>harness/tui/theme.py</code>, <code>harness/tui/tokens.py</code>.
+  Companion: <code>harness/tui/styles/components.md</code>. 
+</footer>
+</div></body></html>
