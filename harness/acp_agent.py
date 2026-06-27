@@ -33,7 +33,8 @@ from harness.transcript import flatten_agent_messages
 class HarnessAgent(acp.Agent):
     def __init__(self, *, model_factory, agent_cfg, skills_dir: list[Path], router: Router,
                  worker_model_id, yolo: bool = False, backend: str = "vibeproxy",
-                 workspace_dir: Path | None = None):
+                 workspace_dir: Path | None = None, cwd: str | None = None,
+                 shell_set_model: bool = False, shell_env: str | None = None):
         self._model_factory = model_factory
         self._agent_cfg = agent_cfg
         self._skills_dir = skills_dir
@@ -42,7 +43,13 @@ class HarnessAgent(acp.Agent):
         self._worker_model_id = worker_model_id
         self._yolo = yolo                 # --yolo: auto-allow every command, no prompts
         self._backend = backend           # launch backend; paired with model on persist
+        self._cwd = cwd
+        self._shell_set_model = shell_set_model
+        self._shell_env = shell_env
         self._store = SessionStore()
+        from harness.persona_sessions import PersonaSessions
+        self._persona_sessions = PersonaSessions()
+        self._active_persona = self._workspace_dir.name if self._workspace_dir else "default"
         self._conn = None
 
     def _auto_allow(self) -> bool:
@@ -51,10 +58,10 @@ class HarnessAgent(acp.Agent):
         return self._yolo
 
     def _persona_key(self) -> str:
-        """The done.conf agent key this agent persists under: its own persona id,
-        which is the workspace directory's basename, or "default" when running
-        with no persona workspace. NOT a branch — "default" is just the id."""
-        return self._workspace_dir.name if self._workspace_dir is not None else "default"
+        """The done.conf agent key the active seat persists under: the persona the
+        client is currently driving (set by set_persona; "default" at launch).
+        NOT a branch — "default" is just the id."""
+        return self._active_persona
 
     def on_connect(self, conn) -> None:
         self._conn = conn
@@ -69,6 +76,7 @@ class HarnessAgent(acp.Agent):
             ok = True
             if model:
                 self._worker_model_id = model
+                self._persona_sessions.set_model(self._active_persona, model)
                 try:                       # best-effort; report failure, never break the swap
                     config.save_agent(self._persona_key(),
                                       config.AgentConfig(backend=self._backend, model=model))
@@ -108,6 +116,26 @@ class HarnessAgent(acp.Agent):
             except Exception:
                 pinned = False
             return {"ok": ok, "active": self._yolo, "pinned": pinned}
+        if method == "harness/set_persona":
+            pid = (params or {}).get("id")
+            if not isinstance(pid, str) or not pid:
+                return {"ok": False, "error": "missing id"}
+            from harness import persona_select
+            from harness.persona_sessions import resolve_session_model
+            try:
+                resolve_session_model_for = lambda p: resolve_session_model(
+                    p, shell_set_model=self._shell_set_model,
+                    shell_env=self._shell_env, dotenv=self._shell_env, backend=self._backend)
+                seat = self._persona_sessions.get_or_create(
+                    pid, cwd=self._cwd, store=self._store,
+                    resolve_ws=persona_select.resolve_workspace,
+                    resolve_model=resolve_session_model_for)
+            except (persona_select.UnknownPersona, persona_select.InvalidPersonaId) as e:
+                return {"ok": False, "error": str(e)}
+            self._active_persona = pid
+            self._worker_model_id = seat.model      # mirror active seat for read sites
+            return {"ok": True, "id": pid, "session_id": seat.session_id,
+                    "model": seat.model}
         return {}
 
     async def initialize(self, protocol_version, client_capabilities=None,

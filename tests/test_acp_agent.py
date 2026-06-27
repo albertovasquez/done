@@ -11,7 +11,7 @@ from harness.acp_agent import HarnessAgent
 from harness import config
 
 
-def _make_agent(backend="vibeproxy", workspace_dir=None):
+def _make_agent(backend="vibeproxy", workspace_dir=None, cwd=None):
     """A HarnessAgent with cheap stand-ins; only set_model behavior is exercised."""
     return HarnessAgent(
         model_factory=lambda *a, **k: None,
@@ -22,7 +22,24 @@ def _make_agent(backend="vibeproxy", workspace_dir=None):
         yolo=False,
         backend=backend,
         workspace_dir=workspace_dir,
+        cwd=cwd,
     )
+
+
+@pytest.fixture
+def agent(isolated_config):
+    """A bare HarnessAgent (no persona workspace)."""
+    return _make_agent(backend="mock")
+
+
+@pytest.fixture
+def agent_with_persona(isolated_config):
+    """A HarnessAgent with an 'ana' persona workspace pre-seeded on disk."""
+    from harness import paths, config as cfg
+    ws = paths.config_dir() / "agents" / "ana"
+    ws.mkdir(parents=True)
+    cfg.save_agent("ana", cfg.AgentConfig(backend="mock", model=None))
+    return _make_agent(backend="mock", cwd="/tmp")
 
 
 @pytest.fixture(autouse=True)
@@ -176,3 +193,30 @@ def test_acp_main_seeds_default_workspace(monkeypatch, tmp_path):
     assert called["n"] == 1
     # and it actually seeded
     assert (tmp_path / "harness" / "agents" / "default" / "SOUL.md").is_file()
+
+
+# --- set_persona tests (Task 3) ---
+
+def test_set_persona_unknown_keeps_active(agent):
+    before = agent._active_persona
+    resp = asyncio.run(agent.ext_method("harness/set_persona", {"id": "nope-does-not-exist"}))
+    assert resp["ok"] is False
+    assert agent._active_persona == before          # unchanged on failure
+
+
+def test_set_persona_invalid_charset(agent):
+    resp = asyncio.run(agent.ext_method("harness/set_persona", {"id": "bad.id"}))
+    assert resp["ok"] is False
+
+
+def test_set_persona_valid_switches_and_returns_seat(agent_with_persona):
+    resp = asyncio.run(agent_with_persona.ext_method("harness/set_persona", {"id": "ana"}))
+    assert resp["ok"] is True and resp["id"] == "ana"
+    assert resp["session_id"]
+    assert agent_with_persona._active_persona == "ana"
+
+
+def test_set_model_persists_under_active_persona(agent_with_persona):
+    asyncio.run(agent_with_persona.ext_method("harness/set_persona", {"id": "ana"}))
+    asyncio.run(agent_with_persona.ext_method("harness/set_model", {"model": "m-ana-new"}))
+    assert config.load_agent("ana").model == "m-ana-new"

@@ -130,6 +130,9 @@ async def _main(argv=None) -> None:
         yolo=args.yolo,
         backend=args.model,
         workspace_dir=workspace_dir,
+        cwd=cwd,
+        shell_set_model=shell_set_model,
+        shell_env=os.getenv("VIBEPROXY_MODEL"),
     )
     await acp.run_agent(agent)
 
