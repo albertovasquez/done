@@ -38,7 +38,9 @@ class ActivityStatus(Static):
         if snap.state not in _WORKING:
             return ""
         label = snap.activity_label or "Working"
-        meta = f"{_fmt_elapsed(snap.elapsed)} · ↓ {_fmt_tokens(snap.tokens)} tokens"
+        meta = _fmt_elapsed(snap.elapsed)
+        if snap.tokens > 0:
+            meta += f" · ↓ {_fmt_tokens(snap.tokens)} tokens"
         return f"[$accent]{glyph}[/] [$foreground]{label}…[/] [$muted]({meta})[/]"
 
     def update_from(self, snap: AgentSnapshot) -> None:

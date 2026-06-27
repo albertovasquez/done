@@ -41,6 +41,7 @@ class ToolView:
 class TaskItem:
     label: str
     status: str          # pending | in_progress | done | failed
+    tool_id: str = ""    # the tool_call_id this row tracks (match updates by id, not label)
 
 
 @dataclass(frozen=True)
@@ -65,6 +66,7 @@ class AgentSnapshot:
     elapsed: float = 0.0
     tokens: int = 0
     tasks: tuple[TaskItem, ...] = ()
+    tools: tuple[ToolView, ...] = ()
     schedule: ScheduleView | None = None
     decision: DecisionView | None = None
 
@@ -156,8 +158,8 @@ def _task_status_from_tool(ts: ToolStatus) -> str:
 
 def _reduce_agent(a: AgentSnapshot, event) -> AgentSnapshot:
     if isinstance(event, TurnStarted):
-        return replace(a, state=AgentState.THINKING, activity_label="Thinking…",
-                       tool=None, decision=None, tasks=(), elapsed=0.0)
+        return replace(a, state=AgentState.THINKING, activity_label="Thinking",
+                       tool=None, decision=None, tasks=(), tools=(), elapsed=0.0)
     if isinstance(event, TokensUpdated):
         return replace(a, tokens=event.total)
     if isinstance(event, PermissionOpened):
@@ -174,39 +176,38 @@ def _reduce_agent(a: AgentSnapshot, event) -> AgentSnapshot:
         item = event.item
         kind = getattr(item, "kind", "")
         if kind == "message":
-            return replace(a, state=AgentState.RESPONDING, activity_label="Responding…")
+            return replace(a, state=AgentState.RESPONDING, activity_label="Responding")
         if kind == "tool":
             ts = _tool_status(getattr(item, "status", ""))
             title = getattr(item, "title", "")
+            tid = getattr(item, "id", "")
             subtype = infer_subtype(title)
-            tool = ToolView(title=title, status=ts, subtype=subtype)
-            tasks = a.tasks + (TaskItem(label=title, status="in_progress"),)
-            return replace(a, state=AgentState.RUNNING_TOOL, tool=tool, tasks=tasks,
-                           activity_label=f"Running {subtype}")
+            tool = ToolView(title=title, status=ts, subtype=subtype, id=tid)
+            tasks = a.tasks + (TaskItem(label=title, status="in_progress", tool_id=tid),)
+            tools = a.tools + (tool,)
+            return replace(a, state=AgentState.RUNNING_TOOL, tool=tool,
+                           tasks=tasks, tools=tools, activity_label=f"Running {subtype}")
         if kind == "tool_update":
             ts = _tool_status(getattr(item, "status", ""))
-            body = getattr(item, "body", "") or (a.tool.body if a.tool is not None else "")
-            tool = replace(a.tool, status=ts, body=body) if a.tool is not None else None
+            uid = getattr(item, "id", "")
+            # Match by id. An empty update id is ambiguous (every default-id tool
+            # would match), so a blank uid matches nothing — no-op rather than
+            # clobber unrelated rows.
+            def _match(tid: str) -> bool:
+                return bool(uid) and tid == uid
+            new_tools = tuple(
+                replace(tv, status=ts, body=(getattr(item, "body", "") or tv.body))
+                if _match(tv.id) else tv
+                for tv in a.tools
+            )
+            updated = next((tv for tv in new_tools if _match(tv.id)), None)
             new_task_status = _task_status_from_tool(ts)
-            live_title = a.tool.title if a.tool is not None else None
-            if live_title is not None and any(t.label == live_title for t in a.tasks):
-                # Match by the live tool's title (correct: not sensitive to task order)
-                matched = False
-                new_tasks = []
-                for t in reversed(a.tasks):
-                    if not matched and t.label == live_title:
-                        new_tasks.append(replace(t, status=new_task_status))
-                        matched = True
-                    else:
-                        new_tasks.append(t)
-                tasks = tuple(reversed(new_tasks))
-            else:
-                # Defensive fallback: no match or no live tool — update the last task
-                tasks = tuple(
-                    replace(t, status=new_task_status) if i == len(a.tasks) - 1 else t
-                    for i, t in enumerate(a.tasks)
-                ) if a.tasks else a.tasks
-            return replace(a, tool=tool, tasks=tasks)
+            new_tasks = tuple(
+                replace(t, status=new_task_status) if _match(t.tool_id) else t
+                for t in a.tasks
+            )
+            live = updated if updated is not None else a.tool
+            return replace(a, tool=live, tools=new_tools, tasks=new_tasks)
     return a
 
 

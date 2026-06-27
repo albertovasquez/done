@@ -257,3 +257,90 @@ def test_tool_status_dicts_exported():
     assert TOOL_STATUS_LABEL[ToolStatus.ACTIVE] == "RUNNING"
     assert TOOL_STATUS_LABEL[ToolStatus.DONE] == "COMPLETED"
     assert TOOL_STATUS_LABEL[ToolStatus.FAILED] == "FAILED"
+
+
+def test_activity_status_single_ellipsis():
+    w = ActivityStatus()
+    snap = AgentSnapshot(id="default", name="agent", state=AgentState.RESPONDING,
+                         activity_label="Responding", elapsed=5.0, tokens=0)
+    line = w.line_for(snap)
+    assert "……" not in line, f"double ellipsis: {line!r}"
+    assert "Responding…" in line
+
+
+def test_activity_status_hides_zero_tokens():
+    w = ActivityStatus()
+    snap0 = AgentSnapshot(id="default", name="agent", state=AgentState.RESPONDING,
+                          activity_label="Responding", elapsed=5.0, tokens=0)
+    assert "tokens" not in w.line_for(snap0), "0 tokens must be hidden"
+    snapN = AgentSnapshot(id="default", name="agent", state=AgentState.RESPONDING,
+                          activity_label="Responding", elapsed=5.0, tokens=1500)
+    assert "tokens" in w.line_for(snapN), "nonzero tokens must show"
+
+
+# --- ActivityRegion ---
+
+import asyncio
+from harness.tui.widgets.activity_region import ActivityRegion
+
+
+def _working_snap():
+    return AgentSnapshot(
+        id="default", name="agent", state=AgentState.RUNNING_TOOL,
+        activity_label="Running test", elapsed=4.0, tokens=0,
+        tasks=(TaskItem(label="$ pytest", status="in_progress"),),
+        tools=(ToolView(title="$ pytest", status=ToolStatus.ACTIVE, subtype="test",
+                        body="ran 3 tests", id="t1"),),
+        tool=ToolView(title="$ pytest", status=ToolStatus.ACTIVE, subtype="test", id="t1"),
+    )
+
+
+def test_activity_region_idle_helper():
+    region = ActivityRegion()
+    idle = AgentSnapshot(id="default", name="agent", state=AgentState.IDLE)
+    done = AgentSnapshot(id="default", name="agent", state=AgentState.DONE)
+    assert region.is_idle(idle) and region.is_idle(done)
+    assert not region.is_idle(_working_snap())
+
+
+def test_activity_region_mounts_and_shows_tool_when_working():
+    class Host(App):
+        def compose(self) -> ComposeResult:
+            yield ActivityRegion(id="activity-region")
+    async def go():
+        async with Host().run_test() as pilot:
+            region = pilot.app.query_one("#activity-region", ActivityRegion)
+            region.update_from(_working_snap())
+            await pilot.pause()
+            # collapsed: the TaskTree checklist is present with the tool label
+            from harness.tui.widgets.task_tree import TaskTree
+            assert region.query(TaskTree), "TaskTree should be present while working"
+            # toggle to detail: ToolCallRow(s) appear
+            region.toggle_details()
+            region.update_from(_working_snap())
+            await pilot.pause()
+            from harness.tui.widgets.tool_call_row import ToolCallRow
+            assert region.query(ToolCallRow), "ToolCallRow should appear when expanded"
+    asyncio.run(go())
+
+
+def test_cap_body_caps_lines():
+    body = "\n".join(f"line{i}" for i in range(20))
+    assert cap_body(body, "read").count("\n") <= 6
+    assert cap_body(body, "shell").count("\n") <= 10
+    assert cap_body("", "shell") == ""
+
+
+def test_tool_call_row_detail_includes_body():
+    tool = ToolView(title="$ cat f.py", status=ToolStatus.DONE, subtype="read",
+                    body="alpha\nbeta", id="t1")
+    row = ToolCallRow(tool, expanded=True)
+    detail = row.detail_for(tool)
+    assert "f.py" in detail
+    assert "alpha" in detail and "beta" in detail
+
+
+def test_tool_call_row_collapsed_line_unchanged():
+    tool = ToolView(title="$ pytest", status=ToolStatus.ACTIVE, subtype="test", id="t1")
+    row = ToolCallRow(tool)
+    assert "⚑" in row.line_for(tool) and "pytest" in row.line_for(tool)

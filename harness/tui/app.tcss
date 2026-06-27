@@ -50,8 +50,8 @@ Screen { layout: vertical; background: $background; layers: base overlay; }
 /* streamed agent answer: a live Markdown widget. Sit flush in the transcript
    (Textual's Markdown adds its own block margins; trim the outer ones so it
    reads as one answer block rather than a boxed document). */
-#transcript Markdown { height: auto; margin: 0; padding: 0; background: $background; }
-#transcript Markdown .code_inline { color: $code; }
+#transcript Markdown { height: auto; margin: 0 0 1 0; padding: 0; background: $background; }
+#transcript Markdown .code_inline { color: $code; background: $background; }
 
 /* "model is working" indicator — compact, themed, left-aligned */
 #working { height: 1; color: $accent; content-align: left middle; padding: 0; }
@@ -61,7 +61,7 @@ Screen { layout: vertical; background: $background; layers: base overlay; }
     border-left: thick $accent;
     background: $surface;
     padding: 1 2;
-    margin: 1 0;
+    margin: 1 0 0 0;
     color: $foreground;
     text-style: bold;
 }
@@ -116,8 +116,13 @@ PermissionModal #select-list { height: 2; margin-top: 1; }
 /* Command body block in the permission modal: code-tinted, wrapping. */
 .select-body-code { color: $code; padding: 0 0 1 0; }
 
-/* ---- design-system activity region (conversation view) ---- */
-#activity { height: 1; padding: 0 2; color: $accent; }
-#tasktree { height: auto; padding: 0 2; color: $foreground; }
+/* ---- pinned activity region (above the composer) ---- */
+#activity-region { height: auto; padding: 0 2; margin: 0 2; }
+#ar-rule { height: 1; color: $muted; }
+#ar-status { height: 1; color: $accent; }
+#ar-tasks { height: auto; color: $foreground; }
+#ar-tools { height: auto; color: $foreground; }
+
+/* ---- design-system decision prompt ---- */
 #decision-prompt { padding: 1 2; border-left: thick $accent; background: $surface; }
 #decision-question { text-style: bold; padding-bottom: 1; }

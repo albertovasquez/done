@@ -183,15 +183,16 @@ def test_tool_update_targets_live_tool_not_last_index():
 
     # Build a synthetic state: two tasks, but live tool title = first task's label
     # (simulates a task added for a different reason after the tool was set)
-    live_tool = ToolView(title="$ echo one", status=ToolStatus.PENDING, subtype="shell")
+    live_tool = ToolView(title="$ echo one", status=ToolStatus.PENDING, subtype="shell", id="t1")
     synthetic_agent = AgentSnapshot(
         id="default",
         name="agent",
         state=AgentState.RUNNING_TOOL,
         tool=live_tool,
+        tools=(live_tool,),
         tasks=(
-            TaskItem(label="$ echo one", status="in_progress"),   # index 0 — matches live tool
-            TaskItem(label="$ other task", status="in_progress"),  # index 1 — does NOT match
+            TaskItem(label="$ echo one", status="in_progress", tool_id="t1"),  # index 0 — matches live tool by id
+            TaskItem(label="$ other task", status="in_progress", tool_id="t2"),  # index 1 — different id
         ),
     )
     synthetic_fs = FleetSnapshot(agents=(synthetic_agent,), active_id="default")
@@ -230,3 +231,66 @@ def test_permission_closed_restores_responding_when_no_live_tool():
     assert _active(fs).state == AgentState.AWAITING_PERMISSION
     fs = reduce(fs, PermissionClosed())
     assert _active(fs).state == AgentState.RESPONDING
+
+
+def test_reducer_tracks_multiple_tools_by_id():
+    fs = reduce(initial_snapshot(), TurnStarted())
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="tool", id="t1", title="$ echo one", status="pending")))
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="tool", id="t2", title="$ pytest two", status="pending")))
+    a = fs.active
+    assert len(a.tools) == 2
+    assert a.tools[0].id == "t1" and a.tools[1].id == "t2"
+    # update the FIRST tool — must update t1, NOT the latest (t2)
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="tool_update", id="t1", status="completed", body="hi")))
+    a = fs.active
+    by_id = {tv.id: tv for tv in a.tools}
+    assert by_id["t1"].status == ToolStatus.DONE, "t1 should be DONE"
+    assert by_id["t2"].status == ToolStatus.PENDING, "t2 must stay PENDING (not clobbered)"
+
+
+def test_turn_started_resets_tools():
+    fs = reduce(initial_snapshot(), TurnStarted())
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="tool", id="t1", title="$ x", status="pending")))
+    assert len(fs.active.tools) == 1
+    fs = reduce(fs, TurnStarted())
+    assert fs.active.tools == (), "TurnStarted must reset tools"
+
+
+def test_tool_update_propagates_body():
+    fs = reduce(initial_snapshot(), TurnStarted())
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="tool", id="t1", title="$ cat f", status="pending")))
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="tool_update", id="t1", status="completed", body="hello\nworld")))
+    a = _active(fs)
+    assert a.tools[0].body == "hello\nworld"
+    assert a.tool.body == "hello\nworld"
+
+
+def test_tool_update_without_body_keeps_prior_body():
+    fs = reduce(initial_snapshot(), TurnStarted())
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="tool", id="t1", title="$ x", status="pending")))
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="tool_update", id="t1", status="active", body="partial")))
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="tool_update", id="t1", status="completed", body="")))
+    a = _active(fs)
+    assert a.tools[0].body == "partial", "a body-less update must not wipe the prior body"
+
+
+def test_tool_update_same_title_updates_only_matching_task():
+    """Two tools with the SAME title but different ids: a tool_update for one must
+    flip only THAT task row, not both (match by tool_id, not label)."""
+    fs = reduce(initial_snapshot(), TurnStarted())
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="tool", id="t1", title="$ cat f", status="pending")))
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="tool", id="t2", title="$ cat f", status="pending")))
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="tool_update", id="t1", status="completed", body="x")))
+    a = _active(fs)
+    assert a.tasks[0].status == "done", "t1's task row should be done"
+    assert a.tasks[1].status == "in_progress", "t2's identically-titled task row must NOT flip"
+
+
+def test_tool_update_blank_id_is_noop():
+    """An update with an empty id must not clobber default-id tools/tasks."""
+    fs = reduce(initial_snapshot(), TurnStarted())
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="tool", id="t1", title="$ x", status="pending")))
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="tool_update", id="", status="completed", body="y")))
+    a = _active(fs)
+    assert a.tools[0].status == ToolStatus.PENDING, "blank-id update must not change the tool"
+    assert a.tasks[0].status == "in_progress", "blank-id update must not change the task"

@@ -32,24 +32,21 @@ from textual.widgets import LoadingIndicator, Markdown, Static, TextArea
 from harness.tui.client import TuiClient
 from harness.tui.commands import build_registry, resolve_command
 from harness.tui.messages import SessionUpdate, PermissionRequest
-from harness.tui.render import render_update, harness_chips, status_style, format_cwd
+from harness.tui.render import render_update, harness_chips, format_cwd
 from harness.tui.state import (
     initial_snapshot, reduce, TurnStarted, TurnEnded, ItemReceived,
     TokensUpdated, DecisionOpened, decision_from_meta,
 )
-from harness.tui.theme import HARNESS_THEME, COLORS, STATUS_COLOR
-from harness.tui.widgets.activity_status import ActivityStatus
+from harness.tui.theme import HARNESS_THEME, COLORS
+from harness.tui.widgets.activity_region import ActivityRegion
 from harness.tui.widgets.permission_modal import PermissionModal
 from harness.tui.widgets.select_modal import SelectModal, SelectOption
 from harness.tui.widgets.slash_menu import SlashMenu
 from harness.tui.widgets.prompt_area import PromptArea
-from harness.tui.widgets.task_tree import TaskTree
-from harness.tui.widgets.tool_call_row import ToolCallRow
 from harness.tui.widgets.status_chip import StatusChip
 from harness.tui.header import icon_markup, header_text_markup
 from harness import config as _config
 
-_GLYPH = {"completed": "✓", "failed": "✗"}
 _MODE = "Build"                       # the single agent "mode" we expose for now
 
 
@@ -74,7 +71,8 @@ def _model_label(model: str, worker_model_id: str | None) -> str:
 
 class HarnessTui(App):
     CSS_PATH = "app.tcss"  # relative to this module's dir (harness/tui/)
-    BINDINGS = [("escape", "cancel", "Cancel turn")]
+    BINDINGS = [("escape", "cancel", "Cancel turn"),
+                ("ctrl+o", "toggle_details", "Tool details")]
 
     def __init__(self, agent_cmd: list[str], cwd: str, model: str,
                  worker_model_id: str | None = None, version: str = "0.5.0",
@@ -105,7 +103,6 @@ class HarnessTui(App):
         self._boundary_after = False          # True => an in-turn boundary (tool/thought/stream_reset) closed the block; next prose opens a FRESH widget (vs. a late delta of the prior answer, which extends in place)
         self._tokens = 0                      # last-known token count from usage updates
         self._snapshot = initial_snapshot()   # the presentation model (pure, immutable)
-        self._tool_rows: dict[str, ToolCallRow] = {}  # tool_call_id → mounted ToolCallRow
         self._commands = build_registry()     # slash-command registry
         self._slash = None                    # the SlashMenu widget while open, else None
         self._slash_overlay = None            # landing-only overlay box wrapping the menu
@@ -341,11 +338,7 @@ class HarnessTui(App):
         if a is None:
             return
         try:
-            self.query_one("#activity", ActivityStatus).update_from(a)
-        except Exception:
-            pass
-        try:
-            self.query_one("#tasktree", TaskTree).update_tasks(a.tasks)
+            self.query_one("#activity-region", ActivityRegion).update_from(a)
         except Exception:
             pass
 
@@ -363,6 +356,8 @@ class HarnessTui(App):
         }
         if a.state.value not in working_states:
             return
+        if not self._turn_start:
+            return  # no turn timestamp yet — don't show monotonic-since-boot
         elapsed = time.monotonic() - self._turn_start
         agents = tuple(
             _replace(x, elapsed=elapsed) if x.id == a.id else x
@@ -371,7 +366,7 @@ class HarnessTui(App):
         self._snapshot = type(self._snapshot)(agents=agents,
                                               active_id=self._snapshot.active_id)
         try:
-            self.query_one("#activity", ActivityStatus).update_from(self._snapshot.active)
+            self.query_one("#activity-region", ActivityRegion).update_from(self._snapshot.active)
         except Exception:
             pass
 
@@ -408,7 +403,6 @@ class HarnessTui(App):
         inp.value = ""
         inp.disabled = True
         self._turn_start = time.monotonic()
-        self._tool_rows = {}                  # fresh tool-row registry for this turn
         self._apply(TurnStarted())
         self._send_gen = self._gen            # tag this turn's worker with its generation
         self.run_worker(self._send_prompt(text), thread=False)
@@ -587,11 +581,10 @@ class HarnessTui(App):
         self._started = True
         await self.query_one("#landing", Container).remove()
         await self.mount(VerticalScroll(id="transcript"), before="#statusbar")
-        await self.mount(ActivityStatus(id="activity"), before="#statusbar")
-        await self.mount(TaskTree(id="tasktree"), before="#statusbar")
         composer = Vertical(id="composer", classes="compose")
         await self.mount(composer, before="#statusbar")
         await composer.mount(PromptArea(placeholder="Reply…", id="conversation-input"))
+        await self.mount(ActivityRegion(id="activity-region"), before="#composer")
         self._refresh_status()
         self.query_one("#conversation-input", PromptArea).focus()
 
@@ -606,16 +599,11 @@ class HarnessTui(App):
         self._stream_closed = True
         self._boundary_after = False
         self._tokens = 0
-        self._tool_rows = {}
         self._snapshot = initial_snapshot()
         self._refresh_status()
         # Refresh mounted widgets if they exist (they may not be in all states)
         try:
-            self.query_one("#activity", ActivityStatus).update_from(self._snapshot.active)
-        except Exception:
-            pass
-        try:
-            self.query_one("#tasktree", TaskTree).update_tasks(self._snapshot.active.tasks if self._snapshot.active else [])
+            self.query_one("#activity-region", ActivityRegion).update_from(self._snapshot.active)
         except Exception:
             pass
 
@@ -806,39 +794,17 @@ class HarnessTui(App):
             if item.text:
                 self._append_line(f"{_c('accent', '▌')} [b]{self._escape(item.text)}[/b]")
         elif item.kind == "tool":
-            self._end_stream(boundary=True)  # a tool call finalizes the current step's block
-            # mount a ToolCallRow driven by the reducer's ToolView
-            tool_view = self._snapshot.active.tool if self._snapshot.active else None
-            if tool_view is not None:
-                row = ToolCallRow(tool_view)
-                self._tool_rows[item.id] = row
-                self._append(row)
-            else:
-                # fallback: no snapshot tool (shouldn't happen in normal flow)
-                color = self._status_hex(item.status)
-                self._append_line(f"[{color}]{self._escape(item.title)}[/]")
+            self._end_stream(boundary=True)  # finalize the current answer block
+            # tool activity is shown in the pinned ActivityRegion (refreshed by _apply),
+            # NOT inline in the transcript.
         elif item.kind == "tool_update":
-            row = self._tool_rows.get(item.id)
-            if row is not None and self._snapshot.active is not None:
-                tool_view = self._snapshot.active.tool
-                if tool_view is not None:
-                    row.update(row.line_for(tool_view))
-            else:
-                # fallback for untracked updates
-                color = self._status_hex(item.status)
-                glyph = _GLYPH.get(item.status, "")
-                line = f"  [{color}]→ {item.status} {glyph}[/]"
-                if item.body:
-                    line += f"  {self._escape(item.body.splitlines()[0][:120])}"
-                self._append_line(line)
+            pass  # handled by the reducer fold + ActivityRegion refresh
 
-    @staticmethod
-    def _status_hex(status: str) -> str:
-        # render.status_style returns a color NAME (e.g. "green"); map to our hex.
-        name = status_style(status)
-        # status_style already returns a Rich-valid color name; STATUS_COLOR maps
-        # the canonical statuses to theme hex. Prefer the theme hex when known.
-        return STATUS_COLOR.get(status, name)
+    def action_toggle_details(self) -> None:
+        try:
+            self.query_one("#activity-region", ActivityRegion).toggle_details()
+        except Exception:
+            pass
 
     def _maybe_update_tokens(self, field_meta) -> None:
         if not isinstance(field_meta, dict):
