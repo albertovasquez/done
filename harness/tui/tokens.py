@@ -15,7 +15,7 @@ GLYPH: dict[str, str] = {
     "failed": "✗",
     "scheduled": "⏱",
     "awaiting": "?",
-    "bypass": "!",        # permission-bypass / YOLO mode (no clock/dot fits)
+    "bypass": "▶▶",       # permission-bypass mode line ("bypass permissions on/off")
     # tool subtypes (glyph-only, inferred)
     "edit": "✎",
     "test": "⚑",

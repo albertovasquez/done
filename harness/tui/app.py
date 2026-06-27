@@ -134,10 +134,11 @@ class HarnessTui(App):
         yield self._status_bar()
 
     def _yolo_meta_markup(self) -> str:
-        """' · YOLO' (amber) for the mode line when the live gate is on, else ''.
-        Markup form ($tokens) for the compose-meta Static. Keeps the top mode
-        line in sync with the footer chip so the bypass shows in BOTH places."""
-        return f" · [$scheduled][b]YOLO[/b][/]" if self._yolo else ""
+        """' · bypass on' (RED) for the top mode line when the permission bypass
+        is live, else ''. A compact mirror of the footer 'bypass permissions on'
+        status line, so the posture shows top AND bottom. Markup form ($tokens)
+        for the compose-meta Static."""
+        return f" · [$error][b]bypass on[/b][/]" if self._yolo else ""
 
     def _compose_meta_markup(self, model_label: str, provider: str) -> str:
         # mock mode: just "Build · mock model" (no redundant provider).
@@ -691,7 +692,7 @@ class HarnessTui(App):
 
     def _write_meta(self, elapsed: float) -> None:
         model_label = _model_label(self.model, self._worker_model_id)
-        yolo = f" {_c('scheduled', 'YOLO')}" if self._yolo else ""   # records mode at turn time
+        yolo = f" {_c('error', 'bypass on')}" if self._yolo else ""   # records mode at turn time
         self._append_line(
             f"{_c('accent', '▣ ' + _MODE)}{yolo} {_c('muted', f'· {model_label} · {elapsed:.1f}s')}")
         self._refresh_status()

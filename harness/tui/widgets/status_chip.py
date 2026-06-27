@@ -66,14 +66,17 @@ class StatusChip(Static):
 
     @classmethod
     def for_yolo(cls, active: bool, pinned: bool) -> "StatusChip":
-        """The permission-mode chip. Off → muted '• ask'; on → amber '! YOLO'
-        (+ ' · pin' when persisted). StatusChip has no separate glyph slot, so
-        the leading glyph is baked into the label — state survives monochrome
-        terminals via color + glyph + weight together."""
+        """The permission-mode status line in the footer. Reads as a security
+        posture in plain words (no jargon): off → muted 'bypass permissions off';
+        on → RED 'bypass permissions on' (+ ' · pinned' when persisted). Red on
+        the active state is the loudest signal — a full permission bypass that
+        auto-runs commands. StatusChip bakes the glyph into the label; color +
+        glyph + weight together so meaning survives monochrome terminals."""
+        glyph = GLYPH["bypass"]
         if not active:
-            return cls(f"{GLYPH['idle']} ask", "muted")
-        suffix = " · pin" if pinned else ""
-        return cls(f"{GLYPH['bypass']} YOLO{suffix}", "scheduled")
+            return cls(f"{glyph} bypass permissions off", "muted")
+        suffix = " · pinned" if pinned else ""
+        return cls(f"{glyph} bypass permissions on{suffix}", "error")
 
 
 class StateDot(Static):
