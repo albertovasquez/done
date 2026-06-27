@@ -75,6 +75,13 @@ async def _main(argv=None) -> None:
     args = parser.parse_args(argv)
 
     cwd = str(Path(args.cwd).resolve()) if args.cwd else os.getcwd()
+    # Capture whether VIBEPROXY_MODEL came from the real SHELL env BEFORE load_env
+    # may fill it from a .env file. Mirrors tui_main: the precedence we want is
+    # shell env > done.conf[persona] > .env > engine default. load_env uses
+    # override=False, so a .env value only lands in os.environ when the shell did
+    # NOT already set it — but we must still distinguish the two, because a
+    # .env-derived value must NOT outrank the persona's persisted model.
+    shell_set_model = "VIBEPROXY_MODEL" in os.environ
     paths.load_env(cwd)               # BEFORE importing engine-touching modules
 
     import sys
@@ -101,20 +108,27 @@ async def _main(argv=None) -> None:
     if args.model == "mock":
         worker_model_id = None
     else:
-        # Per-persona model for the STANDALONE path (dn-agent --persona X): when no
-        # VIBEPROXY_MODEL is already in the env (the TUI parent exports it; a real
-        # shell may too), fall back to this persona's persisted done.conf model so a
-        # direct launch isn't a model/workspace split-brain. Env wins when present.
+        # Per-persona model for the STANDALONE path (dn-agent --persona X). The TUI
+        # parent exports VIBEPROXY_MODEL before spawning us, so its launches keep
+        # winning via the shell-env rung. Precedence (mirrors tui_main):
+        #   1. real shell VIBEPROXY_MODEL (captured before load_env)
+        #   2. this persona's persisted done.conf model
+        #   3. a .env-derived VIBEPROXY_MODEL (now in os.environ via load_env)
+        #   4. engine default
+        # A .env value must NOT outrank the persona's persisted model — that was the
+        # split-brain the merge surfaced.
         from harness import config
         persona_key = workspace_dir.name
         persisted = config.load_agent(persona_key)
-        env_model = os.getenv("VIBEPROXY_MODEL")
-        if env_model:
-            worker_model_id = env_model
+        env_model = os.getenv("VIBEPROXY_MODEL")     # shell OR .env at this point
+        if shell_set_model and env_model:
+            worker_model_id = env_model              # rung 1: real shell env
         elif persisted is not None and persisted.model:
-            worker_model_id = persisted.model
+            worker_model_id = persisted.model        # rung 2: done.conf[persona]
+        elif env_model:
+            worker_model_id = env_model              # rung 3: .env-derived
         else:
-            worker_model_id = vibeproxy.DEFAULT_MODEL
+            worker_model_id = vibeproxy.DEFAULT_MODEL  # rung 4: engine default
 
     # Test seam: HARNESS_ROUTER_STUB=1 swaps the live (VibeProxy) classifier for a
     # fixed one, so tests that only exercise downstream behavior (e.g. session
