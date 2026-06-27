@@ -97,32 +97,49 @@ shows the id. **No rail, no switching, no engine multiplexing.** Purely: engine
 reports id → snapshot → one chip. Fits today's one-process-one-persona engine with
 zero behavior change to the agent (pure display).
 
-### C2b — Rail + switcher (own spec when reached)
-`AppShell` (the two-rail responsive frame, collapses to today's single column at
-N=1) + `AgentRail` (lists `list_personas()`, active highlighted via
-`FleetSnapshot.active_id`) + `SidebarToggle`. Selecting a persona **switches the
-session** to it — re-point/re-launch the single agent at that workspace (the engine
-stays one-persona-at-a-time, matching C1). The rail reads the C2a snapshot fields.
-Still **no engine multiplexing** — one persona runs at a time; switching is
-between-sessions (consistent with C1's first-turn-only injection + "switch between
-sessions" position). Open question for its spec: switch = new session vs re-exec;
-friendly names from `persona.toml`.
+### C2b — Rail VIEW (REVISED — switching removed, deferred to C2c)
+`AgentRail` LISTS `list_personas()` (names via `persona_config.read_name`), the active
+one highlighted via C2a's `active_id` / the launched persona; `Tab` focuses the rail,
+`Esc` closes it. **VIEW + indicator only — it does NOT switch personas.**
 
-### C2c — True fleet (own brainstorm + Codex review when reached)
-One process (or N) serving **N concurrent personas** with live per-agent state dots —
-the literal mockup. **The foundational fork is deferred to this sub-spec, with Codex
-review, because it is irreversible engine work:**
-- **In-process N-sessions:** one `acp_agent`, `new_session` takes a persona/workspace
-  arg (today hardcodes `self._workspace_dir`), `SessionStore` keys by persona, model
-  factory resolves per-session. Reuses C1's per-session `workspace_dir` pipe; cooperative
-  concurrency unless true parallel loops are added.
-- **N-subprocess:** TUI spawns one `acp_main` per persona (each already correctly
-  single-persona), multiplexes N ACP streams + lifecycles into one rail. Heavier
-  client, simpler engine, genuine parallelism.
+**Why switching was removed from C2b:** C2b originally re-execed the agent with a new
+`--persona` to switch. Three Codex passes found recurring per-persona state leaks
+(model/yolo/env leaking into the re-exec'd child) — all because **re-exec is the wrong
+primitive.** Research into the standard (OpenClaw, Hermes, OpenCode, Codex #12047) is
+conclusive: every mature harness switches agents **in-process** (route to a loaded
+session, never restart; per-agent model resolved at session-start, overriding base).
+So switching belongs to C2c's long-lived-process engine, not a C2b re-exec. C2b ships
+the clean rail view; **C2c owns switching, done the standard way.**
+
+### C2c — True fleet + SWITCHING (own brainstorm + Codex review when reached)
+One long-lived process serving **N persona sessions** with live per-agent state dots,
+AND **in-process persona switching** (absorbed from C2b). **The foundational fork is
+deferred to this sub-spec, with Codex review, because it is irreversible engine work.**
+
+**Research-grounded direction (OpenClaw / Hermes / OpenCode / Codex #12047 — all
+agree):** switch agents **IN-PROCESS** — route to an already-loaded session, NEVER
+re-exec the process; resolve each agent's model at **session-start, overriding the base
+config**; a long-lived loop **ticks** the sessions. OpenClaw's **Gateway** holds N
+stateful sessions and ticks via heartbeats; Codex makes session/model switching
+"deterministic REPL ops handled **without invoking the agent**." This is the standard
+C2c should follow — and is exactly why C2b's re-exec switch failed (3 Codex passes of
+state leaks). The fork:
+- **In-process N-sessions (RECOMMENDED by the research):** one `acp_agent`,
+  `new_session` takes a persona/workspace arg (today hardcodes `self._workspace_dir`),
+  `SessionStore` keys by persona, model factory resolves per-session. Switching =
+  routing to a loaded session (no restart). Reuses C1's per-session `workspace_dir`
+  pipe. This matches every reference harness.
+- **N-subprocess:** TUI spawns one `acp_main` per persona, multiplexes N ACP streams.
+  Heavier client; genuine parallelism. (Claude Code historically supported in-process +
+  tmux + iTerm spawn backends; OpenCode went single-process. The research leans
+  single-process/in-process for simplicity.)
 
 This decision is the analog of C1's single-home-model choice and gets the same
 treatment: its own brainstorm, an explicit precedence/lifecycle design, and Codex
-adversarial review before any code. C2c does NOT block C2a/C2b.
+adversarial review before any code. C2c does NOT block C2a/C2b. **Reduce scope vs the
+literal mockup** (per the maintainer's steer): start with in-process switching +
+per-session model resolution (the proven core), defer live concurrent ticking/state
+dots if they add complexity.
 
 **C2c watch-for (flagged by the C2a whole-branch review):** C2a's `reduce()`
 `PersonaResolved` case renames the active agent's `id` in place

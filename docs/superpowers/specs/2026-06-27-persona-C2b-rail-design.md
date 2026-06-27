@@ -1,28 +1,59 @@
-# Persona C2b — AppShell + AgentRail drawer + persona switching
+# Persona C2b — AppShell + AgentRail drawer (rail VIEW; switching deferred to C2c)
 
-**Status:** design / spec (ready for writing-plans)
+**Status:** design / spec — **REVISED 2026-06-27: switching removed, see banner.**
 **Date:** 2026-06-27
 **Author:** Alberto Vasquez (with Claude Opus 4.8)
 **Part of:** the C2 drawer arc (`2026-06-27-persona-C2-drawer-arc-design.md`). Sub-project
-**C2b** — the rail + switcher. Builds on **C2a** (merged, PR #46 — the persona seam +
+**C2b** — the rail VIEW. Builds on **C2a** (merged, PR #46 — the persona seam +
 status-bar chip) and the design-system component spec (`AppShell`/`AgentRail`/
 `SidebarToggle` in `harness/tui/styles/components.md`).
 **Tracker:** issue #29.
 
 ---
 
-## 1. Purpose
+> ## ⚠️ REVISION BANNER (2026-06-27) — switching removed from C2b
+>
+> This spec originally had C2b **switch** personas by re-execing the agent with a new
+> `--persona`. Three Codex review passes found recurring state-leak bugs (the old
+> persona's model/yolo/env leaking into the re-exec'd child; backend-vs-model flag
+> conflicts) — all rooted in the same fact: **re-exec is the wrong primitive for
+> per-persona switching.**
+>
+> **Research into the standard (OpenClaw, Hermes, OpenCode, Codex #12047) is
+> conclusive:** every mature multi-agent harness switches agents **in-process** — it
+> routes to an already-loaded session and never restarts the process; per-agent model
+> is **resolved at session-start and overrides the base config**. OpenClaw's
+> long-lived **Gateway** holds N stateful sessions and ticks them; Codex states
+> "session/model switching are deterministic REPL ops handled **without invoking the
+> agent**."
+>
+> **Decision:** C2b ships the rail as a **VIEW + indicator only** — lists personas,
+> highlights the active one, `Tab` focuses it. **Real switching moves to C2c**, where
+> the long-lived-process engine (the OpenClaw Gateway model our roadmap targets) makes
+> it clean and standard-aligned. The re-exec switch machinery is removed.
+>
+> Sections below describing re-exec switching are **superseded** by this banner and §1.
 
-Surface ALL personas and let the user switch between them from the TUI: a toggleable
-right-side **AgentRail** that lists every persona workspace (active highlighted), where
-selecting one **switches** to it. TUI-only — no engine change; the engine stays
-one-process-one-persona (C1).
+---
+
+## 1. Purpose (revised)
+
+Surface ALL personas in the TUI: a toggleable right-side **AgentRail** that **lists**
+every persona workspace and **highlights the active one** (C2a's `active_id`). `Tab`
+moves focus from the prompt into the rail (the in-process focus model the research
+validates). The rail is a **view + indicator** — it does NOT switch personas.
 
 C2a answered "what persona am I on?" (a status-bar chip). C2b answers "what personas
-exist, and let me switch." C2c (separate) makes N run concurrently.
+exist + which is live." **Switching** (in-process, per the standard) and N concurrent
+personas land in **C2c** with the long-lived-process engine.
 
-**Out of scope:** persona *creation* (Phase D); multiple personas live at once / true
-fleet (C2c — needs the engine-multiplexing fork); a left rail / crons (Phase E).
+**Out of scope (now explicitly):** **persona switching** (deferred to C2c — needs the
+long-lived-process engine); persona *creation* (Phase D); multiple personas live at
+once (C2c); a left rail / crons (Phase E).
+
+**Why switching is deferred, not done badly here:** switching done via re-exec leaks
+per-persona state (proven across 3 Codex passes) and contradicts the universal
+in-process-switch standard. C2c does it right; C2b ships the clean view it builds on.
 
 ---
 
