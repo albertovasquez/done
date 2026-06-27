@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import platform
 import sys
 import time
 from pathlib import Path
@@ -32,6 +33,7 @@ from harness import skills  # noqa: E402
 from harness import persona as _persona  # noqa: E402
 from harness import paths as _paths_persona  # noqa: E402
 from harness import memory as _memory  # noqa: E402
+from harness import base_prompt  # noqa: E402
 from harness.chat_handler import ChatHandler  # noqa: E402
 from harness import vibeproxy  # noqa: E402
 
@@ -139,13 +141,18 @@ def main(argv: list[str] | None = None) -> int:
     from datetime import date
     persona_block = _persona.resolve_persona(workspace_dir).block
     memory_block = _memory.resolve_memory(workspace_dir, today=date.today()).block
+    base_block = base_prompt.render_base_prompt(
+        model_id=(worker_model_id or "mock"),
+        cwd=args.cwd,
+        system_line=platform.platform())
 
     def run_agent(prompt, skill_block=""):
         runner = MiniSweAgentRunner(model, env, agent_cfg=agent_cfg)
         try:
             for event in runner.run(prompt, skill_block=skill_block,
                                     persona_block=persona_block,
-                                    memory_block=memory_block):
+                                    memory_block=memory_block,
+                                    base_block=base_block):
                 emitter.write_renumbered(event)
         except KeyboardInterrupt:
             print("\ninterrupted", file=sys.stderr)
@@ -164,7 +171,8 @@ def main(argv: list[str] | None = None) -> int:
         rc = route_and_dispatch(
             args.task, router=router, emitter=emitter,
             make_chat_handler=lambda: ChatHandler(worker_model_id, catalog=router.catalog,
-                                                  persona_block=persona_block + memory_block),
+                                                  persona_block=persona_block + memory_block,
+                                                  base_block=base_block),
             run_agent=run_agent, ask_user=input, echo=print,
             worker_model_id=worker_model_id,
             load_skills=lambda names: skills.compose(skills_roots, names))

@@ -257,7 +257,8 @@ def test_persona_reaches_chat_path(tmp_path, monkeypatch):
     sysmsg = captured["messages"][0]
     assert sysmsg["role"] == "system"
     assert "BE TERSE" in sysmsg["content"]
-    assert sysmsg["content"] == agent._store.get(sid).persona_block
+    # content is base_block + persona_block (base prepended); verify persona present
+    assert agent._store.get(sid).persona_block in sysmsg["content"]
 
 
 def test_empty_workspace_is_byte_identical_chat(tmp_path, monkeypatch):
@@ -272,7 +273,10 @@ def test_empty_workspace_is_byte_identical_chat(tmp_path, monkeypatch):
     agent._workspace_dir = tmp_path / "absent"    # no persona (absent dir)
     sid = asyncio.run(agent.new_session(cwd=".")).session_id
     _prompt(agent, sid, "hi")
-    assert captured["messages"] == [{"role": "user", "content": "hi"}]   # no system msg
+    # base_block is always rendered on the ACP chat path (non-empty); a system
+    # message is present even without a persona. The user turn comes last.
+    assert captured["messages"][-1] == {"role": "user", "content": "hi"}
+    assert captured["messages"][0]["role"] == "system"  # base_block present
 
 
 def test_persona_load_event_gated_off_for_empty_workspace(tmp_path):
@@ -374,6 +378,25 @@ def test_memory_reaches_agent_path(tmp_path, monkeypatch):
     assert "REMEMBER: prefers tabs" in captured.get("memory_block", "")
 
 
+def test_base_block_reaches_agent_path(tmp_path, monkeypatch):
+    # base_block must be rendered and threaded into the TracingAgent on the ACP
+    # coding path — not just the chat path. Spy on the TracingAgent ctor.
+    import harness.tracing_agent as tamod
+    captured = {}
+    real_TA = tamod.TracingAgent
+    def spy_tracing(*a, **k):
+        captured.update(k)
+        return real_TA(*a, **k)
+    monkeypatch.setattr(tamod, "TracingAgent", spy_tracing)
+
+    agent = _build(_ScriptedRouter([_agent_fix()]), worker_model_id=None)
+    sid = asyncio.run(agent.new_session(cwd=str(tmp_path))).session_id
+    _prompt(agent, sid, "do a thing")
+    base_block = captured.get("base_block", "")
+    assert base_block, "base_block was empty — not threaded into TracingAgent"
+    assert "authorized security testing" in base_block.lower()
+
+
 def test_persona_and_memory_resolve_from_same_session_workspace(tmp_path):
     # Codex regression: persona must resolve from state.workspace_dir (per session),
     # not self._workspace_dir — so if the agent's workspace changes between
@@ -438,9 +461,11 @@ def test_seeded_default_workspace_is_byte_identical_noop(monkeypatch, tmp_path):
     agent._workspace_dir = paths.default_workspace_dir()   # the SEEDED dir
     sid = asyncio.run(agent.new_session(cwd=".")).session_id
     _prompt(agent, sid, "hi")
-    # no system message injected (templates are inert)
-    assert captured["messages"] == [{"role": "user", "content": "hi"}]
-    # and no persona_load event emitted
+    # base_block is always rendered on the ACP chat path; system message present.
+    # Inert persona templates (HTML-comment-only) add no persona content.
+    assert captured["messages"][-1] == {"role": "user", "content": "hi"}
+    assert captured["messages"][0]["role"] == "system"  # base_block present
+    # and no persona_load event emitted (inert templates)
     assert "persona_load" not in _meta_keys_in_order(agent)
 
 
@@ -459,7 +484,9 @@ def test_seeded_default_workspace_memory_is_byte_identical_noop(monkeypatch, tmp
     agent._workspace_dir = paths.default_workspace_dir()
     sid = asyncio.run(agent.new_session(cwd=".")).session_id
     _prompt(agent, sid, "hi")
-    assert captured["messages"] == [{"role": "user", "content": "hi"}]
+    # base_block is always rendered on the ACP chat path; system message present.
+    assert captured["messages"][-1] == {"role": "user", "content": "hi"}
+    assert captured["messages"][0]["role"] == "system"  # base_block present
     keys = _meta_keys_in_order(agent)
     assert "persona_load" not in keys and "memory_load" not in keys
 

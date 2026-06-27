@@ -307,5 +307,5 @@ which carries its own license.
 ---
 
 <div align="center">
-<sub><strong>DoneDone</strong> · <a href="https://donedone.io">donedone.io</a> · execution over appearance</sub>
+<sub><strong>DoneDone</strong> · by Bitlabs · <a href="https://donedone.io">donedone.io</a> · execution over appearance</sub>
 </div>

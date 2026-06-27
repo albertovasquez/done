@@ -13,6 +13,7 @@ from minisweagent.environments.local import LocalEnvironment
 from minisweagent.models.test_models import DeterministicToolcallModel, make_toolcall_output
 
 from harness.events import Emitter
+from harness.models_mock import build_mock_model
 from harness.tracing_agent import TracingAgent
 
 
@@ -108,3 +109,26 @@ def test_run_without_prior_unchanged(tmp_path):
     assert agent.messages[0]["role"] == "system"
     assert agent.messages[1]["role"] == "user"          # instance directly after system
     assert "the task" in agent.messages[1]["content"]
+
+
+def _make_agent(tmp_path, **blocks):
+    em = Emitter(tmp_path / "e.jsonl", clock=lambda: 0.0, console=False)
+    return TracingAgent(
+        build_mock_model(), LocalEnvironment(cwd=str(tmp_path)), emitter=em,
+        system_template="SYS BASE", instance_template="INST {{task}}",
+        **blocks)
+
+
+def test_base_block_prepended_before_persona_in_system_template(tmp_path):
+    agent = _make_agent(tmp_path, base_block="BASEBLOCK", persona_block="PERSONA")
+    rendered = agent._render_template(agent.config.system_template)
+    assert "BASEBLOCK" in rendered
+    # base block comes before persona in the appended order
+    assert rendered.index("BASEBLOCK") < rendered.index("PERSONA")
+
+
+def test_base_block_not_added_to_instance_template(tmp_path):
+    agent = _make_agent(tmp_path, base_block="BASEBLOCK")
+    agent.extra_template_vars = {"task": "t"}
+    rendered = agent._render_template(agent.config.instance_template)
+    assert "BASEBLOCK" not in rendered

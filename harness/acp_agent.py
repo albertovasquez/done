@@ -7,6 +7,7 @@ in the executor so the async loop stays responsive to session/cancel."""
 from __future__ import annotations
 
 import asyncio
+import platform
 from pathlib import Path
 
 import acp
@@ -16,6 +17,7 @@ from acp.schema import (
     ToolCallUpdate,
 )
 
+from harness import base_prompt
 from harness import config
 from harness import memory as memory_mod
 from harness import persona
@@ -237,11 +239,17 @@ class HarnessAgent(acp.Agent):
                 {"role": "user", "content": text, "origin": "clarify"}])
             return acp.PromptResponse(stop_reason="end_turn")
 
+        # Render base_block once — used by both chat and agent paths below.
+        base_block = base_prompt.render_base_prompt(
+            model_id=(self._worker_model_id or "mock"),
+            cwd=state.cwd, system_line=platform.platform())
+
         if cls.task_type == "chat_question":
             # hand the router's catalog so "what skills do we have?" is answered
             # from data, not the model (see ChatHandler.is_capability_question)
             handler = ChatHandler(self._worker_model_id, catalog=self._router.catalog,
-                                  persona_block=(state.persona_block or "") + (state.memory_block or ""))
+                                  persona_block=(state.persona_block or "") + (state.memory_block or ""),
+                                  base_block=base_block)
             pieces: list[str] = []
 
             def pump() -> None:
@@ -274,7 +282,8 @@ class HarnessAgent(acp.Agent):
                       {"skill_load": {"injected": ctx.skills.injected,
                                       "skipped": ctx.skills.skipped}}))
         engine = await self._run_agent_turn(loop, session_id, state, text, ctx.skill_block,
-                                            transcript, ctx.persona_block, ctx.memory_block)
+                                            transcript, ctx.persona_block, ctx.memory_block,
+                                            base_block=base_block)
         stop_reason = engine["stop_reason"]
         if stop_reason == "refusal":
             # streamed-on-screen == stored: never fold prior-turn prose in.
@@ -291,7 +300,7 @@ class HarnessAgent(acp.Agent):
         return acp.PromptResponse(stop_reason=stop_reason)
 
     async def _run_agent_turn(self, loop, session_id, state, text, skill_block, prior,
-                              persona_block="", memory_block="") -> dict:
+                              persona_block="", memory_block="", base_block="") -> dict:
         # Tool-call ids are TURN-LOCAL: the counter resets each turn and the
         # "current id" lives here (not on SessionState), so the start/done/permission
         # handshake within this turn pairs correctly and ids restart at tc1 per turn.
@@ -418,6 +427,7 @@ class HarnessAgent(acp.Agent):
                 agent = TracingAgent(self._model_factory(self._worker_model_id), env,
                                      emitter=emitter, skill_block=skill_block,
                                      persona_block=persona_block, memory_block=memory_block,
+                                     base_block=base_block,
                                      **cfg)
                 agent_ref["agent"] = agent
                 model = agent.model
