@@ -139,6 +139,11 @@ class DecisionOpened:
     view: "DecisionView"
 
 
+@dataclass(frozen=True)
+class PersonaResolved:
+    id: str
+
+
 def _tool_status(raw: str) -> ToolStatus:
     s = str(raw)
     if "." in s:
@@ -214,11 +219,40 @@ def _reduce_agent(a: AgentSnapshot, event) -> AgentSnapshot:
 def reduce(snapshot: FleetSnapshot, event) -> FleetSnapshot:
     """Pure: fold one event into the snapshot, updating the ACTIVE agent only
     (single-agent today; fleet fan-out later targets event.agent_id)."""
+    if isinstance(event, PersonaResolved):
+        # Set the active persona id and rename the (single) active agent to it.
+        # C2a is single-agent: remap the active snapshot's id+name to the persona.
+        # (C2b reads active_id to highlight; C2c grows the tuple per real session.)
+        agents = tuple(
+            replace(a, id=event.id, name=event.id) if a.id == snapshot.active_id else a
+            for a in snapshot.agents
+        )
+        # Invariant: after PersonaResolved, active_id MUST resolve to an agent.
+        # If the old active_id matched none (empty tuple, or active was already None —
+        # reachable once C2c holds multiple agents), seed one so .active is never None.
+        if not any(a.id == event.id for a in agents):
+            agents = agents + (AgentSnapshot(id=event.id, name=event.id),)
+        return FleetSnapshot(agents=agents, active_id=event.id)
     agents = tuple(
         _reduce_agent(a, event) if a.id == snapshot.active_id else a
         for a in snapshot.agents
     )
     return FleetSnapshot(agents=agents, active_id=snapshot.active_id)
+
+
+def persona_from_meta(field_meta: dict | None) -> str | None:
+    """Recognize the active persona id from the harness meta chip.
+    Tolerant: any missing/malformed shape yields None, never raises."""
+    if not isinstance(field_meta, dict):
+        return None
+    harness = field_meta.get("harness")
+    if not isinstance(harness, dict):
+        return None
+    persona = harness.get("persona")
+    if not isinstance(persona, dict):
+        return None
+    pid = persona.get("id")
+    return pid if isinstance(pid, str) and pid else None
 
 
 def decision_from_meta(field_meta: dict | None) -> DecisionView | None:

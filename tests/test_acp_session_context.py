@@ -139,6 +139,32 @@ def test_router_unavailable_writes_nothing():
     assert agent._store.get(sid).transcript == []
 
 
+def test_persona_chip_not_emitted_on_router_down_then_emitted_next_turn(tmp_path):
+    # DOCUMENTED behavior (decided after a Codex review): the persona chip emits
+    # AFTER classification, so a router-down turn shows no chip — but the
+    # once-per-session flag is NOT set, so the chip appears on the next turn that
+    # classifies. The indicator tracks a functioning session, not a dead turn.
+    ws = tmp_path / "agents" / "fred"
+    ws.mkdir(parents=True)
+
+    class _BoomThenChat:
+        def __init__(self):
+            self._calls = 0
+            self.catalog = []          # chat path reads router.catalog
+
+        def classify(self, prompt, history=None):
+            self._calls += 1
+            if self._calls == 1:
+                raise RuntimeError("vibeproxy down")
+            return _chat()             # a fresh chat classification on the retry
+
+    conn, agent, sid = _build_with_workspace(ws, router=_BoomThenChat())
+    _prompt(agent, sid, "first (router down)")
+    assert _persona_ids(conn) == []                 # nothing on the failed turn
+    _prompt(agent, sid, "second (router back)")
+    assert _persona_ids(conn) == ["fred"]           # appears on the next working turn
+
+
 def test_agent_engine_construction_failure_is_refusal_not_unbound():
     # If TracingAgent construction raises, run_engine's except must not itself
     # raise UnboundLocalError on `agent`. Force it via a model factory that throws.
@@ -436,3 +462,71 @@ def test_seeded_default_workspace_memory_is_byte_identical_noop(monkeypatch, tmp
     assert captured["messages"] == [{"role": "user", "content": "hi"}]
     keys = _meta_keys_in_order(agent)
     assert "persona_load" not in keys and "memory_load" not in keys
+
+
+# --------------------------------------------------------------------------
+# C2a: persona identity chip (engine-side)
+# --------------------------------------------------------------------------
+
+def _build_with_workspace(ws, router=None):
+    """Build a mock-mode agent with a given workspace_dir (or None for default).
+    Returns (conn, agent, sid) where sid is already registered in the store."""
+    if router is None:
+        router = _ScriptedRouter([_chat()])
+    agent = _build(router)
+    agent._workspace_dir = ws
+    sid = asyncio.run(agent.new_session(cwd=".")).session_id
+    conn = agent._conn
+    return conn, agent, sid
+
+
+def _persona_ids(conn):
+    """The persona ids emitted on conn across all turns so far."""
+    out = []
+    for u in conn.updates:
+        fm = getattr(u, "field_meta", None)
+        h = fm.get("harness") if isinstance(fm, dict) else None
+        p = h.get("persona") if isinstance(h, dict) else None
+        if isinstance(p, dict) and isinstance(p.get("id"), str):
+            out.append(p["id"])
+    return out
+
+
+def test_emits_persona_chip_once_with_resolved_id(tmp_path):
+    ws = tmp_path / "agents" / "fred"; ws.mkdir(parents=True)
+    conn, agent, sid = _build_with_workspace(ws)
+    _prompt(agent, sid, "what is X")
+    assert _persona_ids(conn) == ["fred"]
+
+
+def test_persona_chip_not_re_emitted_second_turn(tmp_path):
+    ws = tmp_path / "agents" / "fred"; ws.mkdir(parents=True)
+    # two turns on the same session — chip must fire only once
+    conn, agent, sid = _build_with_workspace(ws, router=_ScriptedRouter([_chat(), _chat()]))
+    _prompt(agent, sid, "first")
+    _prompt(agent, sid, "second")
+    assert _persona_ids(conn) == ["fred"]          # once across both turns
+
+
+def test_persona_chip_defaults_when_no_workspace():
+    conn, agent, sid = _build_with_workspace(None)
+    _prompt(agent, sid, "hi")
+    assert _persona_ids(conn) == ["default"]
+
+
+def test_persona_chip_fires_on_clarify_path(tmp_path):
+    ws = tmp_path / "agents" / "fred"; ws.mkdir(parents=True)
+    conn, agent, sid = _build_with_workspace(ws, router=_ScriptedRouter([_ambiguous()]))
+    _prompt(agent, sid, "huh")
+    assert _persona_ids(conn) == ["fred"]          # identity shows even on clarify
+
+
+def test_persona_chip_not_written_to_session_record(tmp_path):
+    ws = tmp_path / "agents" / "fred"; ws.mkdir(parents=True)
+    conn, agent, sid = _build_with_workspace(ws)
+    _prompt(agent, sid, "what is X")
+    # The persona id reached the WIRE (conn) ...
+    assert "fred" in _persona_ids(conn)
+    # ... but the _meta chip is NOT in the session record (history/transcript).
+    recorded = repr(agent._store.get(sid).transcript) + repr(agent._store.get(sid).history)
+    assert "persona" not in recorded               # _meta is wire-only

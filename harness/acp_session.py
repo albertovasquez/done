@@ -23,6 +23,7 @@ class SessionState:
     persona_block: str | None = None  # None = not-yet-composed; "" = composed-empty
     persona_load: "PersonaLoad | None" = None
     persona_load_emitted: bool = False
+    persona_emitted: bool = False        # C2a: identity chip sent once per session
     workspace_dir: "Path | None" = None  # the persona workspace this session uses (Phase B isolation core)
     memory_block: str | None = None      # None = not-yet-composed; "" = composed-empty
     memory_load: "MemoryLoad | None" = None

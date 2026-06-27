@@ -898,6 +898,38 @@ def test_yolo_chip_is_leftmost_in_statusbar():
     asyncio.run(go())
 
 
+def test_status_bar_shows_persona_after_chip():
+    """A session/update whose field_meta carries the persona chip causes the
+    #statusbar-persona Static to show the persona id. Before the chip lands the
+    widget renders an empty string (hidden)."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            # persona chip must be invisible before any PersonaResolved arrives
+            persona_widget = app.query_one("#statusbar-persona", Static)
+            assert persona_widget._Static__content == "", (
+                f"persona chip should be empty before first chip, got "
+                f"{persona_widget._Static__content!r}")
+
+            # enter conversation so on_session_update is not dropped
+            await app._enter_conversation()
+            app._session_id = "fake-session"
+
+            # deliver a session/update carrying the persona chip
+            update = update_agent_message_text("")
+            update.field_meta = {"harness": {"persona": {"id": "fred"}}}
+            app.on_session_update(SessionUpdate(update))
+            await pilot.pause()
+
+            persona_widget = app.query_one("#statusbar-persona", Static)
+            assert "fred" in persona_widget._Static__content, (
+                f"persona chip should show 'fred', got "
+                f"{persona_widget._Static__content!r}")
+
+    asyncio.run(go())
+
+
 def test_statusbar_children_share_one_row():
     """Regression: #statusbar is a horizontal layout, so chip + cwd + version sit
     on the SAME row. A vertical Container default stacked them onto 3 rows and the
