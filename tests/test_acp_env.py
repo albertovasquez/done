@@ -96,3 +96,37 @@ def test_client_terminal_submit_raises(tmp_path):
     env = _env(tmp_path, on_command=lambda *a: None, client_terminal=lambda cmd: stub_out)
     with pytest.raises(Submitted):
         env.execute({"command": "anything"})
+
+
+# ---------------------------------------------------------------------------
+# Plan sentinel: `plan ...` is intercepted, emitted, and NOT executed
+# ---------------------------------------------------------------------------
+
+def test_plan_command_intercepted_not_executed(tmp_path):
+    plans, cmd_calls = [], []
+    env = _env(tmp_path,
+               on_command=lambda phase, cmd, out: cmd_calls.append(phase),
+               request_permission=lambda cmd: (_ for _ in ()).throw(AssertionError("asked perm")),
+               on_plan=lambda entries: plans.append(entries))
+    result = env.execute({"command": 'plan "Push + PR:in_progress" "CI + merge:pending"'})
+    # the plan callback got the parsed entries
+    assert plans == [[("Push + PR", "in_progress"), ("CI + merge", "pending")]]
+    # benign success returned to the agent loop
+    assert result["returncode"] == 0
+    # it was NOT run as a tool: no start/done/rejected, no permission ask
+    assert cmd_calls == []
+
+
+def test_non_plan_command_still_runs(tmp_path):
+    plans = []
+    env = _env(tmp_path, on_command=lambda *a: None, on_plan=lambda e: plans.append(e))
+    result = env.execute({"command": "printf 'real'"})
+    assert "real" in result["output"]
+    assert plans == []                                  # on_plan never fired
+
+
+def test_plan_without_on_plan_callback_is_safe(tmp_path):
+    # if no on_plan is wired, a plan command must not crash and must not execute
+    env = _env(tmp_path, on_command=lambda *a: None)
+    result = env.execute({"command": 'plan "A:completed"'})
+    assert result["returncode"] == 0

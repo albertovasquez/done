@@ -42,3 +42,5 @@ def test_base_prompt_instructs_plan_for_multistep():
     out = base_prompt.render_base_prompt(model_id="m", cwd="/x", system_line="OS")
     low = out.lower()
     assert "multi-step" in low and "plan" in low
+    # teaches the concrete sentinel command grammar (label:status)
+    assert "in_progress" in low and ":pending" in low

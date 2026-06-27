@@ -11,6 +11,8 @@ from typing import Any, Callable
 
 from minisweagent.environments.local import LocalEnvironment
 
+from harness.acp_emit import parse_plan_command
+
 
 class AcpEnvironment(LocalEnvironment):
     def __init__(self, *,
@@ -18,17 +20,27 @@ class AcpEnvironment(LocalEnvironment):
                  request_permission: Callable[[str], bool] | None = None,
                  cancel_flag: threading.Event | None = None,
                  client_terminal: Callable[[str], dict] | None = None,
+                 on_plan: Callable[[list[tuple[str, str]]], None] | None = None,
                  **kwargs: Any):
         super().__init__(**kwargs)
         self._on_command = on_command
         self._request_permission = request_permission
         self._cancel_flag = cancel_flag
         self._client_terminal = client_terminal
+        self._on_plan = on_plan
 
     def execute(self, action: dict, cwd: str = "", *, timeout: int | None = None) -> dict[str, Any]:
         if self._cancel_flag is not None and self._cancel_flag.is_set():
             return {"output": "", "returncode": -1, "exception_info": "cancelled"}
         command = action.get("command", "")
+        # The `plan ...` sentinel is a structured capability over the bash-only
+        # channel: intercept it, surface the plan to the TUI, and return success
+        # WITHOUT running it as a shell command or asking permission.
+        plan = parse_plan_command(command)
+        if plan is not None:
+            if self._on_plan is not None:
+                self._on_plan(plan)
+            return {"output": "(plan updated)", "returncode": 0, "exception_info": ""}
         self._on_command("start", command, None)
         if self._request_permission is not None and not self._request_permission(command):
             self._on_command("rejected", command, None)
