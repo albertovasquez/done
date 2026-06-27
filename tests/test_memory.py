@@ -72,3 +72,12 @@ def test_non_utf8_memory_skipped_not_raised(tmp_path):
     load = resolve_memory(tmp_path, today=TODAY)
     assert load.injected == []
     assert load.skipped and load.skipped[0][0] == "MEMORY.md"
+
+
+def test_two_workspaces_have_isolated_memory(tmp_path):
+    a = tmp_path / "a"; a.mkdir(); (a / "MEMORY.md").write_text("A-fact", encoding="utf-8")
+    b = tmp_path / "b"; b.mkdir(); (b / "MEMORY.md").write_text("B-fact", encoding="utf-8")
+    la = resolve_memory(a, today=TODAY)
+    lb = resolve_memory(b, today=TODAY)
+    assert "A-fact" in la.block and "A-fact" not in lb.block
+    assert "B-fact" in lb.block and "B-fact" not in la.block

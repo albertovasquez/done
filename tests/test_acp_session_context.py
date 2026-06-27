@@ -416,3 +416,23 @@ def test_seeded_default_workspace_is_byte_identical_noop(monkeypatch, tmp_path):
     assert captured["messages"] == [{"role": "user", "content": "hi"}]
     # and no persona_load event emitted
     assert "persona_load" not in _meta_keys_in_order(agent)
+
+
+def test_seeded_default_workspace_memory_is_byte_identical_noop(monkeypatch, tmp_path):
+    # the seeded default (inert templates, NO memory content) must stay
+    # byte-identical: no system message, no persona_load, no memory_load.
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    from harness import persona, paths
+    persona.seed_default_workspace()
+    captured = {}
+    def fake_completion(**kwargs):
+        captured.update(kwargs); return iter([])
+    import litellm
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+    agent = _build(_ScriptedRouter([_chat()]), worker_model_id="gpt-5.4")
+    agent._workspace_dir = paths.default_workspace_dir()
+    sid = asyncio.run(agent.new_session(cwd=".")).session_id
+    _prompt(agent, sid, "hi")
+    assert captured["messages"] == [{"role": "user", "content": "hi"}]
+    keys = _meta_keys_in_order(agent)
+    assert "persona_load" not in keys and "memory_load" not in keys
