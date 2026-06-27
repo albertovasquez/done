@@ -143,6 +143,44 @@ def test_9_event_seq_contiguous_with_classified_first(tmp_path):
     assert [r["seq"] for r in rec] == list(range(len(rec)))   # strictly contiguous
 
 
+class _BoomRouter:
+    def classify(self, prompt):
+        raise RuntimeError("vibeproxy unreachable")
+
+
+def test_classify_failure_is_emitted(tmp_path):
+    """A router failure must land in events.jsonl (the trace is the point), not
+    just print to stderr — otherwise the run that died classifying is invisible."""
+    em = _emitter(tmp_path)
+    import pytest
+    with pytest.raises(RuntimeError):
+        route_and_dispatch(
+            "fix it", router=_BoomRouter(), emitter=em,
+            make_chat_handler=lambda: None, run_agent=_spy_agent(),
+            ask_user=lambda q: "", echo=lambda t: None, worker_model_id="m")
+    em.close()
+    rec = [_json.loads(l) for l in (tmp_path / "events.jsonl").read_text().splitlines()]
+    assert any(r["type"] == "task.classify_failed" for r in rec), \
+        f"classify failure must be emitted; got {[r['type'] for r in rec]}"
+
+
+def test_run_failure_is_emitted(tmp_path):
+    """An agent-run crash must be recorded in the trace, not swallowed to stderr."""
+    em = _emitter(tmp_path)
+    def boom_agent(prompt, skill_block=""):
+        raise RuntimeError("engine exploded")
+    import pytest
+    with pytest.raises(RuntimeError):
+        route_and_dispatch(
+            "fix it", router=_FixedRouter(_cls("code_fix", confidence=0.9)),
+            emitter=em, make_chat_handler=lambda: None, run_agent=boom_agent,
+            ask_user=lambda q: "", echo=lambda t: None, worker_model_id="m")
+    em.close()
+    rec = [_json.loads(l) for l in (tmp_path / "events.jsonl").read_text().splitlines()]
+    assert any(r["type"] == "run.failed" for r in rec), \
+        f"run failure must be emitted; got {[r['type'] for r in rec]}"
+
+
 def test_4_thin_client_mock_red_green(tmp_path, monkeypatch):
     # Copy the sample repo into a temp cwd so the run can edit it freely.
     src = Path("examples/sample-repo")
