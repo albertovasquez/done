@@ -1,8 +1,9 @@
 """ActivityRegion — the pinned, transient zone above the composer that shows what
 the agent is doing RIGHT NOW. Tool calls live here, NOT in the transcript scroll.
-Compact while working (status line + task checklist); ctrl+o switches to a
-scannable per-tool list (one-line heads: glyph + title + status chip); renders
-empty when idle/terminal. Reads an AgentSnapshot. See spec §3.
+While working, shows only the status line (which carries a '· N done' tool
+count); ctrl+o switches to a scannable per-tool list (one-line heads: glyph +
+title + status chip); renders empty when idle/terminal. The TaskTree widget is
+mounted but never displayed by default. Reads an AgentSnapshot. See spec §3.
 
 Mount strategy: TaskTree and the tools container are ALWAYS mounted in compose()
 and toggled via `.display`. This avoids async mount-timing races that arise when
@@ -64,12 +65,12 @@ class ActivityRegion(Vertical):
             return
 
         show_tools = self._details and bool(snap.tools)
-        task_tree.display = not show_tools
+        # Default view = status line only; the per-command TaskTree is never
+        # shown (the status line carries '· N done'). ctrl+o reveals the tools.
+        task_tree.display = False
         tools_container.display = show_tools
 
-        if not show_tools:
-            task_tree.update_tasks(snap.tasks)
-        else:
+        if show_tools:
             tools_container.remove_children()
             for tv in snap.tools:
                 tools_container.mount(ToolCallRow(tv, expanded=False))
