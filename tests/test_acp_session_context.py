@@ -378,6 +378,25 @@ def test_memory_reaches_agent_path(tmp_path, monkeypatch):
     assert "REMEMBER: prefers tabs" in captured.get("memory_block", "")
 
 
+def test_base_block_reaches_agent_path(tmp_path, monkeypatch):
+    # base_block must be rendered and threaded into the TracingAgent on the ACP
+    # coding path — not just the chat path. Spy on the TracingAgent ctor.
+    import harness.tracing_agent as tamod
+    captured = {}
+    real_TA = tamod.TracingAgent
+    def spy_tracing(*a, **k):
+        captured.update(k)
+        return real_TA(*a, **k)
+    monkeypatch.setattr(tamod, "TracingAgent", spy_tracing)
+
+    agent = _build(_ScriptedRouter([_agent_fix()]), worker_model_id=None)
+    sid = asyncio.run(agent.new_session(cwd=str(tmp_path))).session_id
+    _prompt(agent, sid, "do a thing")
+    base_block = captured.get("base_block", "")
+    assert base_block, "base_block was empty — not threaded into TracingAgent"
+    assert "authorized security testing" in base_block.lower()
+
+
 def test_persona_and_memory_resolve_from_same_session_workspace(tmp_path):
     # Codex regression: persona must resolve from state.workspace_dir (per session),
     # not self._workspace_dir — so if the agent's workspace changes between

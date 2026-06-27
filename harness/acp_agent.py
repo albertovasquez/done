@@ -279,8 +279,14 @@ class HarnessAgent(acp.Agent):
             with_meta(message_chunk(""),
                       {"skill_load": {"injected": ctx.skills.injected,
                                       "skipped": ctx.skills.skipped}}))
+        import platform
+        from harness import base_prompt
+        base_block = base_prompt.render_base_prompt(
+            model_id=(self._worker_model_id or "mock"),
+            cwd=state.cwd, system_line=platform.platform())
         engine = await self._run_agent_turn(loop, session_id, state, text, ctx.skill_block,
-                                            transcript, ctx.persona_block, ctx.memory_block)
+                                            transcript, ctx.persona_block, ctx.memory_block,
+                                            base_block=base_block)
         stop_reason = engine["stop_reason"]
         if stop_reason == "refusal":
             # streamed-on-screen == stored: never fold prior-turn prose in.
@@ -297,7 +303,7 @@ class HarnessAgent(acp.Agent):
         return acp.PromptResponse(stop_reason=stop_reason)
 
     async def _run_agent_turn(self, loop, session_id, state, text, skill_block, prior,
-                              persona_block="", memory_block="") -> dict:
+                              persona_block="", memory_block="", base_block="") -> dict:
         # Tool-call ids are TURN-LOCAL: the counter resets each turn and the
         # "current id" lives here (not on SessionState), so the start/done/permission
         # handshake within this turn pairs correctly and ids restart at tc1 per turn.
@@ -424,6 +430,7 @@ class HarnessAgent(acp.Agent):
                 agent = TracingAgent(self._model_factory(self._worker_model_id), env,
                                      emitter=emitter, skill_block=skill_block,
                                      persona_block=persona_block, memory_block=memory_block,
+                                     base_block=base_block,
                                      **cfg)
                 agent_ref["agent"] = agent
                 model = agent.model
