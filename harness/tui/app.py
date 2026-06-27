@@ -88,9 +88,9 @@ class HarnessTui(App):
         self._version = version
         self._yolo = yolo                          # live gate (TUI mirror of the agent's)
         self._launch_persona = persona or "default"  # the persona id this process launched as
-        # FIX 5: read the pin for the LAUNCH persona (not always the default persona).
-        # After a switch the child process re-execs with persona= set to the target,
-        # so this correctly reads the target's pin on startup.
+        # Read the pin for THIS process's persona (not always "default") — a process
+        # launched with `--persona fred` shows fred's pin. (Also used to highlight the
+        # launched persona in the rail before the first turn — see _current_persona.)
         self._yolo_pinned = _config.yolo_pinned(self._launch_persona)
         self._client = TuiClient(self)
         self._conn = None
@@ -100,7 +100,6 @@ class HarnessTui(App):
         self._send_gen = 0                    # generation a prompt worker was launched in
         self._busy = False                    # lifecycle guard (reload/clear/model)
         self._reexec = False                  # /reload requests a full-process re-exec
-        self._switch_persona = None           # C2b: persona id chosen in the rail (re-exec target)
         self._launch_worker_model_id = worker_model_id  # source of truth for "user switched model?"
         self._pending_perm = None             # the in-flight permission Future, if any
         self._started = False                 # have we left the landing state?
@@ -111,7 +110,7 @@ class HarnessTui(App):
         self._boundary_after = False          # True => an in-turn boundary (tool/thought/stream_reset) closed the block; next prose opens a FRESH widget (vs. a late delta of the prior answer, which extends in place)
         self._tokens = 0                      # last-known token count from usage updates
         self._persona_seen = False            # True after the first real PersonaResolved lands
-        self._turn_active = False             # True while a prompt turn is in flight
+        self._turn_active = False             # True while a prompt turn is in flight (used by Esc-rail guard)
         self._snapshot = initial_snapshot()   # the presentation model (pure, immutable)
         self._commands = build_registry()     # slash-command registry
         self._slash = None                    # the SlashMenu widget while open, else None
@@ -265,8 +264,7 @@ class HarnessTui(App):
 
         After the first PersonaResolved chip arrives (_persona_seen True), the
         snapshot's active_id is authoritative. Before that chip lands, fall back
-        to _launch_persona (the id passed via --persona on startup), so the
-        no-op guard in on_persona_selected is correct from the very first frame."""
+        to _launch_persona (the id passed via --persona on startup)."""
         if self._persona_seen:
             return self._snapshot.active_id
         return self._launch_persona
@@ -441,7 +439,7 @@ class HarnessTui(App):
         inp.value = ""
         inp.disabled = True
         self._turn_start = time.monotonic()
-        self._turn_active = True              # C2b: guard mid-turn persona switch
+        self._turn_active = True
         self._apply(TurnStarted())
         self._send_gen = self._gen            # tag this turn's worker with its generation
         self.run_worker(self._send_prompt(text), thread=False)
@@ -745,7 +743,7 @@ class HarnessTui(App):
             self._apply(TurnEnded(ok=False))
             self._append_line(_c("error", f"agent disconnected — restart to continue ({e})"))
         finally:
-            self._turn_active = False             # C2b: turn complete, allow persona switch
+            self._turn_active = False
             if gen == self._gen:                  # only the CURRENT generation touches the UI
                 self._hide_working()
                 self._active_input().disabled = False
@@ -953,18 +951,8 @@ class HarnessTui(App):
             self._active_input().focus()
 
     async def on_persona_selected(self, event: PersonaSelected) -> None:
+        # Rail is view-only; persona switching is deferred to C2c.
         event.stop()
-        if event.id == self._current_persona():
-            return                                 # switch-to-same is a no-op
-        if self._busy:
-            return
-        if self._turn_active:
-            self._notify_line("finish the current turn before switching persona")
-            return
-        self._switch_persona = event.id
-        self._busy = True
-        self._reexec = True
-        self.exit()                                # main() re-execs with the new persona
 
     async def action_reload(self) -> None:
         if self._busy:

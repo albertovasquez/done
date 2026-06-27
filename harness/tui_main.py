@@ -53,39 +53,16 @@ def _effective_worker_model_id(backend: str) -> str | None:
 
 
 def _relaunch_args(args, cwd) -> list[str]:
-    """Flags to re-launch THIS TUI with, reconstructed from parsed args (not raw
-    sys.argv) so they are correct however it was invoked. --cwd is always explicit.
-
-    --model carries the SESSION BACKEND (mock vs vibeproxy) and is always emitted
-    so the child process preserves the session mode across a re-exec. The model
-    OVERRIDE (which model within vibeproxy) re-resolves in the child via the cleared
-    env (see FIX 1 in main()) — not via this flag.
-
-    --yolo is only emitted when args.yolo is True (not cleared by a switch), letting
-    the child re-resolve the target persona's yolo-pin."""
+    """Flags to re-launch THIS TUI with (the /reload re-exec), reconstructed from
+    parsed args (not raw sys.argv) so they are correct however it was invoked.
+    --model carries the session backend (mock|vibeproxy); --cwd is always explicit;
+    --yolo / --persona are emitted when set — /reload preserves the current state."""
     flags = ["--model", args.model, "--cwd", cwd]
     if args.yolo:
         flags.append("--yolo")
     if getattr(args, "persona", None):
         flags += ["--persona", args.persona]
     return flags
-
-
-def _apply_switch(args, app) -> None:
-    """If the app requested a persona switch (C2b rail), thread it into args so
-    the re-exec launches as the selected persona. No-op when no switch was made.
-
-    On a real switch:
-    - args.persona is set to the chosen persona id.
-    - args.yolo is cleared so the child re-resolves the target persona's yolo-pin.
-    - args.model (the SESSION BACKEND: mock vs vibeproxy) is PRESERVED — the child
-      must run in the same session mode. The model OVERRIDE is re-resolved by the
-      child via the cleared env (FIX 1 in main()), not via the --model flag."""
-    chosen = getattr(app, "_switch_persona", None)
-    if chosen:
-        args.persona = chosen
-        # Keep args.model (session backend preserved — FIX 2)
-        args.yolo = False    # child re-resolves target persona's yolo-pin
 
 
 def _relaunch_command(args, cwd) -> list[str]:
@@ -141,14 +118,6 @@ def main(argv=None) -> None:
                      persona=args.persona)
     app.run()
     if getattr(app, "_reexec", False):
-        _apply_switch(args, app)                   # C2b: switch persona on re-exec
-        # FIX 1: On a persona SWITCH, the parent exported the OLD persona's
-        # VIBEPROXY_MODEL into os.environ; execv would leak it to the child, which
-        # would treat it as a shell value and skip the target persona's done.conf
-        # model resolution. Clear it (only if WE exported it — never clobber a real
-        # shell export) so the child re-resolves the target persona's model.
-        if getattr(app, "_switch_persona", None) and not shell_set_model:
-            os.environ.pop("VIBEPROXY_MODEL", None)
         cmd = _relaunch_command(args, cwd)
         try:
             os.execv(cmd[0], cmd)          # replaces the process; never returns on success
