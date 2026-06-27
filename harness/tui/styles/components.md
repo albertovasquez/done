@@ -8,7 +8,8 @@ shared tokens — don't invent one-off widgets or hardcode colors.
 - **Tokens (source of truth):** `harness/tui/theme.py` (`HARNESS_THEME.variables`,
   `COLORS`, `STATUS_COLOR`)
 - **State the components read:** `harness/tui/state.py` (`FleetSnapshot` /
-  `AgentSnapshot`)
+  `AgentSnapshot`). `AgentSnapshot` now carries `tools: tuple[ToolView, ...]` (all
+  of a turn's tools, by id) alongside `tool` (the live single tool).
 
 ## Principles (apply to every component)
 
@@ -24,6 +25,9 @@ shared tokens — don't invent one-off widgets or hardcode colors.
 5. **Fleet-shaped, N=1 correct.** Components work with one agent today and scale to
    the fleet unchanged.
 6. **Testable.** Each component gets a pilot and/or snapshot test.
+7. **Transcript = user messages + agent responses only.** Tool-call activity is
+   pinned + transient (in `ActivityRegion`), never inline. This separation keeps the
+   conversation thread clean and allows tool details to be toggled independently.
 
 ## Tokens
 
@@ -140,15 +144,41 @@ Nested checklist, updated in place.
   □ Present design sections
 ```
 
+### `ActivityRegion`  ⭐
+The pinned, transient zone above the composer. Compact while working
+(`ActivityStatus` line + `TaskTree` checklist); `ctrl+o` expands to per-tool detail
+(`ToolCallRow` rows); renders empty when idle or the turn ends. **Owns**
+`ActivityStatus` + `TaskTree` + all `ToolCallRow` instances. This is where tool-call
+activity lives — never in the transcript (principle #7).
+- **In:** `AgentSnapshot` (reads `state`, `activity_label`, `elapsed`, `tokens`,
+  `tasks`, `tools`)
+- **Methods:** `update_from(snapshot)`, `toggle_details()`
+- **State:** `is_idle(snap)` → render nothing (zero height); details toggled → show
+  each `tools` entry as an expanded `ToolCallRow`.
+
+```
+──────────────────────────────────────────
+◐ Running test…  (4s)                ctrl+o details
+└ ✓ Read app.py   ▣ Bash pytest
+  [when expanded — per-tool detail rows]
+  ✎ harness/api.ts                       RUNNING
+    → in_progress   applying patch (3 hunks)
+```
+
 ### `ToolCallRow`
-One tool call: subtype glyph + title + `StatusChip` + one-line output,
-expand/collapse.
-- **In:** `ToolView` (title, status, subtype, body)
+One tool call, rendered as a **collapsed one-liner or expanded detail row inside
+`ActivityRegion`** — not a transcript widget.
+- **In:** `ToolView` (id, title, status, subtype, body)
+- **Methods:**
+  - `line_for(tool)` → collapsed: subtype glyph + title + `StatusChip`.
+  - `detail_for(tool)` → expanded: header + capped body.
+  - `cap_body(body, subtype)` → per-subtype line cap (`read`=6, generic=10).
 - Subtype glyph is **inferred for display only** (neutral `$` fallback).
 
 ```
-✎ harness/api.ts                       RUNNING
-  → in_progress   applying patch (3 hunks)
+[collapsed]   ✎ harness/api.ts                       RUNNING
+[expanded]    ✎ harness/api.ts                       RUNNING
+              applying patch (3 hunks)…
 ```
 
 ### `ProgressRow`
