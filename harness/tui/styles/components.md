@@ -277,7 +277,7 @@ Bottom hairline bar; gains keybinding-hint segments
 ```
 A primitives   StatusChip (+ for_yolo footer mode chip) · StateDot/ActivityGlyph · Hairline/SectionLabel
 B responses    AnswerStream* · UserMessage*
-C work         ActivityStatus⭐ · TaskTree⭐ · ToolCallRow · ProgressRow
+C work         ActivityRegion⭐ (owns ActivityStatus⭐ · TaskTree⭐ · ToolCallRow) · ProgressRow
 D decisions    DecisionPrompt⭐ · PermissionModal* · SelectModal*
 E future       ScheduleBadge · CronRow
 F shell/nav    AppShell · AgentRail · SidebarToggle · FleetHeader · StatusBar*
