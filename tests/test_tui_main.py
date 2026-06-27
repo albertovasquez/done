@@ -293,3 +293,27 @@ def test_persona_flows_into_agent_cmd_and_relaunch(isolated_config, monkeypatch,
     tui_main.main(["--model", "vibeproxy", "--cwd", str(tmp_path), "--persona", "fred"])
     assert "--persona" in captured["agent_cmd"]
     assert "fred" in captured["agent_cmd"]
+
+
+# ---- Task 4: _apply_switch threads the chosen persona into args ----
+
+def test_relaunch_carries_switch_persona(monkeypatch, tmp_path):
+    import argparse
+    args = argparse.Namespace(model="vibeproxy", cwd=str(tmp_path), yolo=False, persona="default")
+    # simulate an app that requested a switch to "fred"
+    class _App:
+        _switch_persona = "fred"
+    tui_main._apply_switch(args, _App())
+    assert args.persona == "fred"
+    monkeypatch.setattr(tui_main.sys, "argv", ["not-a-real-file"])
+    cmd = tui_main._relaunch_command(args, str(tmp_path))
+    assert "--persona" in cmd and "fred" in cmd
+
+
+def test_relaunch_without_switch_keeps_current_persona(tmp_path):
+    import argparse
+    args = argparse.Namespace(model="vibeproxy", cwd=str(tmp_path), yolo=False, persona="default")
+    class _App:
+        _switch_persona = None
+    tui_main._apply_switch(args, _App())
+    assert args.persona == "default"              # unchanged

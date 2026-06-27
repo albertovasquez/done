@@ -26,6 +26,7 @@ from typing import Any
 import acp
 from acp.schema import ClientCapabilities, ElicitationCapabilities
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import LoadingIndicator, Markdown, Static, TextArea
 
@@ -42,6 +43,7 @@ from harness.tui.theme import HARNESS_THEME, COLORS
 from harness.tui.widgets.activity_region import ActivityRegion
 from harness.tui.widgets.permission_modal import PermissionModal
 from harness.tui.widgets.select_modal import SelectModal, SelectOption
+from harness.tui.widgets.agent_rail import AgentRail, PersonaSelected
 from harness.tui.widgets.slash_menu import SlashMenu
 from harness.tui.widgets.prompt_area import PromptArea
 from harness.tui.widgets.status_chip import StatusChip
@@ -73,7 +75,8 @@ def _model_label(model: str, worker_model_id: str | None) -> str:
 class HarnessTui(App):
     CSS_PATH = "app.tcss"  # relative to this module's dir (harness/tui/)
     BINDINGS = [("escape", "cancel", "Cancel turn"),
-                ("ctrl+o", "toggle_details", "Tool details")]
+                ("ctrl+o", "toggle_details", "Tool details"),
+                Binding("tab", "toggle_rail", "Agents", priority=True)]
 
     def __init__(self, agent_cmd: list[str], cwd: str, model: str,
                  worker_model_id: str | None = None, version: str = "0.5.0",
@@ -94,6 +97,7 @@ class HarnessTui(App):
         self._send_gen = 0                    # generation a prompt worker was launched in
         self._busy = False                    # lifecycle guard (reload/clear/model)
         self._reexec = False                  # /reload requests a full-process re-exec
+        self._switch_persona = None           # C2b: persona id chosen in the rail (re-exec target)
         self._launch_worker_model_id = worker_model_id  # source of truth for "user switched model?"
         self._pending_perm = None             # the in-flight permission Future, if any
         self._started = False                 # have we left the landing state?
@@ -134,6 +138,9 @@ class HarnessTui(App):
                                  classes="compose-meta", markup=True)
                 yield Static("[b]tab[/b] agents   [b]ctrl+p[/b] commands", id="hint", markup=True)
         yield self._status_bar()
+        rail = AgentRail(id="agent-rail")
+        rail.display = False
+        yield rail
 
     def _yolo_meta_markup(self) -> str:
         """' · bypass on' (RED) for the top mode line when the permission bypass
@@ -885,6 +892,36 @@ class HarnessTui(App):
             self._pending_perm = None
         if isinstance(self.screen, PermissionModal):
             self.pop_screen()
+
+    def _persona_rows(self):
+        from harness import persona_select, persona_config, paths
+        from harness.tui.roster import persona_rows
+        def name_of(pid):
+            ws = paths.default_workspace_dir() if pid == "default" \
+                else paths.config_dir() / "agents" / pid
+            return persona_config.read_name(ws)
+        return persona_rows(persona_select.list_personas(),
+                            self._snapshot.active_id, name_of)
+
+    def action_toggle_rail(self) -> None:
+        rail = self.query_one("#agent-rail", AgentRail)
+        if not rail.display:
+            rail.set_rows(self._persona_rows())   # refresh on open
+            rail.display = True
+            rail.focus()
+        else:
+            rail.display = False
+
+    async def on_persona_selected(self, event: PersonaSelected) -> None:
+        event.stop()
+        if event.id == self._snapshot.active_id:
+            return                                 # switch-to-same is a no-op
+        if self._busy:
+            return
+        self._switch_persona = event.id
+        self._busy = True
+        self._reexec = True
+        self.exit()                                # main() re-execs with the new persona
 
     async def action_reload(self) -> None:
         if self._busy:

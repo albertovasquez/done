@@ -63,6 +63,14 @@ def _relaunch_args(args, cwd) -> list[str]:
     return flags
 
 
+def _apply_switch(args, app) -> None:
+    """If the app requested a persona switch (C2b rail), thread it into args so
+    the re-exec launches as the selected persona. No-op when no switch was made."""
+    chosen = getattr(app, "_switch_persona", None)
+    if chosen:
+        args.persona = chosen
+
+
 def _relaunch_command(args, cwd) -> list[str]:
     """argv for os.execv: the original launcher (the `dn` console script at
     sys.argv[0]) when it is an executable file, else `python -m harness.tui_main`."""
@@ -115,6 +123,7 @@ def main(argv=None) -> None:
                      worker_model_id=worker_model_id, yolo=yolo)
     app.run()
     if getattr(app, "_reexec", False):
+        _apply_switch(args, app)                   # C2b: switch persona on re-exec
         cmd = _relaunch_command(args, cwd)
         try:
             os.execv(cmd[0], cmd)          # replaces the process; never returns on success

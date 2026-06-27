@@ -1022,3 +1022,44 @@ def test_agent_rail_listview_selected_event_path():
             )
 
     asyncio.run(go())
+
+
+# ---- Task 4: rail mount, tab toggle, persona selection wiring ----
+
+def test_rail_hidden_by_default_and_tab_toggles():
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            rail = app.query_one("#agent-rail")
+            assert rail.display is False       # hidden by default
+            await pilot.press("tab")
+            assert rail.display is True        # tab opens it
+            await pilot.press("tab")
+            assert rail.display is False       # tab closes it
+    asyncio.run(go())
+
+
+def test_selecting_persona_sets_switch_and_reexec():
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            from harness.tui.widgets.agent_rail import PersonaSelected
+            # simulate selecting a non-active persona
+            app.post_message(PersonaSelected("fred"))
+            await pilot.pause()
+            assert app._switch_persona == "fred"
+            assert app._reexec is True
+    asyncio.run(go())
+
+
+def test_selecting_active_persona_is_noop():
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            from harness.tui.widgets.agent_rail import PersonaSelected
+            active = app._snapshot.active_id
+            app.post_message(PersonaSelected(active))
+            await pilot.pause()
+            assert app._switch_persona is None     # no switch
+            assert app._reexec is False            # no re-exec
+    asyncio.run(go())
