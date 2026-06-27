@@ -5,6 +5,10 @@ system**: when building or changing TUI UI, base it on these components and the
 shared tokens — don't invent one-off widgets or hardcode colors.
 
 - **Decisions & rationale:** `docs/superpowers/specs/2026-06-26-tui-design-system-design.md`
+- **Living brand book (see it rendered):** `harness/tui/styles/brandbook.html` —
+  the palette, glyph map, status states, and shipped components rendered on the
+  real terminal background. Generated from the live tokens; refresh with
+  `python -m harness.tui.styles.brandbook` after any token change.
 - **Tokens (source of truth):** `harness/tui/theme.py` (`HARNESS_THEME.variables`,
   `COLORS`, `STATUS_COLOR`)
 - **State the components read:** `harness/tui/state.py` (`FleetSnapshot` /

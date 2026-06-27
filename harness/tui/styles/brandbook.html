@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>dn TUI — living brand book</title>
+<style>
+:root{ --bg:#0A1524; --fg:#E3E3E3; --muted:#5B6577; --surface:#16243A; --accent:#286CE9; }
+*{box-sizing:border-box}
+body{margin:0;background:#070e1a;color:var(--fg);
+  font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.wrap{max-width:1080px;margin:0 auto;padding:48px 28px 96px}
+header.top{border-bottom:1px solid var(--surface);padding-bottom:24px;margin-bottom:8px}
+.mark{font-size:13px;letter-spacing:.32em;text-transform:uppercase;color:var(--muted)}
+h1{font-size:30px;margin:.3em 0 .15em;font-weight:650}
+.sub{color:var(--muted);font-size:14px}
+.sub code{background:var(--surface);padding:1px 6px;border-radius:4px;color:#9DB8E8}
+section{margin-top:52px}
+h2{font-size:21px;border-left:3px solid var(--accent);padding-left:12px;margin:0 0 6px}
+h3{font-size:13px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);
+  margin:26px 0 12px;font-weight:600}
+.note{color:var(--muted);font-size:13.5px;max-width:70ch;margin:.2em 0 0}
+.note code,code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.92em;
+  background:var(--surface);padding:1px 5px;border-radius:4px;color:#9DB8E8}
+/* swatches */
+.swatches{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:12px}
+.swatch{border:1px solid var(--surface);border-radius:8px;overflow:hidden;background:#0c1626}
+.chip{height:62px;display:flex;align-items:flex-end;justify-content:flex-end;
+  padding:6px 8px;font-family:ui-monospace,monospace;font-size:11px;font-weight:600}
+.swatch .meta{padding:8px 10px;display:flex;flex-direction:column;gap:2px}
+.tok{font-family:ui-monospace,monospace;font-size:12.5px;color:var(--fg)}
+.role{font-size:11.5px;color:var(--muted)}
+/* terminal mocks */
+.term{background:var(--bg);border:1px solid var(--surface);border-radius:8px;
+  padding:16px 18px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-size:14px;line-height:1.7;overflow-x:auto}
+.term-label{font-size:11.5px;color:var(--muted);margin:0 0 6px 2px}
+.term .line{white-space:pre}
+.term .dim,.dim{color:var(--muted)}
+.glyphs{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:14px}
+.glyph{display:flex;flex-direction:column;align-items:center;gap:4px}
+.glyph .g{font-size:24px;color:var(--fg)}
+.glyph .gk{font-size:11px;color:var(--muted)}
+/* status tables */
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:28px}
+table.status{width:100%;border-collapse:collapse;font-size:13.5px}
+table.status td{padding:5px 8px;border-bottom:1px solid var(--surface)}
+td.mono{font-family:ui-monospace,monospace;color:var(--muted)}
+/* component cards */
+.cards{display:grid;gap:18px}
+.card{border:1px solid var(--surface);border-radius:10px;padding:18px 20px;background:#0c1626}
+.card-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.card h3{margin:0;color:var(--fg);text-transform:none;letter-spacing:0;font-size:15.5px}
+.card .desc{color:var(--muted);font-size:13px;margin:.35em 0 12px}
+.badge{font-size:11px;padding:3px 9px;border-radius:999px;white-space:nowrap}
+.badge.ok{background:rgba(126,231,135,.12);color:#7ee787}
+.badge.warn{background:rgba(227,179,65,.14);color:#e3b341}
+.badge.dim{background:var(--surface);color:var(--muted)}
+footer{margin-top:64px;padding-top:20px;border-top:1px solid var(--surface);
+  color:var(--muted);font-size:12.5px}
+@media(max-width:720px){.two-col{grid-template-columns:1fr}}
+</style></head>
+<body><div class="wrap">
+<header class="top">
+  <div class="mark">DoneDone · dn TUI</div>
+  <h1>Living brand book &amp; component gallery</h1>
+  <p class="sub">Generated from <code>theme.py</code> + <code>tokens.py</code> —
+     never hand-edit this file. Refresh with
+     <code>python -m harness.tui.styles.brandbook</code>.</p>
+</header>
+<section><h2>Palette</h2><p class='note'>Brand core + sanctioned product-status + derived tokens. Generated from <code>theme.py</code>; do not hand-edit.</p><h3>Brand core</h3><div class="swatches"><div class="swatch">
+      <div class="chip" style="background:#286CE9;color:#E3E3E3">#286CE9</div>
+      <div class="meta"><span class="tok">$primary</span><span class="role">accent · running · wordmark</span></div>
+    </div><div class="swatch">
+      <div class="chip" style="background:#286CE9;color:#E3E3E3">#286CE9</div>
+      <div class="meta"><span class="tok">$accent</span><span class="role">accent bar · active</span></div>
+    </div><div class="swatch">
+      <div class="chip" style="background:#E3E3E3;color:#0A1524">#E3E3E3</div>
+      <div class="meta"><span class="tok">$foreground</span><span class="role">body text</span></div>
+    </div><div class="swatch">
+      <div class="chip" style="background:#8690A3;color:#0A1524">#8690A3</div>
+      <div class="meta"><span class="tok">$secondary</span><span class="role">secondary / muted text</span></div>
+    </div><div class="swatch">
+      <div class="chip" style="background:#0A1524;color:#E3E3E3">#0A1524</div>
+      <div class="meta"><span class="tok">$background</span><span class="role">app background (navy)</span></div>
+    </div><div class="swatch">
+      <div class="chip" style="background:#16243A;color:#E3E3E3">#16243A</div>
+      <div class="meta"><span class="tok">$surface</span><span class="role">boxes (user msg, compose)</span></div>
+    </div><div class="swatch">
+      <div class="chip" style="background:#E02F07;color:#E3E3E3">#E02F07</div>
+      <div class="meta"><span class="tok">$error</span><span class="role">error / failed / bypass-on</span></div>
+    </div></div><h3>Product status (sanctioned brand extension)</h3><div class="swatches"><div class="swatch">
+      <div class="chip" style="background:#7ee787;color:#0A1524">#7ee787</div>
+      <div class="meta"><span class="tok">$success</span><span class="role">done / completed</span></div>
+    </div><div class="swatch">
+      <div class="chip" style="background:#e3b341;color:#0A1524">#e3b341</div>
+      <div class="meta"><span class="tok">$warning</span><span class="role">caution (amber)</span></div>
+    </div><div class="swatch">
+      <div class="chip" style="background:#e3b341;color:#0A1524">#e3b341</div>
+      <div class="meta"><span class="tok">$scheduled</span><span class="role">cron / scheduled / attention</span></div>
+    </div></div><h3>Derived / functional tokens</h3><div class="swatches"><div class="swatch">
+      <div class="chip" style="background:#5B6577;color:#E3E3E3">#5B6577</div>
+      <div class="meta"><span class="tok">$muted</span><span class="role">placeholders · hints · meta</span></div>
+    </div><div class="swatch">
+      <div class="chip" style="background:#9DB8E8;color:#0A1524">#9DB8E8</div>
+      <div class="meta"><span class="tok">$code</span><span class="role">inline code / shell (blue tint)</span></div>
+    </div><div class="swatch">
+      <div class="chip" style="background:#3A4D6B;color:#E3E3E3">#3A4D6B</div>
+      <div class="meta"><span class="tok">$wordmark-dim</span><span class="role">wordmark left half</span></div>
+    </div><div class="swatch">
+      <div class="chip" style="background:#286CE9;color:#E3E3E3">#286CE9</div>
+      <div class="meta"><span class="tok">$wordmark-bright</span><span class="role">wordmark right half</span></div>
+    </div><div class="swatch">
+      <div class="chip" style="background:#286CE9;color:#E3E3E3">#286CE9</div>
+      <div class="meta"><span class="tok">$accent-bar</span><span class="role">accent bars</span></div>
+    </div><div class="swatch">
+      <div class="chip" style="background:#8a6d3b;color:#E3E3E3">#8a6d3b</div>
+      <div class="meta"><span class="tok">$path-dim</span><span class="role">cwd parent segments</span></div>
+    </div><div class="swatch">
+      <div class="chip" style="background:#d9a441;color:#0A1524">#d9a441</div>
+      <div class="meta"><span class="tok">$path</span><span class="role">cwd current dir</span></div>
+    </div></div></section>
+<section><h2>Glyph map</h2><p class='note'>From <code>tokens.GLYPH</code>. Status is always carried by <em>color + glyph + weight</em> together, so meaning survives monochrome terminals.</p><h3>State dots</h3><div class="term"><div class="glyphs"><div class="glyph"><span class="g">•</span><span class="gk">idle</span></div><div class="glyph"><span class="g">◐</span><span class="gk">active</span></div><div class="glyph"><span class="g">▌</span><span class="gk">responding</span></div><div class="glyph"><span class="g">›</span><span class="gk">tool</span></div><div class="glyph"><span class="g">✓</span><span class="gk">done</span></div><div class="glyph"><span class="g">✗</span><span class="gk">failed</span></div><div class="glyph"><span class="g">⏱</span><span class="gk">scheduled</span></div><div class="glyph"><span class="g">?</span><span class="gk">awaiting</span></div></div></div><h3>Tool subtypes (inferred, display-only)</h3><div class="term"><div class="glyphs"><div class="glyph"><span class="g">✎</span><span class="gk">edit</span></div><div class="glyph"><span class="g">⚑</span><span class="gk">test</span></div><div class="glyph"><span class="g">◇</span><span class="gk">read</span></div><div class="glyph"><span class="g">$</span><span class="gk">shell</span></div><div class="glyph"><span class="g">⌕</span><span class="gk">search</span></div></div></div><h3>Footer / brand</h3><div class="term"><div class="glyphs"><div class="glyph"><span class="g">▶▶</span><span class="gk">bypass</span></div><div class="glyph"><span class="g">▸</span><span class="gk">path</span></div></div></div></section>
+<section><h2>Status states</h2>
+      <p class='note'>Two vocabularies coexist today — <b>agent state</b>
+      (<code>tokens.STATUS_LABEL</code>) and <b>tool status</b>
+      (<code>STATUS_COLOR</code> / <code>TOOL_STATUS_LABEL</code>). They overlap
+      (running↔in_progress, queued↔pending) but are <em>not</em> unified — this
+      table makes the split visible (a known design-system cleanup item).</p>
+      <div class="two-col">
+        <div><h3>Agent state</h3><table class="status"><tr><td class="mono">idle</td><td><span style="color:#5B6577">• <b>IDLE</b></span></td></tr><tr><td class="mono">thinking</td><td><span style="color:#286CE9">◐ <b>THINKING</b></span></td></tr><tr><td class="mono">responding</td><td><span style="color:#286CE9">▌ <b>RESPONDING</b></span></td></tr><tr><td class="mono">running_tool</td><td><span style="color:#286CE9">◐ <b>RUNNING_TOOL</b></span></td></tr><tr><td class="mono">awaiting_permission</td><td><span style="color:#e3b341">? <b>AWAITING_PERMISSION</b></span></td></tr><tr><td class="mono">awaiting_decision</td><td><span style="color:#e3b341">? <b>AWAITING_DECISION</b></span></td></tr><tr><td class="mono">scheduled</td><td><span style="color:#e3b341">⏱ <b>SCHEDULED</b></span></td></tr><tr><td class="mono">done</td><td><span style="color:#7ee787">✓ <b>COMPLETED</b></span></td></tr><tr><td class="mono">failed</td><td><span style="color:#E02F07">✗ <b>FAILED</b></span></td></tr></table></div>
+        <div><h3>Tool status</h3><table class="status"><tr><td class="mono">pending</td><td><span style="color:#e3b341;font-weight:700">QUEUED</span></td></tr><tr><td class="mono">active</td><td><span style="color:#286CE9;font-weight:700">RUNNING</span></td></tr><tr><td class="mono">done</td><td><span style="color:#7ee787;font-weight:700">COMPLETED</span></td></tr><tr><td class="mono">failed</td><td><span style="color:#E02F07;font-weight:700">FAILED</span></td></tr></table></div>
+      </div></section>
+<section><h2>Components (shipped today)</h2><p class='note'>Rendered from the widgets' <em>own</em> markup strings, translated to HTML — so these match what the TUI draws. Tags: ✅ shipped · 🟡 built-but-unwired · 📐 designed-only.</p><div class="cards"><div class="card">
+      <div class="card-head"><h3>StatusChip</h3><span class="badge ok">✅ shipped</span></div>
+      <p class="desc">Uppercase status pill. The atomic status atom, reused everywhere.</p>
+      <div class="term-label">StatusChip.from_state — every AgentState</div><div class="term"><div class="line"><span style="color:#5B6577"><span style="font-weight:700">IDLE</span>[/]</span>&nbsp;&nbsp;<span style="color:#286CE9"><span style="font-weight:700">THINKING</span>[/]</span>&nbsp;&nbsp;<span style="color:#286CE9"><span style="font-weight:700">RESPONDING</span>[/]</span>&nbsp;&nbsp;<span style="color:#286CE9"><span style="font-weight:700">RUNNING_TOOL</span>[/]</span>&nbsp;&nbsp;<span style="color:#e3b341"><span style="font-weight:700">AWAITING_PERMISSION</span>[/]</span>&nbsp;&nbsp;<span style="color:#e3b341"><span style="font-weight:700">AWAITING_DECISION</span>[/]</span>&nbsp;&nbsp;<span style="color:#e3b341"><span style="font-weight:700">SCHEDULED</span>[/]</span>&nbsp;&nbsp;<span style="color:#7ee787"><span style="font-weight:700">COMPLETED</span>[/]</span>&nbsp;&nbsp;<span style="color:#E02F07"><span style="font-weight:700">FAILED</span>[/]</span></div></div>
+    </div><div class="card">
+      <div class="card-head"><h3>Tool status pills</h3><span class="badge ok">✅ shipped</span></div>
+      <p class="desc">ToolStatus → QUEUED / RUNNING / COMPLETED / FAILED.</p>
+      <div class="term-label">Tool status pills (ToolStatus)</div><div class="term"><div class="line"><span style="color:#e3b341"><span style="font-weight:700">QUEUED</span>[/]</span>&nbsp;&nbsp;<span style="color:#286CE9"><span style="font-weight:700">RUNNING</span>[/]</span>&nbsp;&nbsp;<span style="color:#7ee787"><span style="font-weight:700">COMPLETED</span>[/]</span>&nbsp;&nbsp;<span style="color:#E02F07"><span style="font-weight:700">FAILED</span>[/]</span></div></div>
+    </div><div class="card">
+      <div class="card-head"><h3>StatusChip.for_yolo</h3><span class="badge ok">✅ shipped</span></div>
+      <p class="desc">Footer permission-mode line. Red = active bypass (loudest signal).</p>
+      <div class="term-label">StatusChip.for_yolo — footer permission-mode line</div><div class="term"><div class="line"><span style="color:#5B6577"><span style="font-weight:700">▶▶ bypass permissions off</span>[/]</span></div><div class="line"><span style="color:#E02F07"><span style="font-weight:700">▶▶ bypass permissions on</span>[/]</span></div><div class="line"><span style="color:#E02F07"><span style="font-weight:700">▶▶ bypass permissions on · pinned</span>[/]</span></div></div>
+    </div><div class="card">
+      <div class="card-head"><h3>StateDot</h3><span class="badge warn">🟡 built · unwired</span></div>
+      <p class="desc">Leading state indicator (defined in status_chip.py, not yet mounted).</p>
+      <div class="term-label">StateDot — leading state indicator</div><div class="term"><div class="line"><span style="color:#5B6577">•</span><span class="dim">&nbsp;idle</span>&nbsp;&nbsp;&nbsp;<span style="color:#286CE9">◐</span><span class="dim">&nbsp;thinking</span>&nbsp;&nbsp;&nbsp;<span style="color:#286CE9">▌</span><span class="dim">&nbsp;responding</span>&nbsp;&nbsp;&nbsp;<span style="color:#286CE9">◐</span><span class="dim">&nbsp;running_tool</span>&nbsp;&nbsp;&nbsp;<span style="color:#e3b341">?</span><span class="dim">&nbsp;awaiting_permission</span>&nbsp;&nbsp;&nbsp;<span style="color:#e3b341">?</span><span class="dim">&nbsp;awaiting_decision</span>&nbsp;&nbsp;&nbsp;<span style="color:#e3b341">⏱</span><span class="dim">&nbsp;scheduled</span>&nbsp;&nbsp;&nbsp;<span style="color:#7ee787">✓</span><span class="dim">&nbsp;done</span>&nbsp;&nbsp;&nbsp;<span style="color:#E02F07">✗</span><span class="dim">&nbsp;failed</span></div></div>
+    </div><div class="card">
+      <div class="card-head"><h3>ActivityStatus</h3><span class="badge ok">✅ shipped</span></div>
+      <p class="desc">The live work line: one looping ◐ + label · elapsed · tokens · N done.</p>
+      <div class="term-label">ActivityStatus — the live work line (one looping ◐)</div><div class="term"><div class="line"><span style="color:#286CE9">◐</span> <span style="color:#E3E3E3">Asking clarifying questions…</span><span style="color:#5B6577">&nbsp;· 2 done</span> <span style="color:#5B6577">(1m 18s · ↓ 4.0k tokens)</span></div></div>
+    </div><div class="card">
+      <div class="card-head"><h3>ActivityRegion</h3><span class="badge ok">✅ shipped</span></div>
+      <p class="desc">Pinned transient zone above the composer; status-only by default.</p>
+      <div class="term-label">ActivityRegion — pinned transient zone (status-only default)</div><div class="term"><div class="line"><span style="color:#5B6577">────────────────────────────────────────────</span></div><div class="line"><span style="color:#286CE9">◐</span> <span style="color:#E3E3E3">Running test…</span><span style="color:#5B6577">&nbsp;· 1 done (4s)</span><span style="color:#5B6577">&nbsp;&nbsp;&nbsp;&nbsp;ctrl+o details</span></div></div>
+    </div><div class="card">
+      <div class="card-head"><h3>ToolCallRow</h3><span class="badge ok">✅ shipped</span></div>
+      <p class="desc">One tool call: subtype glyph + title + status (collapsed) / capped body (expanded).</p>
+      <div class="term-label">ToolCallRow — collapsed line + expanded capped body</div><div class="term"><div class="line"><span style="color:#286CE9">✎</span> <span style="color:#E3E3E3">harness/api.ts</span>&nbsp;&nbsp;&nbsp;<span style="color:#286CE9;font-weight:700">RUNNING</span></div><div class="line" style="margin-top:.5em"><span style="color:#7ee787">◇</span> <span style="color:#E3E3E3">app.py</span>&nbsp;&nbsp;&nbsp;<span style="color:#7ee787;font-weight:700">COMPLETED</span><br><span style="color:#9DB8E8">  def compose(self) -> ComposeResult:<br>      yield Header()<br>  … (+6 more lines)</span></div></div>
+    </div><div class="card">
+      <div class="card-head"><h3>UserMessage</h3><span class="badge ok">✅ shipped</span></div>
+      <p class="desc">Accent ▌ bar + bold text in the transcript (rendered inline in app.py).</p>
+      <div class="term-label">User message — accent ▌ bar + bold</div><div class="term"><div class="line"><span style="color:#286CE9;font-weight:700">▌ Build me a brand-book page for the design system</span></div></div>
+    </div></div></section>
+<footer>
+  18 tokens · 15 glyphs · 9 agent states ·
+  4 tool statuses. Source of truth:
+  <code>harness/tui/theme.py</code>, <code>harness/tui/tokens.py</code>.
+  Companion: <code>harness/tui/styles/components.md</code>. 
+</footer>
+</div></body></html>
