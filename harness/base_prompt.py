@@ -31,6 +31,9 @@ contradicts how it was described, surface that instead of proceeding.
 - Reference code as file_path:line_number so it is clickable.
 - Match the surrounding code's style, naming, idiom, and comment density. Make \
 surgical changes; every changed line should trace to the task.
+- For multi-step work, publish a short plan up front (one entry per step) and \
+keep it current: mark the active step in progress and finished steps complete as \
+you go. Skip the plan for single-step or trivial work.
 """
 
 

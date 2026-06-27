@@ -36,3 +36,9 @@ def test_base_prompt_opens_with_done_identity():
     assert "Bitlabs" in out
     # identity comes first — before the Security policy section
     assert out.index("You are Done") < out.index("# Security")
+
+
+def test_base_prompt_instructs_plan_for_multistep():
+    out = base_prompt.render_base_prompt(model_id="m", cwd="/x", system_line="OS")
+    low = out.lower()
+    assert "multi-step" in low and "plan" in low
