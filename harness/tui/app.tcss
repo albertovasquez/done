@@ -70,7 +70,7 @@ Screen { layout: vertical; background: $background; layers: base overlay; }
 #statusbar { dock: bottom; height: 1; background: $background; padding: 0 2; }
 #statusbar-left { width: 1fr; color: $muted; }
 #statusbar-right { width: auto; color: $muted; content-align: right middle; }
-#statusbar-mode { width: auto; padding: 0 0 0 2; content-align: right middle; }
+#statusbar-mode { width: auto; padding: 0 2 0 0; content-align: left middle; }
 
 /* PermissionModal subclasses SelectModal, so the SelectModal #select-* rules
    below style it too (Textual matches type selectors against base classes). */

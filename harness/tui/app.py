@@ -136,12 +136,19 @@ class HarnessTui(App):
                 yield Static("[b]tab[/b] agents   [b]ctrl+p[/b] commands", id="hint", markup=True)
         yield self._status_bar()
 
+    def _yolo_meta_markup(self) -> str:
+        """' · YOLO' (amber) for the mode line when the live gate is on, else ''.
+        Markup form ($tokens) for the compose-meta Static. Keeps the top mode
+        line in sync with the footer chip so the bypass shows in BOTH places."""
+        return f" · [$scheduled][b]YOLO[/b][/]" if self._yolo else ""
+
     def _compose_meta_markup(self, model_label: str, provider: str) -> str:
         # mock mode: just "Build · mock model" (no redundant provider).
-        # vibeproxy: "Build · <model> Vibeproxy".
+        # vibeproxy: "Build · <model> Vibeproxy".  YOLO marker appended when on.
+        yolo = self._yolo_meta_markup()
         if self.model == "mock":
-            return f"[$accent][b]{_MODE}[/b][/] · [$muted]{model_label}[/]"
-        return (f"[$accent][b]{_MODE}[/b][/] · {model_label} "
+            return f"[$accent][b]{_MODE}[/b][/]{yolo} · [$muted]{model_label}[/]"
+        return (f"[$accent][b]{_MODE}[/b][/]{yolo} · {model_label} "
                 f"[$muted]{provider}[/]")
 
     def _header_markup(self) -> str:
@@ -212,11 +219,13 @@ class HarnessTui(App):
 
     async def _mount_status_contents(self) -> None:
         bar = self.query_one("#statusbar", Container)
-        await bar.mount(Static(self._status_left(), id="statusbar-left", markup=True))
-        await bar.mount(Static(self._status_right(), id="statusbar-right", markup=True))
+        # Mode chip FIRST (leftmost), where the eye lands — a security-bypass
+        # indicator must not be buried behind the 1fr cwd at the far right.
         chip = StatusChip.for_yolo(self._yolo, self._yolo_pinned)
         chip.id = "statusbar-mode"
         await bar.mount(chip)
+        await bar.mount(Static(self._status_left(), id="statusbar-left", markup=True))
+        await bar.mount(Static(self._status_right(), id="statusbar-right", markup=True))
 
     def _status_left(self) -> str:
         return format_cwd(self.cwd, home=os.path.expanduser("~"))
@@ -252,6 +261,7 @@ class HarnessTui(App):
         chip._label = fresh._label
         chip._token = fresh._token          # keep the chip's internal state self-consistent
         chip.update(fresh._Static__content)  # the raw markup string (pre-render), re-evaluated by Textual
+        self._refresh_meta_line()           # keep the top mode line ('Build · YOLO …') in sync
 
     def action_toggle_yolo(self) -> None:
         """Flip the live auto-allow gate (chip click / bare /yolo). Persisting is
@@ -693,8 +703,9 @@ class HarnessTui(App):
 
     def _write_meta(self, elapsed: float) -> None:
         model_label = _model_label(self.model, self._worker_model_id)
+        yolo = f" {_c('scheduled', 'YOLO')}" if self._yolo else ""   # records mode at turn time
         self._append_line(
-            f"{_c('accent', '▣ ' + _MODE)} {_c('muted', f'· {model_label} · {elapsed:.1f}s')}")
+            f"{_c('accent', '▣ ' + _MODE)}{yolo} {_c('muted', f'· {model_label} · {elapsed:.1f}s')}")
         self._refresh_status()
 
     # ---- streaming session updates → themed transcript ----
