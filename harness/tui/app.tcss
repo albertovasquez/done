@@ -67,7 +67,7 @@ Screen { layout: vertical; background: $background; layers: base overlay; }
 }
 
 /* ---- status bar (bottom, both states) ---- */
-#statusbar { dock: bottom; height: 1; background: $background; padding: 0 2; }
+#statusbar { layout: horizontal; dock: bottom; height: 1; background: $background; padding: 0 2; }
 #statusbar-left { width: 1fr; color: $muted; }
 #statusbar-right { width: auto; color: $muted; content-align: right middle; }
 #statusbar-mode { width: auto; padding: 0 2 0 0; content-align: left middle; }
