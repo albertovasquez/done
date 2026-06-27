@@ -27,3 +27,11 @@ def test_cutoff_defaults_to_module_constant():
 def test_policy_is_nonempty_and_static():
     # always-on identity: the constant must carry real content
     assert base_prompt.BASE_POLICY.strip()
+
+
+def test_base_prompt_opens_with_done_identity():
+    # The base block gives a default identity (persona, if set, layers on top).
+    out = base_prompt.render_base_prompt(model_id="m", cwd="/x", system_line="OS")
+    assert "You are Done" in out
+    # identity comes first — before the Security policy section
+    assert out.index("You are Done") < out.index("# Security")
