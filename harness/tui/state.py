@@ -66,6 +66,7 @@ class AgentSnapshot:
     elapsed: float = 0.0
     tokens: int = 0
     tasks: tuple[TaskItem, ...] = ()
+    plan: tuple[TaskItem, ...] = ()
     tools: tuple[ToolView, ...] = ()
     schedule: ScheduleView | None = None
     decision: DecisionView | None = None
@@ -161,10 +162,16 @@ def _task_status_from_tool(ts: ToolStatus) -> str:
     return {ToolStatus.DONE: "done", ToolStatus.FAILED: "failed"}.get(ts, "in_progress")
 
 
+def _plan_task_status(raw: str) -> str:
+    return {"pending": "pending", "in_progress": "in_progress",
+            "completed": "done"}.get(str(raw), "pending")
+
+
 def _reduce_agent(a: AgentSnapshot, event) -> AgentSnapshot:
     if isinstance(event, TurnStarted):
         return replace(a, state=AgentState.THINKING, activity_label="Thinking",
-                       tool=None, decision=None, tasks=(), tools=(), elapsed=0.0)
+                       tool=None, decision=None, tasks=(), tools=(), plan=(),
+                       elapsed=0.0)
     if isinstance(event, TokensUpdated):
         return replace(a, tokens=event.total)
     if isinstance(event, PermissionOpened):
@@ -182,6 +189,13 @@ def _reduce_agent(a: AgentSnapshot, event) -> AgentSnapshot:
         kind = getattr(item, "kind", "")
         if kind == "message":
             return replace(a, state=AgentState.RESPONDING, activity_label="Responding")
+        if kind == "plan":
+            entries = getattr(item, "entries", ()) or ()
+            plan = tuple(
+                TaskItem(label=content, status=_plan_task_status(status), tool_id="")
+                for content, status in entries
+            )
+            return replace(a, plan=plan)
         if kind == "tool":
             ts = _tool_status(getattr(item, "status", ""))
             title = getattr(item, "title", "")

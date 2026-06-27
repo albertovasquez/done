@@ -148,6 +148,52 @@ def test_tool_update_completes_task():
     assert a.tasks[0].status == "done"
 
 
+def test_plan_item_sets_plan_field():
+    fs = reduce(initial_snapshot(), TurnStarted())
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="plan", entries=(
+        ("Push + PR", "in_progress"),
+        ("CI + merge", "pending"),
+        ("Sync + prune", "completed"),
+    ))))
+    a = _active(fs)
+    assert [(t.label, t.status) for t in a.plan] == [
+        ("Push + PR", "in_progress"),
+        ("CI + merge", "pending"),
+        ("Sync + prune", "done"),
+    ]
+    assert all(t.tool_id == "" for t in a.plan)
+
+
+def test_plan_update_replaces_not_appends():
+    fs = reduce(initial_snapshot(), TurnStarted())
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="plan",
+        entries=(("A", "in_progress"), ("B", "pending")))))
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="plan",
+        entries=(("A", "completed"), ("B", "in_progress")))))
+    a = _active(fs)
+    assert [(t.label, t.status) for t in a.plan] == [("A", "done"), ("B", "in_progress")]
+
+
+def test_plan_does_not_touch_tasks():
+    fs = reduce(initial_snapshot(), TurnStarted())
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="tool", id="t1",
+                                              title="$ echo hi", status="pending")))
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="plan",
+        entries=(("Step one", "in_progress"),))))
+    a = _active(fs)
+    assert len(a.tasks) == 1 and a.tasks[0].label == "$ echo hi"   # tool task untouched
+    assert len(a.plan) == 1 and a.plan[0].label == "Step one"
+
+
+def test_turn_started_clears_plan():
+    fs = reduce(initial_snapshot(), TurnStarted())
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="plan",
+        entries=(("Step one", "in_progress"),))))
+    assert len(_active(fs).plan) == 1
+    fs = reduce(fs, TurnStarted())
+    assert _active(fs).plan == ()
+
+
 def test_tokens_update():
     fs = reduce(initial_snapshot(), TokensUpdated(1234))
     assert _active(fs).tokens == 1234
