@@ -1284,3 +1284,88 @@ def test_yolo_pinned_default_persona_still_works(tmp_path, monkeypatch):
     assert app._yolo_pinned is True, (
         "default persona's yolo_pinned must still be read when no persona= is passed"
     )
+
+
+# ---- Task 5: on_persona_selected wires rail selection to in-process switch ----
+
+def test_persona_selected_switches_when_idle():
+    """Selecting a persona while idle calls ext_method("harness/set_persona"),
+    repoints _session_id to the returned session_id, and applies PersonaResolved
+    so the snapshot's active_id reflects the new persona."""
+    async def go():
+        from harness.tui.widgets.agent_rail import PersonaSelected as _PersonaSelected
+
+        class _FakeConn:
+            def __init__(self):
+                self.ext_calls = []
+                self.set_persona_response = None
+
+            async def ext_method(self, method, params):
+                self.ext_calls.append((method, params))
+                if method == "harness/set_persona":
+                    return self.set_persona_response
+                return {}
+
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            conn = _FakeConn()
+            conn.set_persona_response = {
+                "ok": True,
+                "id": "ana",
+                "session_id": "sess-ana",
+                "model": "m-ana",
+            }
+            app._conn = conn
+            app._session_id = "old-session"
+            app._turn_active = False
+
+            await app.on_persona_selected(_PersonaSelected("ana"))
+            await pilot.pause()
+
+            assert ("harness/set_persona", {"id": "ana"}) in conn.ext_calls, (
+                "ext_method must be called with ('harness/set_persona', {'id': 'ana'})"
+            )
+            assert app._session_id == "sess-ana", (
+                f"_session_id must be repointed to 'sess-ana', got {app._session_id!r}"
+            )
+            assert app._snapshot.active_id == "ana", (
+                f"snapshot.active_id must be 'ana' after switch, got {app._snapshot.active_id!r}"
+            )
+
+    asyncio.run(go())
+
+
+def test_persona_selected_inert_mid_turn():
+    """Selecting a persona while a turn is active must be a no-op:
+    ext_method must NOT be called and _session_id must remain unchanged."""
+    async def go():
+        from harness.tui.widgets.agent_rail import PersonaSelected as _PersonaSelected
+
+        class _FakeConn:
+            def __init__(self):
+                self.ext_calls = []
+
+            async def ext_method(self, method, params):
+                self.ext_calls.append((method, params))
+                return {}
+
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            conn = _FakeConn()
+            app._conn = conn
+            app._session_id = "original-session"
+            app._turn_active = True
+
+            await app.on_persona_selected(_PersonaSelected("ana"))
+            await pilot.pause()
+
+            assert ("harness/set_persona", {"id": "ana"}) not in conn.ext_calls, (
+                "ext_method must NOT be called with set_persona while turn is active"
+            )
+            assert app._session_id == "original-session", (
+                "_session_id must remain unchanged while turn is active"
+            )
+
+    asyncio.run(go())

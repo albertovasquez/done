@@ -40,16 +40,20 @@ def _resolve_yolo(flag: bool, persona_id: str | None = None) -> bool:
     return config.yolo_pinned(persona_id or "default")
 
 
-def _effective_worker_model_id(backend: str) -> str | None:
+def _effective_worker_model_id(backend: str, persona_id: str | None,
+                               shell_set_model: bool) -> str | None:
     """The model id the agent will actually run, so the TUI footer can show it
-    on a fresh launch (not the 'default model' fallback). Mirrors acp_main's
-    own resolution: None for mock; else VIBEPROXY_MODEL (already seeded from a
-    persisted done.conf model by main()) or the gpt-5.4 default. Call AFTER the
-    persisted model has been exported into the env."""
-    if backend == "mock":
-        return None
-    from harness import vibeproxy
-    return vibeproxy.default_model()
+    on a fresh launch. Resolves the launch persona's model the same way the child
+    (acp_main) does — via resolve_session_model — so the footer matches the agent
+    without depending on VIBEPROXY_MODEL being pre-seeded."""
+    from harness.persona_sessions import resolve_session_model
+    return resolve_session_model(
+        persona_id or "default",
+        shell_set_model=shell_set_model,
+        shell_env=os.getenv("VIBEPROXY_MODEL"),
+        dotenv=os.getenv("VIBEPROXY_MODEL"),
+        backend=backend,
+    )
 
 
 def _relaunch_args(args, cwd) -> list[str]:
@@ -97,16 +101,7 @@ def main(argv=None) -> None:
     args.model = backend              # normalize so _relaunch_args carries the resolved backend
     yolo = _resolve_yolo(args.yolo, args.persona)
     args.yolo = yolo                  # normalize so /reload re-execs with the resolved state
-    if model_override is not None and not shell_set_model:
-        # The persisted (done.conf) model wins over any .env-derived value, but a
-        # real shell-exported VIBEPROXY_MODEL still takes priority — so overwrite
-        # only when the shell didn't set it. setdefault wouldn't work: a .env
-        # value is already present by now and would silently beat done.conf.
-        os.environ["VIBEPROXY_MODEL"] = model_override
-    # Seed the TUI's displayed worker model AFTER the env export, so the footer
-    # shows the real id (e.g. the persisted model) on a fresh launch instead of
-    # the "default model" fallback. Same resolution acp_main uses for the agent.
-    worker_model_id = _effective_worker_model_id(backend)
+    worker_model_id = _effective_worker_model_id(backend, args.persona, shell_set_model)
     # Pass --cwd through so the agent subprocess anchors .env to the same project.
     agent_cmd = [sys.executable, "-m", "harness.acp_main", "--model", backend, "--cwd", cwd]
     if args.persona:

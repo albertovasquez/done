@@ -11,7 +11,7 @@ from harness.acp_agent import HarnessAgent
 from harness import config
 
 
-def _make_agent(backend="vibeproxy", workspace_dir=None):
+def _make_agent(backend="vibeproxy", workspace_dir=None, cwd=None):
     """A HarnessAgent with cheap stand-ins; only set_model behavior is exercised."""
     return HarnessAgent(
         model_factory=lambda *a, **k: None,
@@ -22,7 +22,24 @@ def _make_agent(backend="vibeproxy", workspace_dir=None):
         yolo=False,
         backend=backend,
         workspace_dir=workspace_dir,
+        cwd=cwd,
     )
+
+
+@pytest.fixture
+def agent(isolated_config):
+    """A bare HarnessAgent (no persona workspace)."""
+    return _make_agent(backend="mock")
+
+
+@pytest.fixture
+def agent_with_persona(isolated_config):
+    """A HarnessAgent with an 'ana' persona workspace pre-seeded on disk."""
+    from harness import paths, config as cfg
+    ws = paths.config_dir() / "agents" / "ana"
+    ws.mkdir(parents=True)
+    cfg.save_agent("ana", cfg.AgentConfig(backend="mock", model=None))
+    return _make_agent(backend="mock", cwd="/tmp")
 
 
 @pytest.fixture(autouse=True)
@@ -176,3 +193,86 @@ def test_acp_main_seeds_default_workspace(monkeypatch, tmp_path):
     assert called["n"] == 1
     # and it actually seeded
     assert (tmp_path / "harness" / "agents" / "default" / "SOUL.md").is_file()
+
+
+# --- set_persona tests (Task 3) ---
+
+def test_set_persona_unknown_keeps_active(agent):
+    before = agent._active_persona
+    resp = asyncio.run(agent.ext_method("harness/set_persona", {"id": "nope-does-not-exist"}))
+    assert resp["ok"] is False
+    assert agent._active_persona == before          # unchanged on failure
+
+
+def test_set_persona_invalid_charset(agent):
+    resp = asyncio.run(agent.ext_method("harness/set_persona", {"id": "bad.id"}))
+    assert resp["ok"] is False
+
+
+def test_set_persona_valid_switches_and_returns_seat(agent_with_persona):
+    resp = asyncio.run(agent_with_persona.ext_method("harness/set_persona", {"id": "ana"}))
+    assert resp["ok"] is True and resp["id"] == "ana"
+    assert resp["session_id"]
+    assert agent_with_persona._active_persona == "ana"
+
+
+def test_set_model_persists_under_active_persona(agent_with_persona):
+    asyncio.run(agent_with_persona.ext_method("harness/set_persona", {"id": "ana"}))
+    asyncio.run(agent_with_persona.ext_method("harness/set_model", {"model": "m-ana-new"}))
+    assert config.load_agent("ana").model == "m-ana-new"
+
+
+def test_new_session_registers_launch_seat(isolated_config):
+    """new_session must register the launch persona's seat so switch-back resumes
+    the SAME session instead of minting a fresh one (Defect B fix)."""
+    agent = _make_agent(backend="mock", cwd="/x")
+    agent._cwd = "/x"
+    resp = asyncio.run(agent.new_session(cwd="/x"))
+    launch_session_id = resp.session_id
+
+    # Switch back to "default" — must resume the original session, not re-mint.
+    back = asyncio.run(agent.ext_method("harness/set_persona", {"id": "default"}))
+    assert back["ok"] is True
+    assert back["session_id"] == launch_session_id
+
+
+def test_prompt_uses_session_model_not_global(isolated_config, tmp_path):
+    """The worker model must be session-bound (Defect A fix): switching to 'ana'
+    must NOT mutate the default session's worker_model; each seat carries its own."""
+    from harness import paths, config as cfg
+    # Seed the 'ana' persona dir + done.conf with model "m-ana"
+    ws = paths.config_dir() / "agents" / "ana"
+    ws.mkdir(parents=True)
+    cfg.save_agent("ana", cfg.AgentConfig(backend="vibeproxy", model="m-ana"))
+
+    agent = _make_agent(backend="vibeproxy", cwd="/x")
+    agent._cwd = "/x"
+    default_resp = asyncio.run(agent.new_session(cwd="/x"))
+    default_sid = default_resp.session_id
+    default_model = agent._store.get(default_sid).worker_model
+
+    # Switch to ana; get ana's session_id
+    ana_resp = asyncio.run(agent.ext_method("harness/set_persona", {"id": "ana"}))
+    assert ana_resp["ok"] is True
+    ana_sid = ana_resp["session_id"]
+
+    # Ana's session must have "m-ana" as its worker_model
+    assert agent._store.get(ana_sid).worker_model == "m-ana"
+    # Default session must be UNCHANGED — not overwritten with ana's model
+    assert agent._store.get(default_sid).worker_model == default_model
+
+
+def test_set_model_updates_active_session_state(isolated_config):
+    """`/models` swap (set_model) must reach the active session's state.worker_model
+    so that the very next prompt() picks up the new model, not the stale one."""
+    agent = _make_agent(backend="mock")
+    agent._cwd = "/x"
+    # new_session registers the default seat and stamps state.worker_model
+    resp = asyncio.run(agent.new_session(cwd="/x"))
+    sid = resp.session_id
+
+    # Hot-swap via the harness/set_model extension method
+    asyncio.run(agent.ext_method("harness/set_model", {"model": "m-new"}))
+
+    # The active session's state must reflect the new model so the next prompt uses it
+    assert agent._store.get(sid).worker_model == "m-new"

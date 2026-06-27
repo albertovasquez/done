@@ -104,31 +104,15 @@ async def _main(argv=None) -> None:
     from harness.router import Router, complete
     from harness import skills
 
-    from harness import vibeproxy
-    if args.model == "mock":
-        worker_model_id = None
-    else:
-        # Per-persona model for the STANDALONE path (dn-agent --persona X). The TUI
-        # parent exports VIBEPROXY_MODEL before spawning us, so its launches keep
-        # winning via the shell-env rung. Precedence (mirrors tui_main):
-        #   1. real shell VIBEPROXY_MODEL (captured before load_env)
-        #   2. this persona's persisted done.conf model
-        #   3. a .env-derived VIBEPROXY_MODEL (now in os.environ via load_env)
-        #   4. engine default
-        # A .env value must NOT outrank the persona's persisted model — that was the
-        # split-brain the merge surfaced.
-        from harness import config
-        persona_key = workspace_dir.name
-        persisted = config.load_agent(persona_key)
-        env_model = os.getenv("VIBEPROXY_MODEL")     # shell OR .env at this point
-        if shell_set_model and env_model:
-            worker_model_id = env_model              # rung 1: real shell env
-        elif persisted is not None and persisted.model:
-            worker_model_id = persisted.model        # rung 2: done.conf[persona]
-        elif env_model:
-            worker_model_id = env_model              # rung 3: .env-derived
-        else:
-            worker_model_id = vibeproxy.DEFAULT_MODEL  # rung 4: engine default
+    from harness.persona_sessions import resolve_session_model
+    shell_env = os.getenv("VIBEPROXY_MODEL")        # shell OR .env at this point
+    worker_model_id = resolve_session_model(
+        workspace_dir.name,
+        shell_set_model=shell_set_model,
+        shell_env=shell_env,
+        dotenv=shell_env,            # post-load_env, .env value (if any) is in this same var
+        backend=args.model,
+    )
 
     # Test seam: HARNESS_ROUTER_STUB=1 swaps the live (VibeProxy) classifier for a
     # fixed one, so tests that only exercise downstream behavior (e.g. session
@@ -146,6 +130,9 @@ async def _main(argv=None) -> None:
         yolo=args.yolo,
         backend=args.model,
         workspace_dir=workspace_dir,
+        cwd=cwd,
+        shell_set_model=shell_set_model,
+        shell_env=os.getenv("VIBEPROXY_MODEL"),
     )
     await acp.run_agent(agent)
 

@@ -33,7 +33,8 @@ from harness.transcript import flatten_agent_messages
 class HarnessAgent(acp.Agent):
     def __init__(self, *, model_factory, agent_cfg, skills_dir: list[Path], router: Router,
                  worker_model_id, yolo: bool = False, backend: str = "vibeproxy",
-                 workspace_dir: Path | None = None):
+                 workspace_dir: Path | None = None, cwd: str | None = None,
+                 shell_set_model: bool = False, shell_env: str | None = None):
         self._model_factory = model_factory
         self._agent_cfg = agent_cfg
         self._skills_dir = skills_dir
@@ -42,7 +43,13 @@ class HarnessAgent(acp.Agent):
         self._worker_model_id = worker_model_id
         self._yolo = yolo                 # --yolo: auto-allow every command, no prompts
         self._backend = backend           # launch backend; paired with model on persist
+        self._cwd = cwd
+        self._shell_set_model = shell_set_model
+        self._shell_env = shell_env
         self._store = SessionStore()
+        from harness.persona_sessions import PersonaSessions
+        self._persona_sessions = PersonaSessions()
+        self._active_persona = self._workspace_dir.name if self._workspace_dir else "default"
         self._conn = None
 
     def _auto_allow(self) -> bool:
@@ -51,24 +58,33 @@ class HarnessAgent(acp.Agent):
         return self._yolo
 
     def _persona_key(self) -> str:
-        """The done.conf agent key this agent persists under: its own persona id,
-        which is the workspace directory's basename, or "default" when running
-        with no persona workspace. NOT a branch — "default" is just the id."""
-        return self._workspace_dir.name if self._workspace_dir is not None else "default"
+        """The done.conf agent key the active seat persists under: the persona the
+        client is currently driving (set by set_persona; "default" at launch).
+        NOT a branch — "default" is just the id."""
+        return self._active_persona
 
     def on_connect(self, conn) -> None:
         self._conn = conn
 
     async def ext_method(self, method: str, params: dict) -> dict:
         """Harness-specific extension methods. `harness/set_model` hot-swaps the
-        worker model for SUBSEQUENT turns without restarting the agent — both the
-        chat path (ChatHandler) and the agent path (model factory) read
-        self._worker_model_id fresh on each prompt."""
+        worker model for SUBSEQUENT turns without restarting the agent — it stamps
+        the active session's state.worker_model (read by prompt() on every turn),
+        updates the seat in the persona-sessions map, and mirrors the value in
+        self._worker_model_id (global fallback). All three are updated atomically
+        so the very next prompt on the active session sees the new model."""
         if method == "harness/set_model":
             model = (params or {}).get("model")
             ok = True
             if model:
                 self._worker_model_id = model
+                self._persona_sessions.set_model(self._active_persona, model)
+                seat = self._persona_sessions.seat_of(self._active_persona)
+                if seat is not None:
+                    try:
+                        self._store.get(seat.session_id).worker_model = model
+                    except KeyError:
+                        pass            # session gone (shouldn't happen) — global+seat still updated
                 try:                       # best-effort; report failure, never break the swap
                     config.save_agent(self._persona_key(),
                                       config.AgentConfig(backend=self._backend, model=model))
@@ -108,6 +124,27 @@ class HarnessAgent(acp.Agent):
             except Exception:
                 pinned = False
             return {"ok": ok, "active": self._yolo, "pinned": pinned}
+        if method == "harness/set_persona":
+            pid = (params or {}).get("id")
+            if not isinstance(pid, str) or not pid:
+                return {"ok": False, "error": "missing id"}
+            from harness import persona_select
+            from harness.persona_sessions import resolve_session_model
+            try:
+                resolve_session_model_for = lambda p: resolve_session_model(
+                    p, shell_set_model=self._shell_set_model,
+                    shell_env=self._shell_env, dotenv=self._shell_env, backend=self._backend)
+                seat = self._persona_sessions.get_or_create(
+                    pid, cwd=self._cwd, store=self._store,
+                    resolve_ws=persona_select.resolve_workspace,
+                    resolve_model=resolve_session_model_for)
+            except (persona_select.UnknownPersona, persona_select.InvalidPersonaId) as e:
+                return {"ok": False, "error": str(e)}
+            self._active_persona = pid
+            self._worker_model_id = seat.model      # mirror active seat for read sites
+            self._store.get(seat.session_id).worker_model = seat.model
+            return {"ok": True, "id": pid, "session_id": seat.session_id,
+                    "model": seat.model}
         return {}
 
     async def initialize(self, protocol_version, client_capabilities=None,
@@ -119,8 +156,20 @@ class HarnessAgent(acp.Agent):
         )
 
     async def new_session(self, cwd, additional_directories=None, mcp_servers=None, **kw):
-        return acp.NewSessionResponse(
-            session_id=self._store.new(cwd=cwd, workspace_dir=self._workspace_dir))
+        from harness.persona_sessions import resolve_session_model, Seat
+        session_id = self._store.new(cwd=cwd, workspace_dir=self._workspace_dir)
+        model = resolve_session_model(
+            self._active_persona,
+            shell_set_model=self._shell_set_model,
+            shell_env=self._shell_env,
+            dotenv=self._shell_env,
+            backend=self._backend,
+        )
+        self._store.get(session_id).worker_model = model
+        self._persona_sessions.register(self._active_persona, Seat(session_id=session_id, model=model))
+        if model is not None:
+            self._worker_model_id = model
+        return acp.NewSessionResponse(session_id=session_id)
 
     async def load_session(self, cwd, session_id, additional_directories=None,
                            mcp_servers=None, **kw):
@@ -151,6 +200,7 @@ class HarnessAgent(acp.Agent):
             # invalid_params is a classmethod that exists in the installed SDK
             raise acp.RequestError.invalid_params()
         state.cancel_flag.clear()
+        model_id = state.worker_model if state.worker_model is not None else self._worker_model_id
         text = "".join(getattr(b, "text", "") for b in prompt)
         transcript = state.transcript           # read once; every branch writes back per §6
 
@@ -240,14 +290,18 @@ class HarnessAgent(acp.Agent):
             return acp.PromptResponse(stop_reason="end_turn")
 
         # Render base_block once — used by both chat and agent paths below.
+        # Use the PER-SESSION model_id (resolved above from state.worker_model), not
+        # the process-global self._worker_model_id, so the base prompt reflects the
+        # active session's persona seat — consistent with how the model is bound for
+        # this turn (C2c). Falls back to "mock" when there is no model.
         base_block = base_prompt.render_base_prompt(
-            model_id=(self._worker_model_id or "mock"),
+            model_id=(model_id or "mock"),
             cwd=state.cwd, system_line=platform.platform())
 
         if cls.task_type == "chat_question":
             # hand the router's catalog so "what skills do we have?" is answered
             # from data, not the model (see ChatHandler.is_capability_question)
-            handler = ChatHandler(self._worker_model_id, catalog=self._router.catalog,
+            handler = ChatHandler(model_id, catalog=self._router.catalog,
                                   persona_block=(state.persona_block or "") + (state.memory_block or ""),
                                   base_block=base_block)
             pieces: list[str] = []
@@ -283,7 +337,7 @@ class HarnessAgent(acp.Agent):
                                       "skipped": ctx.skills.skipped}}))
         engine = await self._run_agent_turn(loop, session_id, state, text, ctx.skill_block,
                                             transcript, ctx.persona_block, ctx.memory_block,
-                                            base_block=base_block)
+                                            base_block=base_block, model_id=model_id)
         stop_reason = engine["stop_reason"]
         if stop_reason == "refusal":
             # streamed-on-screen == stored: never fold prior-turn prose in.
@@ -300,7 +354,7 @@ class HarnessAgent(acp.Agent):
         return acp.PromptResponse(stop_reason=stop_reason)
 
     async def _run_agent_turn(self, loop, session_id, state, text, skill_block, prior,
-                              persona_block="", memory_block="", base_block="") -> dict:
+                              persona_block="", memory_block="", base_block="", model_id=None) -> dict:
         # Tool-call ids are TURN-LOCAL: the counter resets each turn and the
         # "current id" lives here (not on SessionState), so the start/done/permission
         # handshake within this turn pairs correctly and ids restart at tc1 per turn.
@@ -424,7 +478,7 @@ class HarnessAgent(acp.Agent):
             try:
                 # pass the CURRENT worker model so /models hot-swaps the agent path
                 # too; the factory ignores the arg in mock mode.
-                agent = TracingAgent(self._model_factory(self._worker_model_id), env,
+                agent = TracingAgent(self._model_factory(model_id if model_id is not None else self._worker_model_id), env,
                                      emitter=emitter, skill_block=skill_block,
                                      persona_block=persona_block, memory_block=memory_block,
                                      base_block=base_block,
