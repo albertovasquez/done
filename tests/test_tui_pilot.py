@@ -1369,3 +1369,52 @@ def test_persona_selected_inert_mid_turn():
             )
 
     asyncio.run(go())
+
+
+def test_new_persona_modal_enter_dismisses_with_name():
+    """Typing a name and pressing Enter dismisses the modal with that name."""
+    async def go():
+        from harness.tui.widgets.new_persona_modal import NewPersonaModal
+        from textual.app import App
+
+        class _Host(App):
+            result = "UNSET"
+
+            def on_mount(self):
+                self.push_screen(NewPersonaModal(), lambda r: setattr(self, "result", r))
+
+        app = _Host()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            inp = app.screen.query_one("#new-persona-name")
+            inp.value = "fred"
+            await pilot.press("enter")
+            await pilot.pause()
+        assert app.result == "fred"
+
+    asyncio.run(go())
+
+
+def test_new_persona_modal_empty_name_ignored():
+    """Pressing Enter on an empty name keeps the modal open; esc dismisses with None."""
+    async def go():
+        from harness.tui.widgets.new_persona_modal import NewPersonaModal
+        from textual.app import App
+
+        class _Host(App):
+            result = "UNSET"
+
+            def on_mount(self):
+                self.push_screen(NewPersonaModal(), lambda r: setattr(self, "result", r))
+
+        app = _Host()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("enter")     # empty -> ignored, modal stays
+            await pilot.pause()
+            assert app.result == "UNSET"   # not dismissed
+            await pilot.press("escape")
+            await pilot.pause()
+        assert app.result is None
+
+    asyncio.run(go())
