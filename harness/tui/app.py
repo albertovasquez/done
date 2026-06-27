@@ -1047,27 +1047,26 @@ class HarnessTui(App):
         event.stop()
         from harness.tui.widgets.new_persona_modal import NewPersonaModal
 
-        def _created(name):
-            if name:
-                self.run_worker(self._create_persona(name), thread=False)
-
-        self.push_screen(NewPersonaModal(), _created)
-
-    async def _create_persona(self, name: str) -> None:
-        if self._conn is None:
-            return
-        if self._turn_active:                 # inert mid-turn (mirror on_persona_selected)
+        if self._turn_active:               # guard at open-time (I3)
             self._notify_line("finish the current turn before creating a persona")
             return
-        try:
-            resp = await self._conn.ext_method("harness/create_persona", {"id": name})
-        except Exception as e:
-            self._notify_line(f"could not create persona: {e}")
-            return
-        if not resp.get("ok"):
-            self._notify_line(f"persona: {resp.get('error', 'create failed')}")
-            return
-        self._apply_persona_switch(resp)
+
+        def _done(resp):
+            if resp:                        # resp is the {ok:true,...} dict on success
+                self._apply_persona_switch(resp)
+
+        self.push_screen(NewPersonaModal(on_create=self._do_create_persona), _done)
+
+    async def _do_create_persona(self, name: str) -> dict:
+        """App-side create callback invoked by NewPersonaModal's worker.
+
+        Returns the ext_method resp dict so the modal can interpret ok/error.
+        Does NOT call _apply_persona_switch (the modal dismisses with resp and
+        _done in on_new_persona_requested applies it).
+        """
+        if self._conn is None:
+            return {}
+        return await self._conn.ext_method("harness/create_persona", {"id": name})
 
     async def action_reload(self) -> None:
         if self._busy:

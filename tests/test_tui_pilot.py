@@ -1443,116 +1443,192 @@ def test_rail_n_opens_new_persona_modal():
     asyncio.run(go())
 
 
-def test_create_flow_switches_to_new_persona():
-    """_create_persona with a successful response repoints session + snapshot."""
+def test_do_create_persona_returns_resp():
+    """_do_create_persona returns the ext_method resp dict (success case)."""
     async def go():
         class _FakeConn:
             def __init__(self):
                 self.ext_calls = []
-                self.create_persona_response = None
 
             async def ext_method(self, method, params):
                 self.ext_calls.append((method, params))
-                if method == "harness/create_persona":
-                    return self.create_persona_response
-                return {}
+                return {"ok": True, "id": "fred", "session_id": "sess-fred", "model": "m-fred"}
 
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
         async with app.run_test() as pilot:
             await pilot.pause()
             conn = _FakeConn()
-            conn.create_persona_response = {
-                "ok": True,
-                "id": "fred",
-                "session_id": "sess-fred",
-                "model": "m-fred",
-            }
             app._conn = conn
-            app._session_id = "old-session"
-            app._turn_active = False
 
-            await app._create_persona("fred")
+            resp = await app._do_create_persona("fred")
             await pilot.pause()
 
             assert ("harness/create_persona", {"id": "fred"}) in conn.ext_calls, (
                 "ext_method must be called with ('harness/create_persona', {'id': 'fred'})"
             )
-            assert app._session_id == "sess-fred", (
-                f"_session_id must be repointed to 'sess-fred', got {app._session_id!r}"
-            )
-            assert app._snapshot.active_id == "fred", (
-                f"snapshot.active_id must be 'fred' after create, got {app._snapshot.active_id!r}"
+            assert resp == {"ok": True, "id": "fred", "session_id": "sess-fred", "model": "m-fred"}, (
+                f"_do_create_persona must return the raw resp dict, got {resp!r}"
             )
 
     asyncio.run(go())
 
 
-def test_create_flow_error_keeps_current():
-    """_create_persona with an error response leaves session unchanged."""
+def test_do_create_persona_returns_resp_error():
+    """_do_create_persona returns the error resp dict without raising or changing session."""
     async def go():
         class _FakeConn:
             def __init__(self):
                 self.ext_calls = []
-                self.create_persona_response = None
 
             async def ext_method(self, method, params):
                 self.ext_calls.append((method, params))
-                if method == "harness/create_persona":
-                    return self.create_persona_response
-                return {}
+                return {"ok": False, "error": "persona 'fred' already exists"}
 
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
         async with app.run_test() as pilot:
             await pilot.pause()
             conn = _FakeConn()
-            conn.create_persona_response = {
-                "ok": False,
-                "error": "persona 'fred' already exists",
-            }
             app._conn = conn
             app._session_id = "keep"
-            app._turn_active = False
 
-            await app._create_persona("fred")
+            resp = await app._do_create_persona("fred")
             await pilot.pause()
 
             assert ("harness/create_persona", {"id": "fred"}) in conn.ext_calls, (
-                "ext_method must be called even on failure"
+                "ext_method must be called even when the response is an error"
             )
+            assert resp.get("ok") is False, f"resp must have ok=False, got {resp!r}"
             assert app._session_id == "keep", (
-                f"_session_id must remain 'keep' on error, got {app._session_id!r}"
+                f"_session_id must remain unchanged, got {app._session_id!r}"
             )
 
     asyncio.run(go())
 
 
 def test_create_inert_mid_turn():
-    """_create_persona is a no-op when _turn_active is True."""
+    """on_new_persona_requested is a no-op (does not push modal) when _turn_active is True."""
     async def go():
-        class _FakeConn:
-            def __init__(self):
-                self.ext_calls = []
-
-            async def ext_method(self, method, params):
-                self.ext_calls.append((method, params))
-                return {"ok": True, "id": "fred", "session_id": "new-sess", "model": "m"}
+        from types import SimpleNamespace
+        from harness.tui.widgets.new_persona_modal import NewPersonaModal
 
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
         async with app.run_test() as pilot:
             await pilot.pause()
-            conn = _FakeConn()
-            app._conn = conn
-            app._session_id = "keep"
             app._turn_active = True
+            app._session_id = "keep"
 
-            await app._create_persona("fred")
+            event = SimpleNamespace(stop=lambda: None)
+            app.on_new_persona_requested(event)
             await pilot.pause()
 
-            assert ("harness/create_persona", {"id": "fred"}) not in conn.ext_calls, (
-                "ext_method must NOT be called while _turn_active is True"
+            assert not isinstance(app.screen, NewPersonaModal), (
+                "NewPersonaModal must NOT be pushed while _turn_active is True"
             )
             assert app._session_id == "keep", (
                 f"_session_id must remain 'keep' mid-turn, got {app._session_id!r}"
+            )
+
+    asyncio.run(go())
+
+
+def test_modal_drives_create_lifecycle():
+    """Integration (M5): modal→create→dismiss→apply handoff end to end.
+
+    NewPersonaModal with a fake on_create returning ok=True dismisses with
+    the resp dict and _done applies the switch (session repointed, snapshot updated).
+    This is the path that was untested and let I1 slip: the modal must own the
+    create while staying open (spinner) and only dismiss on success.
+    """
+    async def go():
+        from harness.tui.widgets.new_persona_modal import NewPersonaModal
+
+        ok_resp = {
+            "ok": True,
+            "id": "fred",
+            "session_id": "sess-fred",
+            "model": "m-fred",
+        }
+        create_calls = []
+
+        async def fake_create(name: str) -> dict:
+            create_calls.append(name)
+            return ok_resp
+
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._session_id = "old-session"
+
+            result_holder = []
+
+            def _done(resp):
+                if resp:
+                    result_holder.append(resp)
+                    app._apply_persona_switch(resp)
+
+            app.push_screen(NewPersonaModal(on_create=fake_create), _done)
+            await pilot.pause()
+
+            # Modal is now on screen; fill in the name and submit
+            modal = app.screen
+            assert isinstance(modal, NewPersonaModal), (
+                f"Expected NewPersonaModal on screen, got {type(modal)}"
+            )
+            modal.query_one("#new-persona-name", __import__("textual.widgets", fromlist=["Input"]).Input).value = "fred"
+            await pilot.press("enter")
+            # Give the worker time to complete
+            for _ in range(5):
+                await pilot.pause()
+
+            assert create_calls == ["fred"], (
+                f"fake_create must be called with 'fred', calls={create_calls!r}"
+            )
+            assert result_holder == [ok_resp], (
+                f"_done must receive the resp dict, got {result_holder!r}"
+            )
+            assert app._session_id == "sess-fred", (
+                f"_session_id must be repointed to 'sess-fred', got {app._session_id!r}"
+            )
+            assert app._snapshot.active_id == "fred", (
+                f"snapshot.active_id must be 'fred', got {app._snapshot.active_id!r}"
+            )
+
+    asyncio.run(go())
+
+
+def test_modal_error_keeps_modal_open():
+    """NewPersonaModal with a fake on_create returning ok=False stays open + shows error."""
+    async def go():
+        from harness.tui.widgets.new_persona_modal import NewPersonaModal
+        from textual.widgets import Input, Static
+
+        async def fail_create(name: str) -> dict:
+            return {"ok": False, "error": "already exists"}
+
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.push_screen(NewPersonaModal(on_create=fail_create))
+            await pilot.pause()
+
+            modal = app.screen
+            assert isinstance(modal, NewPersonaModal), (
+                f"Expected NewPersonaModal on screen, got {type(modal)}"
+            )
+            modal.query_one("#new-persona-name", Input).value = "fred"
+            await pilot.press("enter")
+            # Give the worker time to complete
+            for _ in range(5):
+                await pilot.pause()
+
+            # Modal must still be on screen (set_error keeps it open)
+            assert isinstance(app.screen, NewPersonaModal), (
+                f"Modal must stay open on error, but screen is now {type(app.screen)}"
+            )
+            status_widget = modal.query_one("#new-persona-status", Static)
+            status_text = str(status_widget.content)
+            assert "already exists" in status_text, (
+                f"Error message must appear in status, got {status_text!r}"
             )
 
     asyncio.run(go())

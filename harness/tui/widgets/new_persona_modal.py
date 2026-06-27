@@ -1,12 +1,15 @@
 """NewPersonaModal — name a new persona, create it, switch to it.
 
-Lifecycle: input (type a name) → creating (spinner) → dismiss(id) on success, or
-error (inline message, back to input). Enter on an empty name is ignored; esc
-cancels (dismiss None). The app owns the actual create call (via the ext-method);
-this widget only collects the name, shows progress/errors, and dismisses with the
-id. Mirrors SelectModal's ModalScreen/dismiss pattern. Tokens only."""
+Lifecycle: input (type a name) → creating (spinner) → dismiss(resp) on success, or
+error (inline message, stay open for retry). Enter on an empty name is ignored; esc
+cancels (dismiss None). When on_create is supplied the modal owns the create call:
+it shows the spinner while the worker runs, dismisses with the resp dict on success,
+or calls set_error and stays open on failure. When on_create is None (widget-only
+tests) _submit falls back to dismiss(name) — the old behaviour. Tokens only."""
 
 from __future__ import annotations
+
+from collections.abc import Awaitable, Callable
 
 from textual import on
 from textual.app import ComposeResult
@@ -21,11 +24,16 @@ _SPINNER = ["◐", "◓", "◑", "◒"]            # mirrors ActivityStatus._CYC
 class NewPersonaModal(ModalScreen):
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
 
-    def __init__(self, reduced_motion: bool = False) -> None:
+    def __init__(
+        self,
+        on_create: "Callable[[str], Awaitable[dict]] | None" = None,
+        reduced_motion: bool = False,
+    ) -> None:
         super().__init__()
+        self._on_create = on_create
         self._reduced_motion = reduced_motion
         self._i = 0
-        self._timer = None
+        self._timer: "object | None" = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id="new-persona-box"):
@@ -42,7 +50,24 @@ class NewPersonaModal(ModalScreen):
         name = self.query_one("#new-persona-name", Input).value.strip()
         if not name:
             return                                  # empty -> ignore, stay open
-        self.dismiss(name)
+        if self._on_create is None:
+            # Fallback for widget-only tests: dismiss with the name string directly.
+            self.dismiss(name)
+            return
+        self.set_creating()
+        self.run_worker(self._do_create(name), thread=False)
+
+    async def _do_create(self, name: str) -> None:
+        """Worker: call the app's create callback; dismiss on success, set_error on failure."""
+        try:
+            resp = await self._on_create(name)
+        except Exception as exc:
+            self.set_error(str(exc))
+            return
+        if resp and resp.get("ok"):
+            self.dismiss(resp)
+        else:
+            self.set_error((resp or {}).get("error", "create failed"))
 
     def set_creating(self) -> None:
         """Switch to the creating state: disable input, start the spinner."""
