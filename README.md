@@ -141,6 +141,18 @@ hard error (persona *creation* lands in a later phase). Each persona has its own
 sessions, memory, and model (persisted in `done.conf` under `[agents.<id>]`); a
 live `/models` swap is remembered per persona.
 
+### The agents rail (TUI)
+
+Press **Tab** (or `/persona`) to open the **agents rail** — it lists every persona
+workspace under `~/.config/harness/agents/`, with the active one marked. Display
+names come from each workspace's `persona.toml` `name` (the id is used if unset).
+**Esc** closes the rail. The status bar also shows which persona you're on.
+
+The rail is a **view** today — it shows your personas and which one is live. To run
+a different persona, launch with `--persona <id>`. (In-app *switching* between
+personas — keeping one process alive and routing between sessions, the way mature
+agent harnesses do it — lands in a later phase.)
+
 ## Using the TUI
 
 - Type a prompt in the input box and press **Enter** to send. Input is disabled
