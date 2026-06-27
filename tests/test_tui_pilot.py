@@ -533,9 +533,7 @@ def test_clear_failure_keeps_app_alive_and_input_disabled():
     asyncio.run(go())
 
 
-def test_reset_conversation_clears_tool_rows_and_snapshot():
-    """After /clear, _reset_conversation must empty tool_rows dict and reset
-    snapshot state, not just the transcript text."""
+def test_reset_conversation_resets_snapshot():
     from harness.tui.state import AgentState
     async def go():
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
@@ -546,18 +544,10 @@ def test_reset_conversation_clears_tool_rows_and_snapshot():
                 await pilot.pause()
                 if "done" in _transcript_text(app):
                     break
-            # Populate tool_rows (or just assert it would be set in a real flow)
-            app._tool_rows["fake-id"] = NS(id="fake-id")
-            assert app._tool_rows, "precondition: tool_rows should have entries"
-            assert app._snapshot.active is not None, "precondition: snapshot.active exists"
-            # Reset the conversation
             await app._reset_conversation()
             await pilot.pause()
-            # Both must be cleared/reset
-            assert app._tool_rows == {}, \
-                f"tool_rows should be empty after reset, got {app._tool_rows}"
             assert app._snapshot.active.state == AgentState.IDLE, \
-                f"snapshot.active.state should be IDLE after reset, got {app._snapshot.active.state}"
+                "snapshot should be reset to IDLE after _reset_conversation"
     asyncio.run(go())
 
 def test_reload_is_guarded_against_reentry():
@@ -815,31 +805,27 @@ def test_pilot_snapshot_tracks_turn_lifecycle():
     asyncio.run(go())
 
 
-def test_pilot_tool_call_renders_as_tool_call_row():
-    """A ToolCallStart update in the session stream mounts a ToolCallRow widget
-    in the transcript — NOT a flat '$ ...' Static line."""
+def test_pilot_tool_call_is_not_in_transcript_but_in_region():
+    """A ToolCallStart update does NOT mount a ToolCallRow in the transcript; the
+    pinned ActivityRegion reflects the tool instead."""
+    from harness.tui.widgets.activity_region import ActivityRegion
     async def go():
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
         async with app.run_test() as pilot:
             await pilot.pause()
             await app._enter_conversation()
-            # Inject a fake ToolCallStart directly (the fake agent doesn't emit tools)
             tool_start = acp.start_tool_call("tc-test", title="$ echo hello",
                                              status="in_progress")
             app.on_session_update(SessionUpdate(tool_start))
             await pilot.pause()
             scroll = app.query_one("#transcript", VerticalScroll)
-            rows = [w for w in scroll.children if isinstance(w, ToolCallRow)]
-            assert len(rows) == 1, (
-                f"expected one ToolCallRow in transcript, got {len(rows)}. "
-                f"Children: {[type(w).__name__ for w in scroll.children]}")
-            # It should NOT be a plain flat Static starting with "$ "
-            flat_tool_lines = [
-                str(w.content) for w in scroll.children
-                if type(w) is Static and str(w.content).startswith("$ ")
-            ]
-            assert flat_tool_lines == [], (
-                f"flat '$ ...' tool lines still present: {flat_tool_lines}")
+            assert not [w for w in scroll.children if isinstance(w, ToolCallRow)], \
+                "tool calls must NOT be inline in the transcript"
+            # the pinned region tracks the tool in its snapshot
+            assert any(tv.id == "tc-test" for tv in app._snapshot.active.tools), \
+                "the region's snapshot should track the tool"
+            assert app.query_one("#activity-region", ActivityRegion).display is True, \
+                "region should be visible while a tool runs"
     asyncio.run(go())
 
 
