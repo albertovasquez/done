@@ -64,6 +64,39 @@ class HarnessAgent(acp.Agent):
                 except Exception:
                     pass
             return {"ok": True, "model": self._worker_model_id}
+        if method == "harness/set_yolo":
+            # Live auto-allow toggle (+ optional persisted pin). The ACP process
+            # owns the permission gate, so it owns both the flip and the write.
+            # active/pin MUST be real booleans — this is a security gate, so a
+            # non-bool (e.g. the string "false", which is truthy) is ignored, not
+            # coerced. Returns the TRUE persisted state so the TUI can reconcile.
+            params = params or {}
+            if isinstance(params.get("active"), bool):
+                self._yolo = params["active"]
+            pin = params.get("pin")
+            ok = True
+            if isinstance(pin, bool):
+                try:                       # best-effort: a failed write never breaks the toggle
+                    if pin:
+                        # Pair the pin with the agent's known backend+model so a
+                        # fresh config never gets a default with empty required
+                        # fields (which would later resolve to `--model ""`).
+                        # model may be None (mock); pass it only when it's a real
+                        # string — update_default refuses to create an incomplete
+                        # default, so the pin simply no-ops rather than corrupting.
+                        fields = {"backend": self._backend, "yolo_pinned": True}
+                        if isinstance(self._worker_model_id, str) and self._worker_model_id:
+                            fields["model"] = self._worker_model_id
+                        config.update_default(**fields)
+                    else:
+                        config.update_default(yolo_pinned=False)
+                except Exception:
+                    ok = False             # surface the failure; do NOT claim success
+            try:
+                pinned = config.yolo_pinned()
+            except Exception:
+                pinned = False
+            return {"ok": ok, "active": self._yolo, "pinned": pinned}
         return {}
 
     async def initialize(self, protocol_version, client_capabilities=None,

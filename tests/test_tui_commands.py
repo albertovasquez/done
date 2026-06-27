@@ -211,6 +211,96 @@ def test_reload_clear_descriptions_match_new_behavior():
     assert reg["clear"].description == "Fresh conversation (restart the agent)"
 
 
+def test_registry_has_yolo():
+    names = {c.name for c in build_registry()}
+    assert "yolo" in names
+
+
+def test_yolo_handler_dispatches_on_arg():
+    import asyncio
+    from harness.tui.commands import build_registry
+
+    class _App:
+        def __init__(self): self.calls = []
+        def action_toggle_yolo(self): self.calls.append("toggle")
+        async def action_yolo_pin(self): self.calls.append("pin")
+        async def action_yolo_unpin(self): self.calls.append("unpin")
+        def _notify_line(self, m): self.calls.append(("notify", m))
+
+    reg = {c.name: c for c in build_registry()}
+    app = _App()
+    asyncio.run(reg["yolo"].handler(app, ""))
+    asyncio.run(reg["yolo"].handler(app, "pin"))
+    asyncio.run(reg["yolo"].handler(app, "unpin"))
+    assert app.calls[:3] == ["toggle", "pin", "unpin"]
+
+
+def test_existing_handlers_accept_optional_arg():
+    """Adding the arg param must not break the no-arg call convention."""
+    import asyncio
+    from harness.tui.commands import build_registry
+
+    class _App:
+        def __init__(self): self.called = []
+        async def action_reload(self): self.called.append("reload")
+        async def action_clear(self): self.called.append("clear")
+
+    reg = {c.name: c for c in build_registry()}
+    app = _App()
+    asyncio.run(reg["reload"].handler(app))        # no arg — still valid
+    asyncio.run(reg["reload"].handler(app, ""))    # with arg — also valid
+    assert app.called == ["reload", "reload"]
+
+
+def test_reconcile_yolo_corrects_failed_unpin():
+    """The silent-bypass hazard: if /yolo unpin's write fails, the agent reports
+    pinned=True and the chip must be corrected back to pinned + the user told."""
+    from harness.tui.app import HarnessTui
+
+    app = HarnessTui.__new__(HarnessTui)        # bypass __init__/Textual mount
+    app._yolo = True
+    app._yolo_pinned = False                    # optimistic (wrong) state
+    notes: list[str] = []
+    app._notify_line = lambda m: notes.append(m)
+    app._refresh_yolo_chip = lambda: None
+
+    # agent reports the write FAILED → still pinned on disk
+    app._reconcile_yolo({"ok": False, "active": True, "pinned": True},
+                        want_pinned=False, verb="unpin")
+    assert app._yolo_pinned is True             # chip corrected to the truth
+    assert notes and "did not persist" in notes[0]
+
+
+def test_reconcile_yolo_no_response_warns():
+    from harness.tui.app import HarnessTui
+
+    app = HarnessTui.__new__(HarnessTui)
+    app._yolo = True
+    app._yolo_pinned = False
+    notes: list[str] = []
+    app._notify_line = lambda m: notes.append(m)
+    app._refresh_yolo_chip = lambda: None
+
+    app._reconcile_yolo(None, want_pinned=False, verb="unpin")
+    assert notes and "agent unavailable" in notes[0]
+
+
+def test_reconcile_yolo_success_is_quiet():
+    from harness.tui.app import HarnessTui
+
+    app = HarnessTui.__new__(HarnessTui)
+    app._yolo = True
+    app._yolo_pinned = True
+    notes: list[str] = []
+    app._notify_line = lambda m: notes.append(m)
+    app._refresh_yolo_chip = lambda: None
+
+    app._reconcile_yolo({"ok": True, "active": True, "pinned": True},
+                        want_pinned=True, verb="pin")
+    assert notes == []                          # success: no noise
+    assert app._yolo_pinned is True
+
+
 def test_select_modal_search_and_select():
     async def go():
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")

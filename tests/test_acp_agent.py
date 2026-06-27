@@ -53,6 +53,77 @@ def test_set_model_survives_save_failure(monkeypatch):
     assert result == {"ok": True, "model": "x"}  # swap still succeeds
 
 
+def test_set_yolo_active_true_sets_gate_no_persist():
+    agent = _make_agent()
+    agent._yolo = False
+    result = asyncio.run(agent.ext_method("harness/set_yolo", {"active": True}))
+    assert agent._yolo is True
+    assert result["ok"] is True and result["active"] is True
+    assert config.load_default() is None      # active alone never persists
+
+
+def test_set_yolo_active_false_turns_gate_off():
+    agent = _make_agent()
+    agent._yolo = True
+    asyncio.run(agent.ext_method("harness/set_yolo", {"active": False}))
+    assert agent._yolo is False
+
+
+def test_set_yolo_pin_true_persists():
+    agent = _make_agent()
+    asyncio.run(agent.ext_method("harness/set_yolo", {"active": True, "pin": True}))
+    assert config.yolo_pinned() is True
+
+
+def test_set_yolo_pin_false_unpins():
+    config.update_default(backend="vibeproxy", model="gpt-5.4", yolo_pinned=True)
+    agent = _make_agent()
+    asyncio.run(agent.ext_method("harness/set_yolo", {"pin": False}))
+    assert config.yolo_pinned() is False
+
+
+def test_set_yolo_omitted_pin_does_not_touch_persistence():
+    config.update_default(backend="vibeproxy", model="gpt-5.4", yolo_pinned=True)
+    agent = _make_agent()
+    asyncio.run(agent.ext_method("harness/set_yolo", {"active": False}))
+    assert config.yolo_pinned() is True       # pin untouched by a live-only toggle
+
+
+def test_set_yolo_survives_persist_failure(monkeypatch):
+    def boom(**kw):
+        raise OSError("disk full")
+    monkeypatch.setattr(config, "update_default", boom)
+    agent = _make_agent()
+    result = asyncio.run(agent.ext_method("harness/set_yolo", {"active": True, "pin": True}))
+    # live toggle still succeeds, but ok=False surfaces the failed persist so the
+    # TUI can reconcile rather than show a false "pinned".
+    assert agent._yolo is True
+    assert result["ok"] is False
+
+
+def test_set_yolo_pin_pairs_backend_and_model_on_fresh_config():
+    # Pinning on a fresh config writes a COMPLETE default (the agent supplies its
+    # known backend+model), never backend=""/model="" (which would break launch).
+    agent = _make_agent(backend="vibeproxy")   # worker_model_id="gpt-5.4"
+    asyncio.run(agent.ext_method("harness/set_yolo", {"active": True, "pin": True}))
+    assert config.load_default() == config.AgentConfig(
+        backend="vibeproxy", model="gpt-5.4", yolo_pinned=True)
+
+
+def test_set_yolo_non_bool_active_is_ignored():
+    # ACP params are untyped; "false" is truthy. A non-bool must NOT flip the gate.
+    agent = _make_agent()
+    agent._yolo = False
+    asyncio.run(agent.ext_method("harness/set_yolo", {"active": "false"}))
+    assert agent._yolo is False                # not coerced on
+
+
+def test_set_yolo_non_bool_pin_is_ignored():
+    agent = _make_agent()
+    asyncio.run(agent.ext_method("harness/set_yolo", {"pin": "false"}))
+    assert config.yolo_pinned() is False       # "false" did not persist True
+
+
 def test_acp_main_wires_default_workspace(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setenv("HARNESS_ROUTER_STUB", "1")

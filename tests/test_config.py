@@ -149,3 +149,103 @@ def test_round_trip_set_model_then_resolve(tmp_path):
 
     # 3) A launch WITH an explicit flag ignores it.
     assert tui_main._resolve_model("mock") == ("mock", None)
+
+
+# --- yolo_pinned: read, write (merge), helper ---
+
+def test_load_reads_yolo_pinned_true(tmp_path):
+    _write(tmp_path, (
+        '[agents.default]\nbackend = "vibeproxy"\nmodel = "gpt-5.4"\n'
+        'yolo_pinned = true\n'
+    ))
+    assert config.load_default() == config.AgentConfig(
+        backend="vibeproxy", model="gpt-5.4", yolo_pinned=True)
+
+
+def test_load_yolo_pinned_defaults_false_when_absent(tmp_path):
+    _write(tmp_path, '[agents.default]\nbackend = "mock"\nmodel = "x"\n')
+    assert config.load_default().yolo_pinned is False
+
+
+def test_load_yolo_pinned_non_bool_is_false(tmp_path):
+    _write(tmp_path, (
+        '[agents.default]\nbackend = "mock"\nmodel = "x"\n'
+        'yolo_pinned = "nope"\n'      # hand-edit error -> treated as False, not fatal
+    ))
+    assert config.load_default().yolo_pinned is False
+
+
+def test_yolo_pinned_helper_false_when_no_config(tmp_path):
+    assert config.yolo_pinned() is False
+
+
+def test_yolo_pinned_helper_reads_default(tmp_path):
+    config.update_default(backend="mock", model="x", yolo_pinned=True)
+    assert config.yolo_pinned() is True
+
+
+def test_update_default_pin_preserves_backend_and_model(tmp_path):
+    config.save_default(config.AgentConfig(backend="vibeproxy", model="gpt-5.4"))
+    config.update_default(yolo_pinned=True)
+    assert config.load_default() == config.AgentConfig(
+        backend="vibeproxy", model="gpt-5.4", yolo_pinned=True)
+
+
+def test_save_default_preserves_existing_pin(tmp_path):
+    # The regression the merge fix exists to prevent: changing the model must
+    # NOT clear a pin the user set earlier.
+    config.update_default(backend="vibeproxy", model="old", yolo_pinned=True)
+    config.save_default(config.AgentConfig(backend="vibeproxy", model="new"))
+    got = config.load_default()
+    assert got.model == "new"
+    assert got.yolo_pinned is True
+
+
+def test_update_default_unpin_writes_false_and_round_trips(tmp_path):
+    config.update_default(backend="mock", model="x", yolo_pinned=True)
+    config.update_default(yolo_pinned=False)
+    assert config.load_default().yolo_pinned is False
+
+
+def test_serialize_omits_yolo_pinned_when_false(tmp_path):
+    config.save_default(config.AgentConfig(backend="mock", model="x"))
+    assert "yolo_pinned" not in config.conf_path().read_text()
+
+
+def test_serialize_emits_yolo_pinned_true(tmp_path):
+    config.update_default(backend="mock", model="x", yolo_pinned=True)
+    assert "yolo_pinned = true" in config.conf_path().read_text()
+
+
+def test_update_default_refuses_incomplete_new_default(tmp_path):
+    # /yolo pin before any model was set must NOT write backend=""/model="".
+    config.update_default(yolo_pinned=True)
+    assert config.load_default() is None        # no incomplete default written
+    assert config.yolo_pinned() is False
+
+
+def test_update_default_creates_default_when_backend_and_model_given(tmp_path):
+    # Pinning WITH a backend+model (as the agent now supplies) writes a complete row.
+    config.update_default(backend="vibeproxy", model="gpt-5.4", yolo_pinned=True)
+    assert config.load_default() == config.AgentConfig(
+        backend="vibeproxy", model="gpt-5.4", yolo_pinned=True)
+
+
+def test_update_default_pin_on_existing_default_ok(tmp_path):
+    # Updating an already-complete default (just the pin) still works.
+    config.save_default(config.AgentConfig(backend="mock", model="x"))
+    config.update_default(yolo_pinned=True)
+    assert config.load_default().yolo_pinned is True
+
+
+def test_update_default_preserves_other_agents(tmp_path):
+    _write(tmp_path, (
+        'schema_version = 1\n'
+        '[agents.default]\nbackend = "mock"\nmodel = "old"\n'
+        '[agents.6f1c-uuid]\nname = "bill"\nbackend = "vibeproxy"\nmodel = "claude-opus-4-8"\n'
+    ))
+    config.update_default(yolo_pinned=True)
+    agents = config.load()
+    assert agents["default"] == config.AgentConfig(backend="mock", model="old", yolo_pinned=True)
+    assert agents["6f1c-uuid"] == config.AgentConfig(
+        backend="vibeproxy", model="claude-opus-4-8", name="bill")

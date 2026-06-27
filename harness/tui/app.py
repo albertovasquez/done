@@ -45,7 +45,9 @@ from harness.tui.widgets.slash_menu import SlashMenu
 from harness.tui.widgets.prompt_area import PromptArea
 from harness.tui.widgets.task_tree import TaskTree
 from harness.tui.widgets.tool_call_row import ToolCallRow
+from harness.tui.widgets.status_chip import StatusChip
 from harness.tui.header import icon_markup, header_text_markup
+from harness import config as _config
 
 _GLYPH = {"completed": "✓", "failed": "✗"}
 _MODE = "Build"                       # the single agent "mode" we expose for now
@@ -75,13 +77,16 @@ class HarnessTui(App):
     BINDINGS = [("escape", "cancel", "Cancel turn")]
 
     def __init__(self, agent_cmd: list[str], cwd: str, model: str,
-                 worker_model_id: str | None = None, version: str = "0.5.0") -> None:
+                 worker_model_id: str | None = None, version: str = "0.5.0",
+                 yolo: bool = False) -> None:
         super().__init__()
         self.agent_cmd = agent_cmd
         self.cwd = cwd
         self.model = model
         self._worker_model_id = worker_model_id
         self._version = version
+        self._yolo = yolo                          # live gate (TUI mirror of the agent's)
+        self._yolo_pinned = _config.yolo_pinned()  # persisted pin, for the chip's '· pin'
         self._client = TuiClient(self)
         self._conn = None
         self._cm = None                       # the spawn_agent_process context manager
@@ -209,6 +214,9 @@ class HarnessTui(App):
         bar = self.query_one("#statusbar", Container)
         await bar.mount(Static(self._status_left(), id="statusbar-left", markup=True))
         await bar.mount(Static(self._status_right(), id="statusbar-right", markup=True))
+        chip = StatusChip.for_yolo(self._yolo, self._yolo_pinned)
+        chip.id = "statusbar-mode"
+        await bar.mount(chip)
 
     def _status_left(self) -> str:
         return format_cwd(self.cwd, home=os.path.expanduser("~"))
@@ -230,6 +238,89 @@ class HarnessTui(App):
             self.query_one("#statusbar-right", Static).update(self._status_right())
         except Exception:
             pass
+
+    # ---- YOLO mode chip (clickable footer mode chip; see components.md §A) ----
+
+    def _refresh_yolo_chip(self) -> None:
+        """Re-render the footer mode chip in place from the current live + pin
+        state (mirrors _refresh_status: update one widget, no full re-render)."""
+        try:
+            chip = self.query_one("#statusbar-mode", StatusChip)
+        except Exception:
+            return
+        fresh = StatusChip.for_yolo(self._yolo, self._yolo_pinned)
+        chip._label = fresh._label
+        chip._token = fresh._token          # keep the chip's internal state self-consistent
+        chip.update(fresh._Static__content)  # the raw markup string (pre-render), re-evaluated by Textual
+
+    def action_toggle_yolo(self) -> None:
+        """Flip the live auto-allow gate (chip click / bare /yolo). Persisting is
+        a separate gesture (/yolo pin); a click never changes the pin."""
+        self._yolo = not self._yolo
+        self._refresh_yolo_chip()
+        self.run_worker(self._send_set_yolo(active=self._yolo), thread=False)
+
+    async def action_yolo_pin(self) -> None:
+        """Persist 'always launch in YOLO' (and turn it on now — pinning a mode
+        you're not in is incoherent). Reconciles the chip to the TRUE persisted
+        state the agent reports, so a failed write can't show a false 'pinned'."""
+        self._yolo = True
+        self._yolo_pinned = True            # optimistic; reconciled below
+        self._refresh_yolo_chip()
+        resp = await self._send_set_yolo(active=True, pin=True)
+        self._reconcile_yolo(resp, want_pinned=True, verb="pin")
+
+    async def action_yolo_unpin(self) -> None:
+        """Stop auto-launching in YOLO. Leaves the live state alone. Reconciles
+        from the agent's reported pin so a failed write can't silently leave the
+        config pinned while the chip shows unpinned (the silent-bypass hazard)."""
+        self._yolo_pinned = False           # optimistic; reconciled below
+        self._refresh_yolo_chip()
+        resp = await self._send_set_yolo(pin=False)
+        self._reconcile_yolo(resp, want_pinned=False, verb="unpin")
+
+    def _reconcile_yolo(self, resp: dict | None, *, want_pinned: bool, verb: str) -> None:
+        """Trust the agent's reported persisted state over our optimistic guess.
+        If it disagrees with what we intended (write failed / no agent), correct
+        the chip and tell the user — never leave a persisted bypass hidden."""
+        if not resp:
+            self._notify_line(f"could not {verb}: agent unavailable — persisted state unchanged")
+            return
+        pinned = resp.get("pinned")
+        active = resp.get("active")
+        if isinstance(active, bool):
+            self._yolo = active
+        if isinstance(pinned, bool):
+            self._yolo_pinned = pinned
+            if pinned != want_pinned or not resp.get("ok", True):
+                self._notify_line(
+                    f"/yolo {verb} did not persist — config is "
+                    f"{'pinned' if pinned else 'not pinned'}")
+        self._refresh_yolo_chip()
+
+    async def _send_set_yolo(self, *, active: bool | None = None,
+                             pin: bool | None = None) -> dict | None:
+        """Push the live/pin change to the agent (which owns the gate) and return
+        its authoritative {ok, active, pinned} response, or None if no agent /
+        the call failed."""
+        if self._conn is None:
+            return None
+        params: dict = {}
+        if active is not None:
+            params["active"] = active
+        if pin is not None:
+            params["pin"] = pin
+        try:
+            return await self._conn.ext_method("harness/set_yolo", params)
+        except Exception:
+            return None
+
+    def on_click(self, event) -> None:
+        # Footer mode chip: a click anywhere on it toggles YOLO. Guard on the id
+        # so other clicks are unaffected.
+        widget = getattr(event, "widget", None)
+        if widget is not None and getattr(widget, "id", None) == "statusbar-mode":
+            self.action_toggle_yolo()
 
     # ---- presentation model (reducer) ----
 
@@ -378,15 +469,18 @@ class HarnessTui(App):
     async def _run_slash(self, text: str) -> None:
         # prefer the highlighted menu command; else parse the typed name
         cmd = self._slash.highlighted_command() if self._slash is not None else None
+        # the text after the command name (e.g. "pin" in "/yolo pin")
+        parts = text[1:].split() if len(text) > 1 else []
+        arg = " ".join(parts[1:]) if len(parts) > 1 else ""
         if cmd is None:
-            name = text[1:].split()[0] if len(text) > 1 else ""
+            name = parts[0] if parts else ""
             cmd = resolve_command(self._commands, name)   # canonical name or exact alias
         self._active_input().value = ""
         await self._close_slash()
         if cmd is None:
             self._notify_line(f"unknown command: {text}")
             return
-        await cmd.handler(self)
+        await cmd.handler(self, arg)
 
     def _notify_line(self, message: str) -> None:
         """Show a one-off informational line (in transcript if started, else in

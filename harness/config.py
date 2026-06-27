@@ -31,6 +31,7 @@ class AgentConfig:
     backend: str            # "mock" | "vibeproxy"
     model: str              # model string, e.g. "gpt-5.4"
     name: str | None = None  # None for the reserved default; set for uuid agents
+    yolo_pinned: bool = False  # persisted "always launch in YOLO" (default only)
 
 
 def conf_path() -> Path:
@@ -65,10 +66,12 @@ def load() -> dict[str, AgentConfig]:
         if not isinstance(backend, str) or not isinstance(model, str):
             continue
         name = table.get("name")
+        pinned = table.get("yolo_pinned")
         out[key] = AgentConfig(
             backend=backend,
             model=model,
             name=name if isinstance(name, str) else None,
+            yolo_pinned=pinned if isinstance(pinned, bool) else False,
         )
     return out
 
@@ -99,16 +102,45 @@ def _serialize(agents: dict[str, AgentConfig]) -> str:
             lines.append(f"name = {_quote(cfg.name)}")
         lines.append(f"backend = {_quote(cfg.backend)}")
         lines.append(f"model = {_quote(cfg.model)}")
+        if cfg.yolo_pinned:
+            lines.append("yolo_pinned = true")
         lines.append("")
     return "\n".join(lines)
 
 
-def save_default(cfg: AgentConfig) -> None:
-    """Upsert [agents.default] with `cfg`, preserving every other agent table.
+def update_default(
+    *,
+    backend: str | None = None,
+    model: str | None = None,
+    yolo_pinned: bool | None = None,
+) -> None:
+    """Upsert [agents.default], overlaying ONLY the kwargs passed (None = leave
+    unchanged). Preserves untouched default fields and every other agent table.
     Writes atomically (temp file + os.replace) under a created config dir.
-    Best-effort: callers that must not fail on I/O errors should guard the call."""
+    Best-effort: callers that must not fail on I/O errors should guard the call.
+
+    This is the merge-safe write: changing the model never clears a pin, and
+    pinning never clears the model — each call site touches only its own fields.
+
+    Refuses to CREATE a new default with empty required fields: if no default
+    exists yet and the merged backend/model would be blank (e.g. `/yolo pin`
+    before any model was set), it no-ops rather than writing `backend=""`/
+    `model=""` — which a later flagless launch would resolve to `--model ""` and
+    crash the agent. Updating an EXISTING (already-complete) default is unaffected."""
     agents = load()
-    agents[RESERVED_KEY] = AgentConfig(backend=cfg.backend, model=cfg.model)  # default carries no name
+    cur = agents.get(RESERVED_KEY)
+    base_backend = cur.backend if cur is not None else ""
+    base_model = cur.model if cur is not None else ""
+    base_pinned = cur.yolo_pinned if cur is not None else False
+    merged_backend = base_backend if backend is None else backend
+    merged_model = base_model if model is None else model
+    if not merged_backend or not merged_model:
+        return                              # don't persist an incomplete default
+    agents[RESERVED_KEY] = AgentConfig(             # default carries no name
+        backend=merged_backend,
+        model=merged_model,
+        yolo_pinned=base_pinned if yolo_pinned is None else yolo_pinned,
+    )
     text = _serialize(agents)
 
     path = conf_path()
@@ -116,3 +148,18 @@ def save_default(cfg: AgentConfig) -> None:
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(text, encoding="utf-8")
     os.replace(tmp, path)
+
+
+def save_default(cfg: AgentConfig) -> None:
+    """Upsert the default's backend+model, preserving its yolo_pinned and every
+    other agent table. Thin wrapper over update_default (kept for the set_model
+    call site + tests). NOTE: deliberately ignores cfg.yolo_pinned — set_model
+    passes a default-constructed cfg and must not clear an existing pin."""
+    update_default(backend=cfg.backend, model=cfg.model)
+
+
+def yolo_pinned() -> bool:
+    """Whether the persisted default is pinned to launch in YOLO. False when the
+    default is absent or the file is unreadable."""
+    cur = load_default()
+    return cur.yolo_pinned if cur is not None else False

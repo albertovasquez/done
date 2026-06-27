@@ -64,6 +64,17 @@ class StatusChip(Static):
         label = STATUS_LABEL.get(state.value, state.value.upper())
         return cls(label, state_color_token(state))
 
+    @classmethod
+    def for_yolo(cls, active: bool, pinned: bool) -> "StatusChip":
+        """The permission-mode chip. Off → muted '• ask'; on → amber '! YOLO'
+        (+ ' · pin' when persisted). StatusChip has no separate glyph slot, so
+        the leading glyph is baked into the label — state survives monochrome
+        terminals via color + glyph + weight together."""
+        if not active:
+            return cls(f"{GLYPH['idle']} ask", "muted")
+        suffix = " · pin" if pinned else ""
+        return cls(f"{GLYPH['bypass']} YOLO{suffix}", "scheduled")
+
 
 class StateDot(Static):
     def __init__(self, state: AgentState) -> None:

@@ -28,6 +28,28 @@ def test_status_chip_renders_uppercase_label():
     assert "RUNNING" in chip._label
 
 
+def test_status_chip_for_yolo_off_is_muted_ask():
+    chip = StatusChip.for_yolo(active=False, pinned=False)
+    markup = chip._Static__content
+    assert "ask" in chip._label
+    assert "$muted" in markup
+    assert "YOLO" not in chip._label
+
+
+def test_status_chip_for_yolo_on_is_amber_yolo():
+    chip = StatusChip.for_yolo(active=True, pinned=False)
+    assert "YOLO" in chip._label
+    assert "pin" not in chip._label
+    assert "$scheduled" in chip._Static__content
+    assert "!" in chip._label                 # the bypass glyph
+
+
+def test_status_chip_for_yolo_pinned_shows_pin_marker():
+    chip = StatusChip.for_yolo(active=True, pinned=True)
+    assert "YOLO" in chip._label and "pin" in chip._label
+    assert "$scheduled" in chip._Static__content
+
+
 def test_activity_glyph_reduced_motion_is_static():
     # Attribute-level assertion is the unit-test ceiling here: on_mount (which
     # sets up the timer and initial display) only runs inside a mounted Textual

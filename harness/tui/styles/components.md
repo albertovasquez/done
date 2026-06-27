@@ -71,6 +71,28 @@ is the **single looping animation** in the whole UI (active `◐` cycle).
 - **In:** `state`
 - **Reduced-motion:** `ActivityGlyph` → static `◐`.
 
+### `StatusChip.for_yolo` — clickable footer mode chip
+A `StatusChip` mounted in the status bar that toggles a **session mode** on
+click. First use: YOLO (permission auto-allow). The pattern generalizes to any
+binary session mode (backend, fleet-mode, …).
+- **In:** `(active: bool, pinned: bool)` → `StatusChip.for_yolo(...)`.
+- **Look:** off = `• ask` (muted); on = `! YOLO` (amber `$scheduled`, bold);
+  pinned adds ` · pin`. Glyph `!` = `GLYPH["bypass"]`. Amber signals a
+  security-sensitive on-state without a per-command banner (restraint, p.4).
+- **Click → action:** the app's `on_click` (guarded on `#statusbar-mode`) calls
+  `action_toggle_yolo()`, which flips the live state, refreshes the chip in
+  place (`_refresh_yolo_chip`), and fires `ext_method("harness/set_yolo",
+  {active})`.
+- **Persisting is a SEPARATE gesture.** A click only flips the *live* mode
+  (loud, reversible). Making a mode *survive launches* is the deliberate
+  `/yolo pin` (writes `yolo_pinned` to `done.conf`) — never the click. This
+  split is the pattern's safety contract; reuse it for any persisted mode.
+
+```
+· ask          ! YOLO          ! YOLO · pin
+ muted          amber           amber
+```
+
 ### `Hairline` / `SectionLabel`
 Brand grammar primitives: a thin rule, and a tracked-bold-caps label
 (`AGENTS`, `CURRENT TASKS`).
@@ -218,7 +240,7 @@ Bottom hairline bar; gains keybinding-hint segments
 ## Catalog at a glance
 
 ```
-A primitives   StatusChip · StateDot/ActivityGlyph · Hairline/SectionLabel
+A primitives   StatusChip (+ for_yolo footer mode chip) · StateDot/ActivityGlyph · Hairline/SectionLabel
 B responses    AnswerStream* · UserMessage*
 C work         ActivityStatus⭐ · TaskTree⭐ · ToolCallRow · ProgressRow
 D decisions    DecisionPrompt⭐ · PermissionModal* · SelectModal*

@@ -123,6 +123,55 @@ def test_resolve_falls_back_to_hardcoded_when_no_config(isolated_config):
     assert tui_main._resolve_model(None) == ("vibeproxy", None)
 
 
+# --- resolve YOLO: flag > pin > off ---
+
+def test_resolve_yolo_flag_forces_on(isolated_config):
+    # even with no pin, the flag wins
+    assert tui_main._resolve_yolo(True) is True
+
+
+def test_resolve_yolo_uses_pin_when_flag_absent(isolated_config):
+    from harness import config
+    config.update_default(backend="vibeproxy", model="x", yolo_pinned=True)
+    assert tui_main._resolve_yolo(False) is True
+
+
+def test_resolve_yolo_off_when_no_flag_no_pin(isolated_config):
+    assert tui_main._resolve_yolo(False) is False
+
+
+def test_main_passes_resolved_yolo_to_app(isolated_config, monkeypatch):
+    from harness import config
+    config.update_default(backend="mock", model="x", yolo_pinned=True)
+    captured = {}
+
+    class _FakeApp:
+        def __init__(self, **kw):
+            captured.update(kw)
+        def run(self):
+            pass
+
+    monkeypatch.setattr(tui_main, "HarnessTui", _FakeApp)
+    monkeypatch.setattr(tui_main.paths, "load_env", lambda cwd: None)
+    tui_main.main(["--model", "mock", "--cwd", str(isolated_config)])  # no --yolo flag
+    assert captured["yolo"] is True            # picked up from the pin
+
+
+def test_main_yolo_flag_overrides_absent_pin(isolated_config, monkeypatch):
+    captured = {}
+
+    class _FakeApp:
+        def __init__(self, **kw):
+            captured.update(kw)
+        def run(self):
+            pass
+
+    monkeypatch.setattr(tui_main, "HarnessTui", _FakeApp)
+    monkeypatch.setattr(tui_main.paths, "load_env", lambda cwd: None)
+    tui_main.main(["--model", "mock", "--cwd", str(isolated_config), "--yolo"])
+    assert captured["yolo"] is True
+
+
 # --- effective worker model id (the label the TUI footer shows) ---
 
 def test_effective_worker_model_id_mock_is_none():

@@ -12,6 +12,10 @@ def test_glyph_has_all_state_and_subtype_keys():
         assert GLYPH[key], f"empty glyph: {key}"
 
 
+def test_bypass_glyph_present():
+    assert GLYPH["bypass"] == "!"
+
+
 def test_status_label_is_uppercase():
     assert STATUS_LABEL["running"] == "RUNNING"
     assert STATUS_LABEL["completed"] == "COMPLETED"
