@@ -34,8 +34,9 @@ tuple. Nothing here is throwaway (see the arc spec's reuse ledger).
   injection, no model, no routing. The byte-identical-behavior guarantee for the
   agent is untouched — the chip just reads back what is already true.
 - **Reuse, don't reinvent.** The emit reuses the existing `with_meta` _meta channel;
-  the parse extends `harness_chips`; the destination (`FleetSnapshot.active_id`)
-  already exists. No parallel data path.
+  the parse + event + reduce mirror the proven `decision_from_meta → DecisionOpened →
+  _apply` structured path (NOT `harness_chips`, which only makes transcript strings);
+  the destination (`FleetSnapshot.active_id`) already exists. No parallel data path.
 - **Always shows something.** Unlike `persona_load` (gated on `injected` so the empty
   default stays silent), the `persona` chip emits for EVERY persona including
   `default` — an identity indicator must always show the truth.
@@ -43,6 +44,17 @@ tuple. Nothing here is throwaway (see the arc spec's reuse ledger).
 ---
 
 ## 3. Data flow
+
+**IMPORTANT (corrected after a Codex review against live code):** there is NO path
+today from `render.harness_chips` to `state.reduce`. `harness_chips` returns
+`list[str]` that `app.on_session_update` appends to the transcript as muted lines
+(app.py:780-781); `render_update` ignores `field_meta` entirely. The ONLY structured
+chip→reducer path is the **decision** one: `state.decision_from_meta(field_meta)` →
+`app._apply(DecisionOpened(view))` (app.py:777-779). C2a MUST mirror that path, NOT
+extend `harness_chips` (which would also leak the persona into the transcript and hit
+the empty-meta-chunk→RESPONDING wart). Likewise `FleetUpdated` (messages.py:35) is a
+DEAD message class — never posted or handled; the app updates presentation directly
+via `_apply()` + a status refresh, not via `FleetUpdated`.
 
 ```
 prompt(session_id) — after the task_classified emit (acp_agent.py:195-196):
@@ -53,12 +65,21 @@ prompt(session_id) — after the task_classified emit (acp_agent.py:195-196):
       state.persona_emitted = True
    │  ACP session/update _meta  (TuiClient → messages.SessionUpdate → app.on_session_update)
    ▼
-render.harness_chips(field_meta) / render_update — parse {"harness":{"persona":{"id":"fred"}}}
+state.persona_from_meta(field_meta) — NEW pure parser (mirrors decision_from_meta):
+   {"harness":{"persona":{"id":"fred"}}} → "fred" (else None). Guards isinstance.
    ▼
-state.reduce(snapshot, persona_event) → FleetSnapshot(active_id="fred",
-                                          agents=(AgentSnapshot(id="fred", name="fred"),))
+app.on_session_update: pid = persona_from_meta(field_meta); if pid: self._apply(PersonaResolved(pid))
+   (added beside the existing decision_from_meta call at app.py:777-779; does NOT go
+    through harness_chips, so nothing is appended to the transcript)
    ▼
-app posts FleetUpdated → _status_right() refresh → persona StatusChip shows "fred"
+state.reduce(snapshot, PersonaResolved(pid)) → sets active_id=pid AND ensures an
+   AgentSnapshot(id=pid, name=pid) is the active member (see §4 — this is a
+   TOP-LEVEL reduce change, since reduce() today never alters active_id or tuple
+   membership; _reduce_agent alone cannot do it).
+   ▼
+app refreshes the persona chip explicitly (a dedicated #statusbar-persona Static,
+   updated when PersonaResolved lands — NOT via the existing _status_right()/
+   _refresh_status() path, which only manages #statusbar-right's version/tokens).
 ```
 
 **Timing:** the chip appears after the **first turn's classification** (when the
@@ -67,10 +88,13 @@ prompt) the chip is **absent / neutral placeholder** — engine-truthful: nothin
 reported the id yet. (C2b may seed it eagerly; C2a does not guess.)
 
 **Emit placement:** right after the `task_classified` emit (acp_agent.py:195-196),
-BEFORE the gated `persona_load` block (acp_agent.py:198-209). Ordering: classified →
-persona → persona_load → memory_load. The `persona` chip is NOT gated on
+BEFORE the gated `persona_load` block (acp_agent.py:198-209) and BEFORE the
+clarify/ambiguous early-return (acp_agent.py:219-228, verified). Ordering: classified
+→ persona → persona_load → memory_load. The `persona` chip is NOT gated on
 `personalized` or `injected` — it fires on every turn-one regardless of dispatch path
 (chat/agent/clarify/ambiguous), because the indicator must show for every session.
+(Trade-off, accepted: this adds one session_update to the otherwise-minimal clarify
+path; the clarify-path tests must be updated to expect it.)
 
 ---
 
@@ -91,24 +115,34 @@ harness/acp_agent.py        EMIT. In prompt(), after the task_classified emit an
 harness/acp_session.py      One flag. Add `persona_emitted: bool = False` to
   SessionState (mirrors persona_load_emitted). The once-per-session gate.
 
-harness/tui/render.py       PARSE. Extend harness_chips (render.py:64-83): add a
-  `persona` branch mirroring the task_classified parse (render.py:71-77) —
-  harness.get("persona"); if a dict with a str "id", surface it. Also expose the id
-  to the reducer path (render_update), as the decision chip already does.
+harness/tui/state.py        PARSE + EVENT + REDUCE (all here — decision_from_meta and
+  the reducer events live in state.py, NOT render.py).
+  (a) `persona_from_meta(field_meta) -> str | None` — NEW pure parser mirroring
+      `decision_from_meta`: returns harness.persona.id when it's a str, else None.
+  (b) `@dataclass(frozen=True) class PersonaResolved: id: str` — NEW reducer event
+      (mirrors DecisionOpened at state.py:138).
+  (c) `reduce()` (state.py:214-221) gains a PersonaResolved case at the TOP LEVEL
+      (not _reduce_agent — that only sees the active agent and cannot change active_id
+      or tuple membership). On PersonaResolved(pid): set active_id=pid, and ensure the
+      agents tuple has an active AgentSnapshot(id=pid, name=pid) — replace the
+      bootstrap "default"/"agent" snapshot's id/name when there's a single agent, or
+      add one. Idempotent when pid already == active_id. THIS is the reuse-locked seam
+      (comment: C2b reads active_id for highlighting; C2c grows the tuple).
+  NOTE: FleetSnapshot exposes `.active` (a @property, state.py:79), NOT active_agent().
 
-harness/tui/state.py        REDUCE. A `persona` ReducerEvent writes the id into
-  FleetSnapshot.active_id AND the active AgentSnapshot.id/name. The fields already
-  exist (active_id, active_agent(); state.py hardcodes "default" today). Idempotent
-  on a repeated id. THIS is the reuse-locked seam (comment: C2b/c read these fields).
+harness/tui/app.py          PARSE-CALL + CHIP. Two edits:
+  (a) In on_session_update, beside the decision_from_meta call (app.py:777-779), add:
+      `pid = persona_from_meta(field_meta); if pid: self._apply(PersonaResolved(pid))`.
+      Do NOT route persona through harness_chips (that would append a transcript line).
+  (b) Mount a dedicated `#statusbar-persona` Static in the status-bar block
+      (app.py:218-226) and update it explicitly when a PersonaResolved lands (e.g. in
+      _apply, after reduce, refresh the persona Static from self._snapshot.active).
+      Do NOT rely on _status_right()/_refresh_status() — those only manage
+      #statusbar-right (version/tokens/commands), per the Codex review.
 
-harness/tui/widgets/status_chip.py   CHIP. A persona StatusChip for the status bar.
-  StatusChip already exists (mode/model/for_yolo). Add a persona instance/variant
-  (e.g. a for_persona constructor or a labeled StatusChip) with a persona/≡ glyph
-  from the theme token map.
-
-harness/tui/app.py          MOUNT. In the status-bar mount block (app.py:223-226),
-  add the persona chip beside the model/mode chips; refresh it on FleetUpdated via the
-  existing _status_right() path (app.py:245). One integration edit.
+(No new widget file is required for C2a — a styled Static/persona chip in the status
+bar suffices. A reusable persona StatusChip variant can wait for C2b's rail if needed;
+C2a does not pre-build it, YAGNI.)
 ```
 
 **Not touched in C2a:** `AppShell`, `AgentRail`, `SidebarToggle`, `list_personas()`
@@ -120,15 +154,24 @@ wiring, switching, engine multiplexing. (C2b/C2c.)
 
 | Case | Behavior |
 |---|---|
-| `state.workspace_dir is None` (no persona) | id → `"default"` (same fallback `_persona_key` uses). Chip shows `default`. |
-| `persona` chip malformed / no `id` | `harness_chips` skips it (existing `isinstance` guards). Chip keeps prior value / placeholder. Never raises. |
+| `state.workspace_dir is None` | id → `"default"`. NOTE (per Codex): in the real `dn-agent` path the default ALWAYS resolves to a concrete workspace, so `workspace_dir is None` is not the normal default case — it occurs only for a `HarnessAgent(workspace_dir=None)` (e.g. tests/mock). The `None → "default"` fallback is correct and harmless; test it with an explicitly-None agent. |
+| `persona` chip malformed / no `id` | `persona_from_meta` returns `None` (existing-style `isinstance` guards); no `PersonaResolved` is applied. Chip keeps prior value / placeholder. Never raises. |
 | LANDING (before first turn) | chip absent / neutral placeholder — no false claim. |
 | repeated `persona` event, same id | `reduce` is idempotent — same `active_id`, no flicker. |
-| `session_update` for the chip dropped | best-effort like every other chip; the chip just doesn't update. No crash. |
+| `session_update` for the chip dropped | best-effort; the chip just doesn't update. No crash. |
 
 **Truth invariant:** the chip equals `workspace_dir.name`, the exact key C1 uses for
 the model + persona + memory. The indicator cannot disagree with what the agent runs
 as — the reason for an engine push over a TUI echo.
+
+**Scope of "no behavior change" (corrected per Codex):** the persona emit changes NO
+model, router, injection, or session-history/transcript-record behavior — `_meta`
+session updates are not written to `SessionStore.history` or `SessionState.transcript`
+(verified). It is NOT byte-identical on the ACP wire (one extra `_meta` chunk) nor on
+the clarify path (one extra update). Because C2a uses the structured
+`persona_from_meta → PersonaResolved` path (NOT `harness_chips`), the persona does NOT
+appear as a transcript line, and because that path bypasses `render_update`/
+`ItemReceived`, it does NOT trigger the empty-meta-chunk→RESPONDING state wart.
 
 ---
 
@@ -141,15 +184,17 @@ Pure units exhaustively tested; the emit, parse, reduce, and render each isolata
   `default` too (NOT gated on injected); does NOT re-emit on the second turn
   (`persona_emitted` gate); `None` workspace → id `"default"`; fires on the
   clarify/ambiguous path too (unlike persona_load).
-- **`tests/test_tui_render.py`** (extend) — `harness_chips` parses a `persona` chip →
-  surfaces the id; malformed / missing-`id` chip is skipped, no raise.
-- **`tests/test_tui_state.py`** (extend) — `reduce` with a `persona` event writes
-  `active_id` + the active `AgentSnapshot.id`/`name`; idempotent on repeat. (The
-  reuse-locked field — comment notes C2b/c read it.)
-- **`tests/test_tui_pilot.py`** (extend) — the status bar renders a persona chip
-  showing the id after a turn; absent / neutral on LANDING.
-- **Truth lock** — a test asserting the chip's id equals `workspace_dir.name`, and
-  that emitting the chip changes no agent behavior (pure display).
+- **`tests/test_tui_state.py`** (extend) — `persona_from_meta` returns the id for a
+  well-formed chip, `None` for malformed/missing-`id`/non-dict (no raise); `reduce`
+  with `PersonaResolved("fred")` sets `active_id="fred"` and makes the active
+  `AgentSnapshot` `id/name == "fred"`; idempotent on repeat. (The reuse-locked field —
+  comment notes C2b reads `active_id`, C2c grows the tuple.)
+- **`tests/test_tui_pilot.py`** (extend) — the status bar's `#statusbar-persona`
+  renders the id after a turn; absent / neutral on LANDING.
+- **Truth lock** — a test that `persona_from_meta` round-trips `workspace_dir.name`
+  through to `FleetSnapshot.active`, and that the emit writes nothing to
+  `SessionStore.history` / `SessionState.transcript` (the "no session-history/model
+  behavior change" guarantee — NOT a byte-identical-wire claim).
 
 Full suite stays green; net-new tests cover emit + parse + reduce + render.
 
@@ -162,6 +207,8 @@ Full suite stays green; net-new tests cover emit + parse + reduce + render.
   `FleetSnapshot.active_id` (NOT echoed from `--persona`).
 - Default/None → `default`; malformed chips degrade silently; LANDING shows no false
   claim.
-- The seam (`persona` chip → `harness_chips` → `reduce` → `FleetSnapshot`) is wired so
-  C2b's rail and C2c's fleet read the same fields with no rework.
-- Full suite green; emit/parse/reduce/render each tested.
+- The seam (`persona` _meta emit → `persona_from_meta` → `PersonaResolved` →
+  `reduce` → `FleetSnapshot.active_id`) is wired so C2b's rail reads `active_id` and
+  C2c's fleet grows the same tuple — with the honest caveat that C2b still adds
+  `list_personas()` wiring for the non-active rail entries (see the arc spec).
+- Full suite green; parse/event/reduce/emit/render each tested.

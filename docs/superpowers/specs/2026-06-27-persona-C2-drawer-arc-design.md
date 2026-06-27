@@ -49,14 +49,18 @@ acp_agent.prompt()  — emits a `persona` _meta chip ({id: workspace_dir.name})
    │  ACP session/update _meta   (the SAME channel task_classified / persona_load /
    │                              skill_load already use — with_meta(...))
    ▼
-render.harness_chips()  — parses the chip (mirrors the task_classified parse)
+state.persona_from_meta()  — NEW pure parser (mirrors the EXISTING decision_from_meta
+                             → DecisionOpened → _apply structured path; NOT
+                             harness_chips, which only yields transcript strings)
    ▼
-state.reduce()  — writes the id into FleetSnapshot.active_id + an AgentSnapshot
-                  (FleetSnapshot already HAS active_id / active_agent(); today it is
-                  hardcoded "default" — C2a populates it from the real id)
+state.reduce(PersonaResolved(id))  — sets FleetSnapshot.active_id + ensures an active
+                  AgentSnapshot (FleetSnapshot already HAS active_id + the `.active`
+                  property; today active_id is hardcoded "default" — C2a populates it).
+                  This is a top-level reduce change (active_id/tuple membership), not
+                  just a per-agent fold.
    ▼
-presentation  — C2a: a status-bar persona chip.  C2b: the AgentRail reads the same
-                FleetSnapshot.agents.  C2c: the tuple grows to N agents.
+presentation  — C2a: a dedicated #statusbar-persona Static.  C2b: the AgentRail reads
+                FleetSnapshot.active_id for highlighting.  C2c: the tuple grows to N.
 ```
 
 **Engine-truthful (design-system H1):** the engine reports the persona it actually
@@ -65,14 +69,22 @@ unknown-id error, a defaulted launch, or a future server-chosen persona all show
 truth. This is why the data path is an engine→TUI push, not a TUI-side echo of the
 launch flag (an echo would bypass `FleetSnapshot`, forcing a rebuild at C2b).
 
-**The reuse ledger — nothing built in an earlier sub is thrown away:**
+**The reuse ledger (honest — corrected after a Codex review of the live code):**
 
 | C2a builds | C2b reuses as | C2c reuses as |
 |---|---|---|
-| `persona` chip emit | same emit, per agent | same, N agents |
-| `FleetSnapshot.active_id` populated from real id | rail highlights the active one | rail highlights among N |
-| persona `StatusChip` | chip stays; rail added beside it | unchanged |
-| (none) | `AppShell` + `AgentRail` + switch | rail renders N live agents |
+| `persona` _meta emit | same emit, per agent | same, N agents |
+| `persona_from_meta` + `PersonaResolved` event + reduce case | same parser/event path | same, fans out to N |
+| `FleetSnapshot.active_id` populated from real id | rail reads it to HIGHLIGHT the active one | highlights among N |
+| `#statusbar-persona` chip | chip stays; rail added beside it | unchanged |
+
+**What C2a does NOT give C2b for free (the honest gap):** C2a only ever populates the
+**active** agent in `FleetSnapshot.agents` (the engine reports one id — its own). The
+rail must list **all** personas, so **C2b still needs separate `list_personas()`
+wiring** to build the non-active rail entries, then merges active-highlighting from
+`active_id`. The reused part is the persona-event path + `active_id`; the rail's full
+roster is new C2b work. (C2c then replaces `list_personas()`-static entries with N
+live `AgentSnapshot`s from N real sessions.)
 
 ---
 
