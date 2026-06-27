@@ -45,6 +45,13 @@ reducer (`state.py`), or the four-category event model — it *uses* them.
 
 ---
 
+> **Codex adversarial review applied (2026-06-27).** The first draft overstated
+> what exists today and undersold the engineering cost of its own proposals. The
+> corrections are folded inline and flagged **[corrected]**; the load-bearing one
+> is §8/§6.3 — the "blocks" widgets are **blocked on a missing ordered-parts model
+> in the reducer**, so they are NOT "no new architectural seam." Read §8 first if
+> you're scoping the work.
+
 ## 1. Why this spike exists
 
 The existing design system is mature: tokens, an agent-state reducer, a clean
@@ -52,14 +59,21 @@ four-category model (responses / work / decisions / future), and an ~18-componen
 catalog. But it made one explicit punt: in the catalog, `AnswerStream` is marked
 *"exists today — kept unchanged… Do not replace."* The response **stream itself**
 — how prose, code, reasoning, and results are visually *sectioned* — was never
-designed. It is a single Textual `Markdown` widget that `.update()`s per token.
+fully designed.
 
-That punt is the user's complaint, verbatim: *"Blocks is one thing we're not
-doing well… everything is just thrown out."* Different sections of a response
-(prose vs. code vs. a result vs. the model's reasoning) currently read as one
-flat wall. This spike designs that missing layer, using OpenCode — which solved
-exactly this in a comparable terminal renderer — as the reference, and abstracts
-the solution into a reusable methodology.
+**[corrected]** It is *not* one undifferentiated Markdown widget. `app.py`
+already closes the live Markdown block at **in-turn boundaries** (a tool call, a
+thought, a stream reset) and opens a fresh one for the next prose
+(`_end_stream(boundary=True)` / `_boundary_after`, `app.py:103,635,648,727`). So
+today's transcript already has *coarse* block structure between prose runs. What
+it lacks is **per-part typing and styling**: a code fence, a diff, and the model's
+reasoning all still render as undifferentiated Markdown inside those runs.
+
+That gap is the user's complaint: *"Blocks is one thing we're not doing well…
+everything is just thrown out."* Prose vs. code vs. a result vs. reasoning are not
+visually distinct *kinds*. This spike designs that missing typing+styling layer,
+using OpenCode — which solved exactly this in a comparable terminal renderer — as
+the reference, and abstracts the solution into a reusable methodology.
 
 ---
 
@@ -97,9 +111,15 @@ part of this spike; §4–§7 are it applied.
 > kind; styling follows from kind.
 
 This is OpenCode's central structural decision (§4.1) and the direct antidote to
-"everything thrown out." Our reducer already produces typed `RenderedItem`s
-(`kind='message' | 'tool' | 'tool_update'`); we simply have not let that typing
-*reach the transcript's visual structure*. The methodology says: it must.
+"everything thrown out." **[corrected]** `render.py` produces typed
+`RenderedItem`s, but the kinds are coarse — `message | thought | user | tool |
+tool_update` (`render.py:15`) — and the *reducer drops them*: `state.reduce` has
+cases only for `message | tool | tool_update` (`state.py:178-190`), with **no
+`thought` case and no per-turn ordered-part list** on `AgentSnapshot`
+(`state.py:60-69` carries `tasks`/`tools`, not a transcript). So the part-typing
+this principle needs **does not exist yet end-to-end** — fenced code and diffs are
+sub-spans *inside* a `message`, and reasoning is silently dropped. The methodology
+says it must be made to exist; §8 scopes that as the gating work.
 
 ### 3.2 The four decision lenses
 
@@ -177,9 +197,13 @@ is right." It is:
 > **Proposal T (for the team to ratify):** tools render **transient while live**
 > (pinned, as now) and **settle into a collapsed result block in the transcript
 > when done** — a one-line `✓ Edit api.py · 3 hunks` part, click/`enter` to
-> expand (OpenCode's `BlockTool` collapse model, §6.3). Principle #7 is then
-> *refined*, not overturned: "the transcript holds responses **and settled
-> records**; only *in-flight* tool activity is pinned."
+> expand (OpenCode's `BlockTool` collapse model, §6.3). **[corrected — call it
+> what it is]** This **amends** principle #7, whose committed text is unambiguous:
+> "Transcript = user messages + agent responses **only**" and tool activity is
+> "**never** in the transcript" (`components.md:28,151`). Proposal T's new rule —
+> "the transcript holds responses **and settled tool records**; only *in-flight*
+> activity is pinned" — is a genuine reversal of "never," not a clarification.
+> Worth doing (below), but the team is amending a committed decision, eyes open.
 
 This keeps the conversation clean **while it's happening** (the original #7 win)
 and gives the user **durable history** (the OpenCode win) — and it fell out of a
@@ -203,10 +227,15 @@ the read.
   message's **parts** via a `PART_MAPPING` and renders each as a sibling block:
   `TextPart`, `ToolPart`, `ReasoningPart`, then a metadata footer
   `▣ {mode} · {model} · {duration}`.
-- **Each part** is wrapped `<box paddingLeft={3} marginTop={1} flexShrink={0}>`
-  and registered with `alwaysSeparate` (guarantees ≥1 blank line before it).
-  **This `paddingLeft={3} + marginTop={1}` is the entire "blocks" secret** —
-  parts are indented and breathing-spaced, not boxed.
+- **[corrected]** *Prose and reasoning* parts are wrapped
+  `<box paddingLeft={3} marginTop={1} flexShrink={0}>` (`TextPart` ~1684,
+  `ReasoningPart` ~1601) and registered with `alwaysSeparate` (≥1 blank line
+  before). Tool parts differ — `InlineToolRow` uses `paddingLeft={3}` with a
+  *dynamic* sibling margin (~1924) and `BlockTool` uses `paddingLeft={2}` (~1996).
+  So the indent isn't uniform, but the **pattern** holds: **a small left indent +
+  a 1-line top margin per part** is the core "blocks" lever — parts are indented
+  and breathing-spaced, not boxed. (Not literally "every part identical"; not "the
+  entire secret.")
 
 ### 5.2 User vs assistant distinction (`UserMessage`, ~1350-1420)
 
@@ -227,8 +256,11 @@ the read.
   backgroundColor={hover? backgroundMenu : backgroundPanel}>` — the expandable
   output container. Output **collapsed by default**, click-to-expand.
 - **Output capping:** `util/collapse-tool-output.ts` → `{ output, overflow }`,
-  truncates by **max lines first, then max chars**, appends `…`. (We already do a
-  per-subtype cap in `task_tree.py`; same idea.)
+  truncates by **max lines first, then max chars**, appends `…`. **[corrected]**
+  We *do* have a per-subtype cap, but in `tool_call_row.py:cap_body` (not
+  `task_tree.py`, which only joins labels), and it is **lines-only** — no char cap
+  (`tool_call_row.py:17-25`). So adopting OpenCode here means *adding* the
+  lines-**then**-chars step, not "same idea, already done."
 
 ### 5.4 Reasoning / thinking part (`ReasoningPart` ~1571-1677, `context/thinking.ts`)
 
@@ -263,8 +295,11 @@ Flat semantic `Theme` of `RGBA`s actually consumed in terminal rendering:
 `background / backgroundPanel / backgroundElement / backgroundMenu`,
 `borderActive`, `markdownText`, a **full `syntax*` set**
 (`syntaxComment/Keyword/String/Number/Function/Type/Variable/Operator/Punctuation/Builtin`),
-diff add/remove backgrounds, and a scalar **`thinkingOpacity`**. 40+ themes ship,
-selected by swapping this one object.
+diff add/remove backgrounds, and a scalar **`thinkingOpacity`**. **[corrected]**
+~30+ themes ship **bundled** (`DEFAULT_THEMES`, `theme/index.ts:130`), with
+plugin/custom/system themes layered on at runtime; "40+" counted those runtime
+additions. Either way the point stands: a theme is **this one flat object**,
+swapped wholesale.
 
 ### 5.8 Spacing philosophy (the "clean" feel, mechanically)
 
@@ -289,10 +324,10 @@ selected by swapping this one object.
 | `flexDirection="row" gap={1}` | `layout: horizontal;` + spacing | Inline tool row. |
 | `backgroundColor={hover?A:B}` | `:hover` is weak in terminals → prefer **focus/expanded** state bg, not mouse-hover | L4: don't lean on hover. |
 | `<markdown streaming>` | existing `AnswerStream` `Markdown` widget | Keep; wrap per-part. |
-| `<code filetype syntaxStyle>` | Rich `Syntax` renderable inside a `Static` | Needs syntax tokens (§6.2). |
-| `<diff view>` | Rich diff renderable / custom | Needs diff bg tokens (§6.2). |
+| `<code filetype syntaxStyle>` | Rich `Syntax` renderable inside a `Static` | Exists in Rich; needs syntax tokens (§6.2). |
+| `<diff view>` | **custom widget** (Rich has **no `rich.diff`**) | **[corrected] Pilot risk** — must be built from `Syntax` + diff bg tokens; not a ready primitive. Verify in Textual before scoping. |
 | `Spinner` (gradient scanner) | **our single `ActivityGlyph`** | Reject OpenCode's; keep ours (L4). |
-| `collapseToolOutput` | extend `ToolCallRow.cap_body` (already exists) | Same algorithm, lines-then-chars. |
+| `collapseToolOutput` | extend `ToolCallRow.cap_body` | **[corrected]** `cap_body` exists but is **lines-only** (`tool_call_row.py:17`); adopting OpenCode = *add* the char cap. |
 
 ### 6.2 Token expansion — **recommended, additive** (per the palette decision)
 
@@ -324,12 +359,23 @@ thinking-opacity   ~0.7   (a scalar, applied to muted reasoning text)
 
 ### 6.3 The blocks answer — proposed catalog additions (group B)
 
-Concrete new/changed catalog entries, all dumb+reactive, reading a part slice:
+> **[corrected] Prerequisite, not a free add.** These widgets are dumb+reactive,
+> but they read a **per-turn ordered list of typed parts that the reducer does not
+> emit today** (§3.1, §8). The gating work is engine/reducer-side — extend
+> `render.py`'s kinds (split fenced-code / diff out of `message`; surface
+> `thought`), add an **ordered `parts` field** to `AgentSnapshot`, and add the
+> missing reducer cases. **Only after that** are the widgets below "just catalog
+> additions." This is the seam the first draft wrongly called "no new
+> architectural seam" — see §8.
+
+Concrete new/changed catalog entries, all dumb+reactive, reading a part slice
+**(once the part model above exists)**:
 
 - **`MessagePartList`** *(new, the structural fix)* — the assistant message as an
   **ordered list of part widgets** instead of one `Markdown`. Reads the turn's
   parts in order; renders each part widget with the indent+rhythm policy (§3.3).
-  This is the single change that turns "thrown-out text" into "blocks."
+  This is the single change that turns "thrown-out text" into "blocks" — **and it
+  is blocked on the ordered-`parts` field above.**
 - **`TextBlock`** *(wraps existing `AnswerStream`)* — a prose part. Still the
   streaming `Markdown` widget; now one *part among siblings*, indented, with its
   own top-margin. **`AnswerStream` stays unchanged internally** (honors the
@@ -384,9 +430,13 @@ methodology intends.
 5. **Streaming appearance of `CodeBlock`/`DiffBlock`:** render incrementally
    (OpenCode `streaming=true`) or buffer until the fence closes? *Lens: P3.*
    Tradeoff: live feel vs. re-highlight flicker. Needs a pilot.
-6. **`MessagePartList` migration:** does the reducer already expose per-turn part
-   ordering, or is one additive field needed on `AgentSnapshot`/`RenderedItem`?
-   *Lens: P1.* A reducer read is required before building (§8).
+6. **[corrected] Part-model build (the gate, not a question):** the reducer does
+   **not** expose per-turn ordered parts today (`AgentSnapshot` has no `parts`
+   field; `state.reduce` has no `thought` case — `state.py:60-69,178-190`). So
+   this is **scoped work, not a yes/no**: extend `render.py` kinds, add an ordered
+   `parts` field + reducer cases, then build `MessagePartList`. *Lens: P1.* Decide
+   *how much* of the part model to build first (e.g. text+code+reasoning before
+   diff). Everything in §6.3 is downstream of this.
 
 ---
 
@@ -394,11 +444,15 @@ methodology intends.
 
 Per the project's debugging rule (validate against the running app, not theory):
 
-- **Confirm the part stream exists.** Verify what `render_update` /
-  `state.reduce` actually emit per turn (do text/tool/reasoning arrive as
-  orderable typed items today?). `MessagePartList` depends on this; everything
-  else is downstream. Check `harness/tui/render.py`, `state.py`,
-  `app.py:_stream_message`.
+- **[corrected] Build the part model first — it does not exist.** Verified
+  against live code: `render.py:15` kinds are coarse
+  (`message|thought|user|tool|tool_update`, no code/diff split), `state.reduce`
+  has **no `thought` case** and `AgentSnapshot` has **no ordered `parts` field**
+  (`state.py:60-69,178-190`). `MessagePartList` and every block in §6.3 depend on
+  adding that; it is the **first** task, not a precondition to "confirm." Note the
+  one thing that *does* help: `app.py` already breaks the Markdown stream at
+  in-turn boundaries (`_end_stream(boundary=True)`, `app.py:635`), so the coarse
+  prose-run split is a partial head start.
 - **Pilot the rhythm on a real transcript** — indent+1-line-margin parts — before
   committing tokens, to confirm "blocks" reads in our terminal at real width.
 - **Snapshot the new blocks** (idle/streaming/settled) like the existing
@@ -427,6 +481,10 @@ Per the project's debugging rule (validate against the running app, not theory):
   additive and documented like green/amber, the antithesis of OpenCode's
   40-theme maximalism.
 - **Six new/changed catalog entries** (`MessagePartList`, `TextBlock`,
-  `CodeBlock`, `DiffBlock`, `ReasoningBlock`, `ToolResultBlock`) express it all
-  through the existing tokens, reducer, and catalog — **no new architectural
-  seam**, consistent with the system it extends.
+  `CodeBlock`, `DiffBlock`, `ReasoningBlock`, `ToolResultBlock`) express it
+  through the existing tokens and catalog — **but on top of one real new seam**
+  *(corrected from the first draft)*: a per-turn **ordered typed-part model** in
+  `render.py`/`state.py` that does not exist today. That part model is the gating
+  task (§8); the widgets are downstream of it. **Two committed-decision amendments
+  need sign-off:** principle #7 (Proposal T, §4) and the palette (syntax/diff
+  sub-palette, §6.2).
