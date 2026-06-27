@@ -131,6 +131,71 @@ def test_tool_call_row_collapsed_line_unchanged():
     assert "⚑" in row.line_for(tool) and "pytest" in row.line_for(tool)
 
 
+# --- summarize_command (TaskTree smart command summary) ---
+
+from harness.tui.widgets.task_tree import summarize_command
+
+
+def test_summarize_first_real_command_plus_count():
+    cmd = 'cd harness && cat persona.py && echo "PERSONA_CONFIG" && cat persona_config.py'
+    assert summarize_command(cmd) == "cat persona.py  (+1 more)"
+
+
+def test_summarize_skips_leading_noise():
+    cmd = 'ls -la && echo "---" && git log --oneline -5 2>/dev/null'
+    assert summarize_command(cmd) == "git log"
+
+
+def test_summarize_first_non_flag_token_is_arg():
+    cmd = "cd harness && find templates -type f | head && echo CONFIG && cat config.py | head -80"
+    assert summarize_command(cmd) == "find templates  (+1 more)"
+
+
+def test_summarize_quoted_pattern_wins_over_flags():
+    cmd = 'cd harness && grep -rn "system_prompt\\|system prompt\\|x" *.py | head -40'
+    # search tools surface their first quoted pattern (capped, ellipsis), not flags
+    assert summarize_command(cmd) == 'grep "system_prompt\\|sys..."'
+
+
+def test_summarize_single_real_command_no_count():
+    cmd = "cd harness && nl -ba tracing_agent.py | head -90"
+    assert summarize_command(cmd) == "nl -ba tracing_agent.py"
+
+
+def test_summarize_python_inline_flag():
+    cmd = 'cd harness && python3 -c "import yaml,sys; print(1)"'
+    assert summarize_command(cmd) == "python3 -c"
+
+
+def test_summarize_all_noise_falls_back_to_full():
+    assert summarize_command("cd harness") == "cd harness"
+
+
+def test_summarize_empty_falls_back():
+    assert summarize_command("") == ""
+    assert summarize_command("   ") == ""
+
+
+def test_summarize_width_capped_with_ellipsis():
+    cmd = "cat " + "x" * 200
+    out = summarize_command(cmd)
+    assert len(out) <= 60
+    assert out.endswith("…")
+
+
+def test_lines_for_uses_summary_and_muted_count():
+    from harness.tui.state import TaskItem
+    from harness.tui.widgets.task_tree import TaskTree
+    tasks = (TaskItem(
+        label='cd harness && cat persona.py && echo X && cat persona_config.py',
+        status="done", tool_id="t1"),)
+    line = TaskTree().lines_for(tasks)[0]
+    assert "cat persona.py" in line
+    assert "persona_config.py" not in line       # full command not shown
+    assert "(+1 more)" in line
+    assert "$muted" in line                        # count is muted
+
+
 from harness.tui.state import DecisionView
 from harness.tui.widgets.decision_prompt import (
     DecisionPrompt, TYPE_SOMETHING, CHAT_ABOUT_IT,
