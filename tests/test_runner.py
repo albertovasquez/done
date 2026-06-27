@@ -220,3 +220,22 @@ def test_runner_forwards_memory_block(tmp_path, monkeypatch):
     runner = MiniSweAgentRunner(build_mock_model(), LocalEnvironment(cwd=str(tmp_path)), agent_cfg=cfg)
     list(runner.run("t", skill_block="\n\nS", persona_block="\n\nP", memory_block="\n\nM"))
     assert captured.get("memory_block") == "\n\nM"
+
+
+def test_runner_forwards_base_block(tmp_path, monkeypatch):
+    from harness.runner import MiniSweAgentRunner
+    from harness.models_mock import build_mock_model
+    from minisweagent.environments.local import LocalEnvironment
+    import yaml
+    from pathlib import Path
+    captured = {}
+    import harness.runner as rmod
+    real = rmod.TracingAgent
+    def spy(*a, **k):
+        captured.update(k)
+        return real(*a, **k)
+    monkeypatch.setattr(rmod, "TracingAgent", spy)
+    cfg = yaml.safe_load(Path("upstream/src/minisweagent/config/mini.yaml").read_text())["agent"]
+    runner = MiniSweAgentRunner(build_mock_model(), LocalEnvironment(cwd=str(tmp_path)), agent_cfg=cfg)
+    list(runner.run("t", base_block="\n\nBASEMARKER"))
+    assert captured.get("base_block") == "\n\nBASEMARKER"
