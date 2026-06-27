@@ -268,3 +268,28 @@ def test_persisted_model_applied_when_no_env_at_all(isolated_config, monkeypatch
 
     assert os.environ["VIBEPROXY_MODEL"] == "claude-opus-4-8"
     assert captured["worker_model_id"] == "claude-opus-4-8"
+
+
+# --- Task 7: --persona resolves per-persona model + flows to agent cmd & /reload ---
+
+def test_resolve_model_reads_named_persona_key(isolated_config, monkeypatch):
+    from harness import tui_main, config
+    config.save_agent("fred", config.AgentConfig(backend="vibeproxy", model="m-fred"))
+    backend, model = tui_main._resolve_model(None, "fred")
+    assert (backend, model) == ("vibeproxy", "m-fred")
+
+def test_resolve_model_default_persona_unchanged(isolated_config, monkeypatch):
+    from harness import tui_main, config
+    config.save_default(config.AgentConfig(backend="vibeproxy", model="m-def"))
+    assert tui_main._resolve_model(None, "default") == ("vibeproxy", "m-def")
+    assert tui_main._resolve_model(None, None) == ("vibeproxy", "m-def")
+
+def test_persona_flows_into_agent_cmd_and_relaunch(isolated_config, monkeypatch, tmp_path):
+    from harness import tui_main, paths
+    (paths.config_dir() / "agents" / "fred").mkdir(parents=True)
+    captured = {}
+    monkeypatch.setattr(tui_main, "HarnessTui",
+        lambda **kw: captured.update(kw) or type("A", (), {"run": lambda self: None, "_reexec": False})())
+    tui_main.main(["--model", "vibeproxy", "--cwd", str(tmp_path), "--persona", "fred"])
+    assert "--persona" in captured["agent_cmd"]
+    assert "fred" in captured["agent_cmd"]

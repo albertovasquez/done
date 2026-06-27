@@ -17,26 +17,27 @@ from harness import paths
 from harness.tui.app import HarnessTui
 
 
-def _resolve_model(explicit_backend: str | None) -> tuple[str, str | None]:
+def _resolve_model(explicit_backend: str | None,
+                   persona_id: str | None = None) -> tuple[str, str | None]:
     """Resolve (backend, model_override) by precedence: an explicit --model flag
     wins (and applies no model override — env/defaults stand); else the persisted
-    done.conf default; else the hardcoded ("vibeproxy", None). model_override is
-    the persisted model string to export as VIBEPROXY_MODEL, or None to leave the
-    env/default untouched."""
+    done.conf entry for this PERSONA; else the hardcoded ("vibeproxy", None).
+    model_override is the persisted model string to export as VIBEPROXY_MODEL, or
+    None to leave the env/default untouched."""
     if explicit_backend is not None:
         return explicit_backend, None
-    persisted = config.load_default()
+    persisted = config.load_agent(persona_id or "default")
     if persisted is not None:
         return persisted.backend, persisted.model
     return "vibeproxy", None
 
 
-def _resolve_yolo(flag: bool) -> bool:
-    """--yolo forces auto-allow on; else the persisted pin; else off. Mirrors
-    _resolve_model's precedence (explicit flag > done.conf > default)."""
+def _resolve_yolo(flag: bool, persona_id: str | None = None) -> bool:
+    """--yolo forces auto-allow on; else the persisted pin for this persona; else
+    off."""
     if flag:
         return True
-    return config.yolo_pinned()
+    return config.yolo_pinned(persona_id or "default")
 
 
 def _effective_worker_model_id(backend: str) -> str | None:
@@ -57,6 +58,8 @@ def _relaunch_args(args, cwd) -> list[str]:
     flags = ["--model", args.model, "--cwd", cwd]
     if args.yolo:
         flags.append("--yolo")
+    if getattr(args, "persona", None):
+        flags += ["--persona", args.persona]
     return flags
 
 
@@ -77,6 +80,8 @@ def main(argv=None) -> None:
                         help="project directory the agent operates on (default: current dir)")
     parser.add_argument("--yolo", action="store_true",
                         help="auto-allow every command — never prompt for permission")
+    parser.add_argument("--persona", default=None,
+                        help="persona workspace id to run as (default: the built-in default)")
     args = parser.parse_args(argv)
 
     cwd = str(Path(args.cwd).resolve()) if args.cwd else os.getcwd()
@@ -86,9 +91,9 @@ def main(argv=None) -> None:
     # os.environ here when the shell did NOT already set it.
     shell_set_model = "VIBEPROXY_MODEL" in os.environ
     paths.load_env(cwd)               # resolve VIBEPROXY_* before spawning the agent
-    backend, model_override = _resolve_model(args.model)
+    backend, model_override = _resolve_model(args.model, args.persona)
     args.model = backend              # normalize so _relaunch_args carries the resolved backend
-    yolo = _resolve_yolo(args.yolo)
+    yolo = _resolve_yolo(args.yolo, args.persona)
     args.yolo = yolo                  # normalize so /reload re-execs with the resolved state
     if model_override is not None and not shell_set_model:
         # The persisted (done.conf) model wins over any .env-derived value, but a
@@ -102,6 +107,8 @@ def main(argv=None) -> None:
     worker_model_id = _effective_worker_model_id(backend)
     # Pass --cwd through so the agent subprocess anchors .env to the same project.
     agent_cmd = [sys.executable, "-m", "harness.acp_main", "--model", backend, "--cwd", cwd]
+    if args.persona:
+        agent_cmd += ["--persona", args.persona]
     if args.yolo:
         agent_cmd.append("--yolo")    # auto-allow flows to the agent, which owns the gate
     app = HarnessTui(agent_cmd=agent_cmd, cwd=cwd, model=backend,
