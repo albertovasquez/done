@@ -134,6 +134,7 @@ class HarnessAgent(acp.Agent):
                 return {"ok": False, "error": str(e)}
             self._active_persona = pid
             self._worker_model_id = seat.model      # mirror active seat for read sites
+            self._store.get(seat.session_id).worker_model = seat.model
             return {"ok": True, "id": pid, "session_id": seat.session_id,
                     "model": seat.model}
         return {}
@@ -147,8 +148,20 @@ class HarnessAgent(acp.Agent):
         )
 
     async def new_session(self, cwd, additional_directories=None, mcp_servers=None, **kw):
-        return acp.NewSessionResponse(
-            session_id=self._store.new(cwd=cwd, workspace_dir=self._workspace_dir))
+        from harness.persona_sessions import resolve_session_model, Seat
+        session_id = self._store.new(cwd=cwd, workspace_dir=self._workspace_dir)
+        model = resolve_session_model(
+            self._active_persona,
+            shell_set_model=self._shell_set_model,
+            shell_env=self._shell_env,
+            dotenv=self._shell_env,
+            backend=self._backend,
+        )
+        self._store.get(session_id).worker_model = model
+        self._persona_sessions.register(self._active_persona, Seat(session_id=session_id, model=model))
+        if model is not None:
+            self._worker_model_id = model
+        return acp.NewSessionResponse(session_id=session_id)
 
     async def load_session(self, cwd, session_id, additional_directories=None,
                            mcp_servers=None, **kw):
@@ -179,6 +192,7 @@ class HarnessAgent(acp.Agent):
             # invalid_params is a classmethod that exists in the installed SDK
             raise acp.RequestError.invalid_params()
         state.cancel_flag.clear()
+        model_id = state.worker_model if state.worker_model is not None else self._worker_model_id
         text = "".join(getattr(b, "text", "") for b in prompt)
         transcript = state.transcript           # read once; every branch writes back per §6
 
@@ -268,14 +282,18 @@ class HarnessAgent(acp.Agent):
             return acp.PromptResponse(stop_reason="end_turn")
 
         # Render base_block once — used by both chat and agent paths below.
+        # Use the PER-SESSION model_id (resolved above from state.worker_model), not
+        # the process-global self._worker_model_id, so the base prompt reflects the
+        # active session's persona seat — consistent with how the model is bound for
+        # this turn (C2c). Falls back to "mock" when there is no model.
         base_block = base_prompt.render_base_prompt(
-            model_id=(self._worker_model_id or "mock"),
+            model_id=(model_id or "mock"),
             cwd=state.cwd, system_line=platform.platform())
 
         if cls.task_type == "chat_question":
             # hand the router's catalog so "what skills do we have?" is answered
             # from data, not the model (see ChatHandler.is_capability_question)
-            handler = ChatHandler(self._worker_model_id, catalog=self._router.catalog,
+            handler = ChatHandler(model_id, catalog=self._router.catalog,
                                   persona_block=(state.persona_block or "") + (state.memory_block or ""),
                                   base_block=base_block)
             pieces: list[str] = []
@@ -311,7 +329,7 @@ class HarnessAgent(acp.Agent):
                                       "skipped": ctx.skills.skipped}}))
         engine = await self._run_agent_turn(loop, session_id, state, text, ctx.skill_block,
                                             transcript, ctx.persona_block, ctx.memory_block,
-                                            base_block=base_block)
+                                            base_block=base_block, model_id=model_id)
         stop_reason = engine["stop_reason"]
         if stop_reason == "refusal":
             # streamed-on-screen == stored: never fold prior-turn prose in.
@@ -328,7 +346,7 @@ class HarnessAgent(acp.Agent):
         return acp.PromptResponse(stop_reason=stop_reason)
 
     async def _run_agent_turn(self, loop, session_id, state, text, skill_block, prior,
-                              persona_block="", memory_block="", base_block="") -> dict:
+                              persona_block="", memory_block="", base_block="", model_id=None) -> dict:
         # Tool-call ids are TURN-LOCAL: the counter resets each turn and the
         # "current id" lives here (not on SessionState), so the start/done/permission
         # handshake within this turn pairs correctly and ids restart at tc1 per turn.
@@ -452,7 +470,7 @@ class HarnessAgent(acp.Agent):
             try:
                 # pass the CURRENT worker model so /models hot-swaps the agent path
                 # too; the factory ignores the arg in mock mode.
-                agent = TracingAgent(self._model_factory(self._worker_model_id), env,
+                agent = TracingAgent(self._model_factory(model_id if model_id is not None else self._worker_model_id), env,
                                      emitter=emitter, skill_block=skill_block,
                                      persona_block=persona_block, memory_block=memory_block,
                                      base_block=base_block,

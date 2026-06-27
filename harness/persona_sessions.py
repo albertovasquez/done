@@ -59,6 +59,10 @@ class PersonaSessions:
         if seat is not None:
             self._seats[persona_id] = Seat(session_id=seat.session_id, model=model)
 
+    def register(self, persona_id: str, seat: Seat) -> None:
+        """Record an externally-minted seat (e.g. the launch seat from new_session)."""
+        self._seats[persona_id] = seat
+
     def get_or_create(self, persona_id, *, cwd, store, resolve_ws, resolve_model) -> Seat:
         seat = self._seats.get(persona_id)
         if seat is not None:

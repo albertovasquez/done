@@ -220,3 +220,43 @@ def test_set_model_persists_under_active_persona(agent_with_persona):
     asyncio.run(agent_with_persona.ext_method("harness/set_persona", {"id": "ana"}))
     asyncio.run(agent_with_persona.ext_method("harness/set_model", {"model": "m-ana-new"}))
     assert config.load_agent("ana").model == "m-ana-new"
+
+
+def test_new_session_registers_launch_seat(isolated_config):
+    """new_session must register the launch persona's seat so switch-back resumes
+    the SAME session instead of minting a fresh one (Defect B fix)."""
+    agent = _make_agent(backend="mock", cwd="/x")
+    agent._cwd = "/x"
+    resp = asyncio.run(agent.new_session(cwd="/x"))
+    launch_session_id = resp.session_id
+
+    # Switch back to "default" — must resume the original session, not re-mint.
+    back = asyncio.run(agent.ext_method("harness/set_persona", {"id": "default"}))
+    assert back["ok"] is True
+    assert back["session_id"] == launch_session_id
+
+
+def test_prompt_uses_session_model_not_global(isolated_config, tmp_path):
+    """The worker model must be session-bound (Defect A fix): switching to 'ana'
+    must NOT mutate the default session's worker_model; each seat carries its own."""
+    from harness import paths, config as cfg
+    # Seed the 'ana' persona dir + done.conf with model "m-ana"
+    ws = paths.config_dir() / "agents" / "ana"
+    ws.mkdir(parents=True)
+    cfg.save_agent("ana", cfg.AgentConfig(backend="vibeproxy", model="m-ana"))
+
+    agent = _make_agent(backend="vibeproxy", cwd="/x")
+    agent._cwd = "/x"
+    default_resp = asyncio.run(agent.new_session(cwd="/x"))
+    default_sid = default_resp.session_id
+    default_model = agent._store.get(default_sid).worker_model
+
+    # Switch to ana; get ana's session_id
+    ana_resp = asyncio.run(agent.ext_method("harness/set_persona", {"id": "ana"}))
+    assert ana_resp["ok"] is True
+    ana_sid = ana_resp["session_id"]
+
+    # Ana's session must have "m-ana" as its worker_model
+    assert agent._store.get(ana_sid).worker_model == "m-ana"
+    # Default session must be UNCHANGED — not overwritten with ana's model
+    assert agent._store.get(default_sid).worker_model == default_model
