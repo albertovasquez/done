@@ -198,9 +198,12 @@ class HarnessTui(App):
             return
         from harness.debug_trace import make_tracer, NullTracer
         if self._debug:
+            import os as _os
             import time as _time
             from harness import paths
-            run_dir = paths.runs_dir() / _time.strftime("%Y%m%d-%H%M%S")
+            # pid suffix so two launches in the same second don't collide on one
+            # run dir (Emitter opens mode "w" → the second would truncate the first).
+            run_dir = paths.runs_dir() / f"{_time.strftime('%Y%m%d-%H%M%S')}-{_os.getpid()}"
             self._tracer = make_tracer(True, run_dir)
         else:
             self._tracer = NullTracer()
