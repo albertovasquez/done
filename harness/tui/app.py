@@ -1056,6 +1056,9 @@ class HarnessTui(App):
     async def _create_persona(self, name: str) -> None:
         if self._conn is None:
             return
+        if self._turn_active:                 # inert mid-turn (mirror on_persona_selected)
+            self._notify_line("finish the current turn before creating a persona")
+            return
         try:
             resp = await self._conn.ext_method("harness/create_persona", {"id": name})
         except Exception as e:

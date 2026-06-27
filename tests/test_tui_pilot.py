@@ -1524,3 +1524,35 @@ def test_create_flow_error_keeps_current():
             )
 
     asyncio.run(go())
+
+
+def test_create_inert_mid_turn():
+    """_create_persona is a no-op when _turn_active is True."""
+    async def go():
+        class _FakeConn:
+            def __init__(self):
+                self.ext_calls = []
+
+            async def ext_method(self, method, params):
+                self.ext_calls.append((method, params))
+                return {"ok": True, "id": "fred", "session_id": "new-sess", "model": "m"}
+
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            conn = _FakeConn()
+            app._conn = conn
+            app._session_id = "keep"
+            app._turn_active = True
+
+            await app._create_persona("fred")
+            await pilot.pause()
+
+            assert ("harness/create_persona", {"id": "fred"}) not in conn.ext_calls, (
+                "ext_method must NOT be called while _turn_active is True"
+            )
+            assert app._session_id == "keep", (
+                f"_session_id must remain 'keep' mid-turn, got {app._session_id!r}"
+            )
+
+    asyncio.run(go())
