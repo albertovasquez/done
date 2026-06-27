@@ -249,3 +249,23 @@ def test_update_default_preserves_other_agents(tmp_path):
     assert agents["default"] == config.AgentConfig(backend="mock", model="old", yolo_pinned=True)
     assert agents["6f1c-uuid"] == config.AgentConfig(
         backend="vibeproxy", model="claude-opus-4-8", name="bill")
+
+
+def test_save_and_load_named_agent(isolated_config):
+    config.save_agent("fred", config.AgentConfig(backend="vibeproxy", model="m1"))
+    assert config.load_agent("fred") == config.AgentConfig(backend="vibeproxy", model="m1")
+
+def test_named_agent_isolated_from_default(isolated_config):
+    config.save_default(config.AgentConfig(backend="vibeproxy", model="d"))
+    config.save_agent("fred", config.AgentConfig(backend="vibeproxy", model="f"))
+    assert config.load_default() == config.AgentConfig(backend="vibeproxy", model="d")
+    assert config.load_agent("fred") == config.AgentConfig(backend="vibeproxy", model="f")
+
+def test_yolo_pinned_per_persona(isolated_config):
+    config.update_agent("fred", backend="vibeproxy", model="f", yolo_pinned=True)
+    assert config.yolo_pinned("fred") is True
+    assert config.yolo_pinned("default") is False
+
+def test_update_agent_refuses_incomplete_create(isolated_config):
+    config.update_agent("fred", yolo_pinned=True)   # no backend/model yet
+    assert config.load_agent("fred") is None         # nothing written
