@@ -53,6 +53,23 @@ def test_harness_debug_malformed_returns_none(tmp_path):
     assert config.harness_debug() is None
 
 
+def test_load_corrupt_file_warns(tmp_path, caplog):
+    """A done.conf that exists but won't parse silently resets every pin to {} —
+    that must be surfaced as a warning, not swallowed."""
+    _write(tmp_path, "this is = = not toml [[[")
+    with caplog.at_level("WARNING", logger="harness.config"):
+        assert config.load() == {}
+    assert any("unparseable" in r.message for r in caplog.records), \
+        f"corrupt done.conf must warn; got {[r.message for r in caplog.records]}"
+
+
+def test_load_missing_file_is_quiet(tmp_path, caplog):
+    """A missing file is normal first-run state and must NOT warn (only corrupt does)."""
+    with caplog.at_level("WARNING", logger="harness.config"):
+        assert config.load() == {}
+    assert not caplog.records, f"missing file must be quiet; got {[r.message for r in caplog.records]}"
+
+
 def test_conf_path_under_config_dir(tmp_path):
     assert config.conf_path() == tmp_path / "harness" / "done.conf"
 

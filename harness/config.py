@@ -15,12 +15,15 @@ into the boot path; callers handle write failures (see save_default)."""
 
 from __future__ import annotations
 
+import logging
 import os
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
 from harness import paths
+
+logger = logging.getLogger("harness.config")
 
 SCHEMA_VERSION = 1
 RESERVED_KEY = "default"
@@ -52,7 +55,12 @@ def load() -> dict[str, AgentConfig]:
         return {}
     try:
         data = tomllib.loads(raw.decode("utf-8"))
-    except (tomllib.TOMLDecodeError, UnicodeDecodeError):
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
+        # A file that EXISTS but won't parse is a real problem: every persisted
+        # model/yolo pin silently resolves to {} (defaults). A missing file
+        # (OSError above) is normal first-run and stays quiet; a corrupt one warns.
+        logger.warning("done.conf at %s is unparseable (%s); ignoring all persisted "
+                       "agent config this session", path, e)
         return {}
     agents_raw = data.get("agents")
     if not isinstance(agents_raw, dict):

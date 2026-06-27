@@ -7,6 +7,7 @@ in the executor so the async loop stays responsive to session/cancel."""
 from __future__ import annotations
 
 import asyncio
+import logging
 import platform
 from pathlib import Path
 
@@ -29,6 +30,8 @@ from harness.acp_session import SessionStore
 from harness.router import Router, Classification
 from harness.chat_handler import ChatHandler
 from harness.transcript import flatten_agent_messages
+
+logger = logging.getLogger("harness.acp_agent")
 
 
 class HarnessAgent(acp.Agent):
@@ -101,6 +104,10 @@ class HarnessAgent(acp.Agent):
                     config.save_agent(self._persona_key(),
                                       config.AgentConfig(backend=self._backend, model=model))
                 except Exception:
+                    # ok=False reaches the TUI, but the REASON is otherwise lost —
+                    # a silent persist failure means the pin won't stick next launch.
+                    logger.exception("failed to persist model pin for persona %r",
+                                     self._persona_key())
                     ok = False
             return {"ok": ok, "model": self._worker_model_id}
         if method == "harness/set_yolo":
@@ -130,10 +137,14 @@ class HarnessAgent(acp.Agent):
                     else:
                         config.update_agent(self._persona_key(), yolo_pinned=False)
                 except Exception:
+                    logger.exception("failed to persist yolo pin (=%s) for persona %r",
+                                     pin, self._persona_key())
                     ok = False             # surface the failure; do NOT claim success
             try:
                 pinned = config.yolo_pinned(self._persona_key())
             except Exception:
+                logger.exception("failed to read back yolo pin for persona %r",
+                                 self._persona_key())
                 pinned = False
             return {"ok": ok, "active": self._yolo, "pinned": pinned}
         if method == "harness/set_persona":

@@ -71,15 +71,20 @@ def test_set_model_empty_model_does_not_persist():
     assert config.load_default() is None  # nothing written for a no-op swap
 
 
-def test_set_model_reports_failure(monkeypatch):
+def test_set_model_reports_failure(monkeypatch, caplog):
     def boom(*a, **k):
         raise OSError("disk full")
     monkeypatch.setattr(config, "save_agent", boom)
     agent = _make_agent()
-    result = asyncio.run(agent.ext_method("harness/set_model", {"model": "x"}))
+    with caplog.at_level("ERROR", logger="harness.acp_agent"):
+        result = asyncio.run(agent.ext_method("harness/set_model", {"model": "x"}))
     # swap still applies in-session, but the response reports it did NOT persist
     assert result["model"] == "x"
     assert result["ok"] is False
+    # the REASON must be logged, not just signalled via ok=False (silent persist
+    # failure = the pin won't stick next launch, with no diagnostic)
+    assert any("persist model pin" in r.message for r in caplog.records), \
+        f"persist failure must be logged; got {[r.message for r in caplog.records]}"
 
 
 def test_set_yolo_active_true_sets_gate_no_persist():
