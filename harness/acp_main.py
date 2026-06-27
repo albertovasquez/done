@@ -81,6 +81,10 @@ async def _main(argv=None) -> None:
     from harness import persona_select
     try:
         workspace_dir = persona_select.resolve_workspace(args.persona)
+    except persona_select.InvalidPersonaId as e:
+        print(f'invalid persona id "{e}" — use only letters, digits, - or _',
+              file=sys.stderr)
+        raise SystemExit(2)
     except persona_select.UnknownPersona as e:
         print(f'no persona "{e}" — run /persona to list available personas',
               file=sys.stderr)

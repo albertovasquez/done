@@ -112,6 +112,10 @@ def main(argv: list[str] | None = None) -> int:
     from harness import persona_select as _persona_select
     try:
         workspace_dir = _persona_select.resolve_workspace(args.persona)
+    except _persona_select.InvalidPersonaId as e:
+        print(f'invalid persona id "{e}" — use only letters, digits, - or _',
+              file=_sys.stderr)
+        raise SystemExit(2)
     except _persona_select.UnknownPersona as e:
         print(f'no persona "{e}"', file=_sys.stderr)
         raise SystemExit(2)
