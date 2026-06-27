@@ -1220,6 +1220,10 @@ def test_esc_cancels_turn_even_when_rail_open():
                 "Esc with turn active must NOT close the rail "
                 "(it should fall through to action_cancel)"
             )
+            # ...and Esc must actually reach action_cancel (the "Cancel turn" binding).
+            assert cancel_called["v"] is True, (
+                "Esc with turn active must fall through to action_cancel"
+            )
 
     asyncio.run(go())
 

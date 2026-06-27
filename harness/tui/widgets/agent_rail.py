@@ -2,8 +2,9 @@
 
 Dumb/reactive: given a tuple of PersonaRow, renders one selectable line per
 persona (active marker + name) and posts PersonaSelected(id) when a row is
-chosen. No business logic — the app composes the rows (roster.persona_rows) and
-handles the selection (switch by re-exec). Mirrors select_modal's ListView usage."""
+chosen. No business logic — the app composes the rows (roster.persona_rows). The
+rail is VIEW-ONLY in C2b (selection does not switch personas; in-process switching
+is deferred to C2c). Mirrors select_modal's ListView usage."""
 
 from __future__ import annotations
 
