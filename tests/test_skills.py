@@ -14,14 +14,19 @@ def _write_skill(root: Path, name: str, description: str, body: str, *, dirname=
     return d
 
 
-def test_load_catalog_parses_frontmatter_sorted_and_skips_bad(tmp_path):
+def test_load_catalog_parses_frontmatter_sorted_and_skips_bad(tmp_path, caplog):
     _write_skill(tmp_path, "python-testing", "Write pytest tests", "# body")
     _write_skill(tmp_path, "git-pr-flow", "Make PRs", "# body2")
     (tmp_path / "no-skill-md").mkdir()                       # dir without SKILL.md -> skipped
     bad = tmp_path / "broken"; bad.mkdir()
     (bad / "SKILL.md").write_text("not: [valid", encoding="utf-8")  # malformed yaml -> skipped
-    catalog = load_catalog([tmp_path])
+    with caplog.at_level("WARNING", logger="harness.skills"):
+        catalog = load_catalog([tmp_path])
     assert catalog == [("git-pr-flow", "Make PRs"), ("python-testing", "Write pytest tests")]
+    # the malformed skill must be NAMED in a warning — otherwise it just vanishes
+    # from the catalog with no clue why it's unselectable.
+    assert any("broken" in r.message for r in caplog.records), \
+        f"malformed skill must be logged by name; got {[r.message for r in caplog.records]}"
 
 
 def test_load_catalog_absent_dir_is_empty(tmp_path):

@@ -67,7 +67,13 @@ def route_and_dispatch(prompt, *, router, emitter, make_chat_handler, run_agent,
     The caller owns the emitter's lifecycle (open/close); this function only
     emits through it. Returns an exit code (0 on a handled/declined request).
     """
-    cls = router.classify(prompt)
+    try:
+        cls = router.classify(prompt)
+    except Exception as e:  # noqa: BLE001 — record the failure in the trace, then re-raise
+        # The trace IS the point of this CLI; a run that died classifying must
+        # leave a record, not just a stderr line main() prints.
+        emitter.emit("task.classify_failed", error=str(e))
+        raise
     emitter.emit("task.classified", task_type=cls.task_type, skills=cls.skills,
                  confidence=cls.confidence, suggested_model=cls.suggested_model)
     if cls.needs_clarification:
@@ -97,7 +103,11 @@ def route_and_dispatch(prompt, *, router, emitter, make_chat_handler, run_agent,
     emitter.emit("skill.load", injected=load.injected, skipped=load.skipped)
     if cls.skills:
         echo(f"skills: injected {load.injected}, skipped {load.skipped}")
-    run_agent(prompt, skill_block=load.block)
+    try:
+        run_agent(prompt, skill_block=load.block)
+    except Exception as e:  # noqa: BLE001 — record the crash in the trace, then re-raise
+        emitter.emit("run.failed", error=str(e))
+        raise
     return 0
 
 
@@ -156,13 +166,10 @@ def main(argv: list[str] | None = None) -> int:
                 emitter.write_renumbered(event)
         except KeyboardInterrupt:
             print("\ninterrupted", file=sys.stderr)
-        except Exception as e:  # noqa: BLE001
-            if args.model == "vibeproxy":
-                print(f"\nVibeProxy run failed: {e}\n"
-                      f"Is VibeProxy running on {vibeproxy.base_url()}?",
-                      file=sys.stderr)
-            else:
-                raise
+        # NOTE: a run crash is NOT caught here — route_and_dispatch wraps the
+        # run_agent call and emits run.failed (the single trace seam), then it
+        # propagates to main()'s handler. (KeyboardInterrupt stays local: a
+        # Ctrl-C is a user abort, not a traced failure.)
 
     from harness import paths as _paths
     skills_roots = _paths.skills_dirs()
@@ -176,8 +183,8 @@ def main(argv: list[str] | None = None) -> int:
             run_agent=run_agent, ask_user=input, echo=print,
             worker_model_id=worker_model_id,
             load_skills=lambda names: skills.compose(skills_roots, names))
-    except Exception as e:  # noqa: BLE001 — router model unreachable etc.
-        print(f"\nRouter failed: {e}\n"
+    except Exception as e:  # noqa: BLE001 — classify OR run failure (both traced in route_and_dispatch)
+        print(f"\nRun failed: {e}\n"
               f"Is VibeProxy running on {vibeproxy.base_url()}? "
               f"(the router uses VibeProxy even when --model is mock)", file=sys.stderr)
         rc = 1
