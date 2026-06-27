@@ -66,6 +66,8 @@ def _relaunch_args(args, cwd) -> list[str]:
         flags.append("--yolo")
     if getattr(args, "persona", None):
         flags += ["--persona", args.persona]
+    if getattr(args, "debug", False):
+        flags.append("--debug")        # /reload preserves the trace state
     return flags
 
 
@@ -88,6 +90,8 @@ def main(argv=None) -> None:
                         help="auto-allow every command — never prompt for permission")
     parser.add_argument("--persona", default=None,
                         help="persona workspace id to run as (default: the built-in default)")
+    parser.add_argument("--debug", action="store_true",
+                        help="write a JSONL trace of this run to harness/runs/<ts>/trace.jsonl")
     args = parser.parse_args(argv)
 
     cwd = str(Path(args.cwd).resolve()) if args.cwd else os.getcwd()
@@ -101,6 +105,13 @@ def main(argv=None) -> None:
     args.model = backend              # normalize so _relaunch_args carries the resolved backend
     yolo = _resolve_yolo(args.yolo, args.persona)
     args.yolo = yolo                  # normalize so /reload re-execs with the resolved state
+    from harness.debug_flag import resolve_debug
+    try:
+        _conf_debug = config.harness_debug()
+    except Exception:
+        _conf_debug = None
+    debug = resolve_debug(args.debug, os.environ, _conf_debug)
+    args.debug = debug                # normalize so /reload re-execs with the resolved state
     worker_model_id = _effective_worker_model_id(backend, args.persona, shell_set_model)
     # Pass --cwd through so the agent subprocess anchors .env to the same project.
     agent_cmd = [sys.executable, "-m", "harness.acp_main", "--model", backend, "--cwd", cwd]
@@ -108,9 +119,11 @@ def main(argv=None) -> None:
         agent_cmd += ["--persona", args.persona]
     if args.yolo:
         agent_cmd.append("--yolo")    # auto-allow flows to the agent, which owns the gate
+    if debug:
+        agent_cmd.append("--debug")   # the subprocess relays trace payloads when set
     app = HarnessTui(agent_cmd=agent_cmd, cwd=cwd, model=backend,
                      worker_model_id=worker_model_id, yolo=yolo,
-                     persona=args.persona)
+                     persona=args.persona, debug=debug)
     app.run()
     if getattr(app, "_reexec", False):
         cmd = _relaunch_command(args, cwd)

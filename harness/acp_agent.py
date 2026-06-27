@@ -35,7 +35,8 @@ class HarnessAgent(acp.Agent):
     def __init__(self, *, model_factory, agent_cfg, skills_dir: list[Path], router: Router,
                  worker_model_id, yolo: bool = False, backend: str = "vibeproxy",
                  workspace_dir: Path | None = None, cwd: str | None = None,
-                 shell_set_model: bool = False, shell_env: str | None = None):
+                 shell_set_model: bool = False, shell_env: str | None = None,
+                 debug: bool = False):
         self._model_factory = model_factory
         self._agent_cfg = agent_cfg
         self._skills_dir = skills_dir
@@ -47,6 +48,7 @@ class HarnessAgent(acp.Agent):
         self._cwd = cwd
         self._shell_set_model = shell_set_model
         self._shell_env = shell_env
+        self._debug = debug               # --debug: relay a JSONL trace over with_meta
         self._store = SessionStore()
         from harness.persona_sessions import PersonaSessions
         self._persona_sessions = PersonaSessions()
@@ -521,7 +523,8 @@ class HarnessAgent(acp.Agent):
 
 def build_harness_agent(*, model_factory, agent_cfg, skills_dir: list[Path],
                         router: Router, worker_model_id=None,
-                        workspace_dir: Path | None = None) -> HarnessAgent:
+                        workspace_dir: Path | None = None,
+                        debug: bool = False) -> HarnessAgent:
     """Factory: wire the agent from resolved dependencies."""
     return HarnessAgent(
         model_factory=model_factory,
@@ -530,4 +533,5 @@ def build_harness_agent(*, model_factory, agent_cfg, skills_dir: list[Path],
         router=router,
         worker_model_id=worker_model_id,
         workspace_dir=workspace_dir,
+        debug=debug,
     )

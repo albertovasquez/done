@@ -72,7 +72,17 @@ async def _main(argv=None) -> None:
                         help="auto-allow every command without prompting (no permission modal)")
     parser.add_argument("--persona", default=None,
                         help="persona workspace id to run as (default: the built-in default)")
+    parser.add_argument("--debug", action="store_true",
+                        help="relay a JSONL trace of the dn↔agent loop to the client")
     args = parser.parse_args(argv)
+
+    from harness import config
+    from harness.debug_flag import resolve_debug
+    try:
+        conf_debug = config.harness_debug()
+    except Exception:
+        conf_debug = None
+    debug = resolve_debug(args.debug, os.environ, conf_debug)
 
     cwd = str(Path(args.cwd).resolve()) if args.cwd else os.getcwd()
     # Capture whether VIBEPROXY_MODEL came from the real SHELL env BEFORE load_env
@@ -133,6 +143,7 @@ async def _main(argv=None) -> None:
         cwd=cwd,
         shell_set_model=shell_set_model,
         shell_env=os.getenv("VIBEPROXY_MODEL"),
+        debug=debug,
     )
     await acp.run_agent(agent)
 

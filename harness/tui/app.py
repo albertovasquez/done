@@ -79,9 +79,12 @@ class HarnessTui(App):
 
     def __init__(self, agent_cmd: list[str], cwd: str, model: str,
                  worker_model_id: str | None = None, version: str = "0.5.0",
-                 yolo: bool = False, persona: str | None = None) -> None:
+                 yolo: bool = False, persona: str | None = None,
+                 debug: bool = False) -> None:
         super().__init__()
         self.agent_cmd = agent_cmd
+        self._debug = debug                   # --debug: write runs/<ts>/trace.jsonl
+        self._tracer = None                   # opened lazily in _connect (Task 4)
         self.cwd = cwd
         self.model = model
         self._worker_model_id = worker_model_id

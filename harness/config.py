@@ -183,3 +183,26 @@ def yolo_pinned(persona_id: str = "default") -> bool:
     table is absent or the file is unreadable."""
     cur = load_agent(persona_id)
     return cur.yolo_pinned if cur is not None else False
+
+
+def harness_debug() -> bool | None:
+    """The top-level `[harness] debug` flag from done.conf — a GLOBAL (not
+    per-persona) setting that pins the --debug trace on. Returns None when the
+    file/section/key is absent or unreadable, so a caller can apply its own
+    precedence (flag > env > this > off). Reads raw TOML rather than load() since
+    load() only surfaces [agents.*] tables."""
+    try:
+        raw = conf_path().read_bytes()
+    except OSError:
+        return None
+    if not raw.strip():
+        return None
+    try:
+        data = tomllib.loads(raw.decode("utf-8"))
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError):
+        return None
+    section = data.get("harness")
+    if not isinstance(section, dict):
+        return None
+    val = section.get("debug")
+    return val if isinstance(val, bool) else None

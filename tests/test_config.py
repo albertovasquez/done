@@ -24,6 +24,35 @@ def isolated_config(tmp_path, monkeypatch):
     return tmp_path
 
 
+def test_harness_debug_absent_returns_none(tmp_path):
+    assert config.harness_debug() is None          # no file
+
+
+def test_harness_debug_no_section_returns_none(tmp_path):
+    _write(tmp_path, "schema_version = 1\n")
+    assert config.harness_debug() is None
+
+
+def test_harness_debug_true(tmp_path):
+    _write(tmp_path, "[harness]\ndebug = true\n")
+    assert config.harness_debug() is True
+
+
+def test_harness_debug_false(tmp_path):
+    _write(tmp_path, "[harness]\ndebug = false\n")
+    assert config.harness_debug() is False
+
+
+def test_harness_debug_non_bool_returns_none(tmp_path):
+    _write(tmp_path, '[harness]\ndebug = "yes"\n')
+    assert config.harness_debug() is None
+
+
+def test_harness_debug_malformed_returns_none(tmp_path):
+    _write(tmp_path, "this is = = not toml [[[")
+    assert config.harness_debug() is None
+
+
 def test_conf_path_under_config_dir(tmp_path):
     assert config.conf_path() == tmp_path / "harness" / "done.conf"
 
