@@ -282,6 +282,23 @@ def mock_tool_call_row() -> str:
                 "ToolCallRow — collapsed line + expanded capped body")
 
 
+def mock_tool_edit_summary() -> str:
+    """Desired look (from a concept screenshot): an edit tool summarized as a
+    +N/-N diff-stat. NOT shipped — ToolView has no line counts yet."""
+    fg, muted, done, err = (hex_for("foreground"), hex_for("muted"),
+                            hex_for("success"), hex_for("error"))
+    head = (f'<span style="color:{done}">●</span> '
+            f'<span style="color:{fg};font-weight:700">Update</span>'
+            f'<span style="color:{fg}">(docs/superpowers/specs/2026-06-27-persona-C2b-rail-design.md)</span>')
+    summary = (f'&nbsp;&nbsp;<span style="color:{muted}">└ Added </span>'
+               f'<span style="color:{done};font-weight:700">42</span>'
+               f'<span style="color:{muted}"> lines, removed </span>'
+               f'<span style="color:{err};font-weight:700">11</span>'
+               f'<span style="color:{muted}"> lines</span>')
+    return term(f'<div class="line">{head}</div><div class="line">{summary}</div>',
+                "ToolCallRow / ToolResultBlock — desired edit summary (+N/−N diff-stat). NOT shipped: ToolView has no line counts.")
+
+
 def mock_user_message() -> str:
     acc = hex_for("accent")
     line = (f'<span style="color:{acc};font-weight:700">▌ '
@@ -574,6 +591,10 @@ def section_components() -> str:
         component_card("ToolCallRow", "shipped",
             "One tool call: subtype glyph + title + status (collapsed) / capped body (expanded).",
             mock_tool_call_row()),
+        component_card("ToolCallRow — edit summary (desired)", "designed",
+            "Desired look: an edit tool summarized as a +N/−N diff-stat (seed of "
+            "ToolResultBlock). Needs line counts on ToolView from the engine first.",
+            mock_tool_edit_summary(), usage_key="ToolCallRow"),
         component_card("UserMessage", "shipped",
             "Accent ▌ bar + bold text in the transcript (rendered inline in app.py).",
             mock_user_message()),

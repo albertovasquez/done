@@ -235,7 +235,7 @@ activity lives — never in the transcript (principle #7).
     → in_progress   applying patch (3 hunks)
 ```
 
-### `ToolCallRow`
+### `ToolCallRow`   `✅ shipped`
 One tool call, rendered as a **collapsed one-liner or expanded detail row inside
 `ActivityRegion`** — not a transcript widget.
 - **In:** `ToolView` (id, title, status, subtype, body)
@@ -253,6 +253,24 @@ One tool call, rendered as a **collapsed one-liner or expanded detail row inside
 [expanded]    ✎ harness/api.ts                       RUNNING
               applying patch (3 hunks)…
 ```
+
+**Desired look — edit summary (target, from a concept screenshot):** an *edit*
+tool should summarize its change as a one-line **`+N / −N` diff-stat** with a
+state-colored leading dot, instead of just a status word:
+
+```
+● Update(docs/.../persona-C2b-rail-design.md)
+  └ Added 42 lines, removed 11 lines
+```
+
+- **Not shipped:** `line_for` today renders `glyph + title + STATUS` only, and
+  `ToolView` carries **no line-change counts** — nothing in the TUI computes
+  `+N/−N`. Building this needs an **upstream data change**: `ToolView` gains
+  `added: int | None` / `removed: int | None`, the engine/`render.py` computes them
+  for edit/write tools, then `ToolCallRow` renders the summary.
+- This is the *settled-edit* seed of **`ToolResultBlock`** (the OpenCode spike's
+  collapsed transcript record). Color rule: dot = status token (green done / blue
+  running / red failed); `+N` in `$success`, `−N` in `$error` when shown.
 
 ### `ProgressRow`
 Columnar task row from the mockups: `TASK · STATUS · PROGRESS · ELAPSED`.
