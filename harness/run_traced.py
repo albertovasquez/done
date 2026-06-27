@@ -46,11 +46,15 @@ def _load_agent_config() -> dict:
 
 
 def _build_vibeproxy_model():
-    from minisweagent.models.litellm_model import LitellmModel
-    return LitellmModel(
+    # StreamingLitellmModel (not bare LitellmModel) so the standalone CLI advertises
+    # the full tool registry too; on_delta defaults None => byte-identical blocking path.
+    from harness.streaming_model import StreamingLitellmModel
+    from harness.tools.registry import build_registry
+    return StreamingLitellmModel(
         model_name=vibeproxy.model_id(vibeproxy.default_model()),
         model_kwargs=vibeproxy.model_kwargs(),
         cost_tracking="ignore_errors",
+        registry=build_registry(),
     )
 
 

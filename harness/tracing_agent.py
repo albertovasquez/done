@@ -34,13 +34,18 @@ from harness.events import Emitter
 class TracingAgent(DefaultAgent):
     def __init__(self, model, env, *, emitter: Emitter, skill_block: str = "",
                  persona_block: str = "", memory_block: str = "",
-                 base_block: str = "", **kwargs):
+                 base_block: str = "", registry=None, **kwargs):
         super().__init__(model, env, **kwargs)
         self._emitter = emitter
         self._skill_block = skill_block
         self._persona_block = persona_block
         self._memory_block = memory_block
         self._base_block = base_block
+        from harness.tools.registry import build_registry
+        # registry None => default tools (mock model passes None; the AGENT still
+        # needs tools to dispatch any tool_name action even when the model ignores them).
+        self._registry = registry if registry is not None else build_registry()
+        self._tools_by_name = {t.name: t for t in self._registry}
         self._run_start = time.time()  # tracer-local clock; parent's _start_time is set in __init__
 
     def _render_template(self, template: str) -> str:
@@ -143,19 +148,29 @@ class TracingAgent(DefaultAgent):
                            content_preview=preview)
         return message
 
-    # --- seam 3: shell exec ---
+    # --- seam 3: tool dispatch (bash via env.execute; file tools via Tool.execute) ---
     def execute_actions(self, message: dict) -> list[dict]:
         outputs = []
         for action in message.get("extra", {}).get("actions", []):
-            command = action.get("command", "")
-            self._emitter.emit("action", command=command)
-            try:
-                output = self.env.execute(action)
-            except Submitted:
-                # The submit command finished successfully; env raised before
-                # returning. Emit the done event, then re-raise so the loop ends.
-                self._emitter.emit("action.done", returncode=0, output_bytes=0)
-                raise
+            name = action.get("tool_name", "bash")   # missing => bash (mock back-compat)
+            tool = self._tools_by_name.get(name)
+            if tool is None:
+                # Parse already rejects unknown names; guard the hand-built/ACP path
+                # so a stray name is a FormatError, not an uncaught run-killer.
+                raise FormatError({"role": "user", "content": f"Unknown tool '{name}'.",
+                                   "extra": {"interrupt_type": "FormatError"}})
+            label = action.get("command") if name == "bash" else tool.display_label(action.get("args", {}))
+            self._emitter.emit("action", command=label or "")
+            if name == "bash":
+                try:
+                    output = self.env.execute(action)
+                except Submitted:
+                    # The submit command finished successfully; env raised before
+                    # returning. Emit the done event, then re-raise so the loop ends.
+                    self._emitter.emit("action.done", returncode=0, output_bytes=0)
+                    raise
+            else:
+                output = tool.execute(action.get("args", {}), self.env)
             outputs.append(output)
             self._emitter.emit("action.done",
                                returncode=output.get("returncode", -1),

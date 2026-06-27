@@ -89,6 +89,20 @@ def test_infer_subtype():
     assert infer_subtype("$ pytest") == "test"   # leading "$ " stripped
 
 
+def test_infer_subtype_classifies_file_tools():
+    # the new Read/Write/Edit tools' display labels start with the verb
+    assert infer_subtype("read harness/api.py") == "read"
+    assert infer_subtype("edit harness/api.py") == "edit"
+    assert infer_subtype("write harness/api.py") == "edit"   # closest shipped glyph (✎)
+
+
+def test_infer_subtype_file_tools_do_not_break_shell_first_words():
+    # regression: the new verbs must not steal classification from real shell cmds
+    assert infer_subtype("grep -rn foo") == "search"
+    assert infer_subtype("cat README.md") == "read"
+    assert infer_subtype("echo hi") == "shell"
+
+
 def test_initial_snapshot_one_idle_agent():
     fs = initial_snapshot()
     assert len(fs.agents) == 1

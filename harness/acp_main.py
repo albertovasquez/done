@@ -53,12 +53,14 @@ def _model_factory(model_choice: str):
     # no top-level api_base/api_key fields); mirror run_traced.py's proven wiring.
     def make(current_model=None):
         from harness.streaming_model import StreamingLitellmModel
+        from harness.tools.registry import build_registry
         from harness import vibeproxy
         model_id = current_model or vibeproxy.default_model()
         return StreamingLitellmModel(
             model_name=vibeproxy.model_id(model_id),
             model_kwargs=vibeproxy.model_kwargs(),
             cost_tracking="ignore_errors",
+            registry=build_registry(),
         )
     return make
 

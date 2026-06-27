@@ -29,6 +29,9 @@ Approval in one context does not extend to the next.
 - Before deleting or overwriting something, look at it first. If what you find \
 contradicts how it was described, surface that instead of proceeding.
 - Reference code as file_path:line_number so it is clickable.
+- Prefer the dedicated Read, Write, and Edit tools over shelling out with cat or \
+sed for file operations: they are precise and traceable. Use bash for everything \
+else.
 - Match the surrounding code's style, naming, idiom, and comment density. Make \
 surgical changes; every changed line should trace to the task.
 - For multi-step work, publish a short plan up front by running a command of the \

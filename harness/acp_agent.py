@@ -538,10 +538,13 @@ class HarnessAgent(acp.Agent):
             try:
                 # pass the CURRENT worker model so /models hot-swaps the agent path
                 # too; the factory ignores the arg in mock mode.
-                agent = TracingAgent(self._model_factory(model_id if model_id is not None else self._worker_model_id), env,
+                model_obj = self._model_factory(model_id if model_id is not None else self._worker_model_id)
+                agent = TracingAgent(model_obj, env,
                                      emitter=emitter, skill_block=skill_block,
                                      persona_block=persona_block, memory_block=memory_block,
                                      base_block=base_block,
+                                     # share the model's registry; None (mock) => agent default.
+                                     registry=getattr(model_obj, "registry", None),
                                      **cfg)
                 agent_ref["agent"] = agent
                 model = agent.model

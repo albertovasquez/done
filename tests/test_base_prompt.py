@@ -44,3 +44,13 @@ def test_base_prompt_instructs_plan_for_multistep():
     assert "multi-step" in low and "plan" in low
     # teaches the concrete sentinel command grammar (label:status)
     assert "in_progress" in low and ":pending" in low
+
+
+def test_policy_mentions_dedicated_file_tools_over_shell():
+    body = base_prompt.BASE_POLICY.lower()
+    assert "read" in body and "edit" in body
+    assert "prefer" in body  # the file-tools-over-shell guidance line
+
+
+def test_policy_does_not_promise_parallel_tool_calls():
+    assert "parallel" not in base_prompt.BASE_POLICY.lower()  # deferred follow-up

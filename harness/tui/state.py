@@ -97,6 +97,10 @@ def infer_subtype(command: str) -> str:
     first = low.split()[0] if low.split() else ""
     if "pytest" in low or first == "test":
         return "test"
+    if first == "read":          # the dedicated Read tool's display label
+        return "read"
+    if first in ("write", "edit"):   # Write/Edit tools → ✎ (closest shipped glyph)
+        return "edit"
     if first in ("sed", "apply_patch", "patch") or "apply_patch" in low:
         return "edit"
     if first in ("grep", "rg", "find", "ag"):
