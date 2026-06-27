@@ -4,6 +4,7 @@ unit-testable in isolation."""
 
 from __future__ import annotations
 
+import shlex
 from typing import Any
 
 from acp import (
@@ -12,7 +13,14 @@ from acp import (
     tool_content,
     text_block,
     update_agent_message_text,
+    update_plan,
+    plan_entry,
 )
+
+# The sentinel command the agent runs to publish a plan. The harness intercepts
+# it, emits an ACP plan update, and does NOT execute it as a shell command — the
+# same "structured capability over the bash-only channel" pattern memory uses.
+_PLAN_STATUSES = {"pending", "in_progress", "completed"}
 
 
 def tool_call_start(tool_call_id: str, command: str):
@@ -34,3 +42,37 @@ def with_meta(update, harness_meta: dict[str, Any]):
     existing = update.field_meta or {}
     update.field_meta = {**existing, "harness": harness_meta}
     return update
+
+
+def parse_plan_command(command: str) -> list[tuple[str, str]] | None:
+    """If `command` is the sentinel `plan ...` command, parse its args into
+    (label, status) pairs; otherwise return None (so the caller runs it as a
+    normal shell command). Each arg is `label:status`; status defaults to
+    'pending' and unknown statuses fall back to 'pending'. Labels may contain
+    colons (we split on the LAST colon). Malformed quoting returns None.
+
+    Pure: no I/O. `plan` with no args is a valid empty plan -> []."""
+    text = command.strip()
+    if text.startswith("$ "):
+        text = text[2:].strip()
+    try:
+        tokens = shlex.split(text)
+    except ValueError:
+        return None                      # unbalanced quotes — not a plan command
+    if not tokens or tokens[0] != "plan":
+        return None
+    entries: list[tuple[str, str]] = []
+    for arg in tokens[1:]:
+        label, sep, status = arg.rpartition(":")
+        if not sep:                      # no colon — whole arg is the label
+            label, status = arg, "pending"
+        if status not in _PLAN_STATUSES:
+            status = "pending"
+        if label:
+            entries.append((label, status))
+    return entries
+
+
+def plan_update(entries: list[tuple[str, str]]):
+    """Build an ACP plan update from (label, status) pairs."""
+    return update_plan([plan_entry(label, status=status) for label, status in entries])

@@ -53,8 +53,23 @@ def test_render_tool_call_progress_no_content():
     assert render_update(u) == RenderedItem(kind="tool_update", id="tc1", status="failed", body="")
 
 
+def test_render_plan_update():
+    entry_a = NS(content="Push + PR", status="in_progress")
+    entry_b = NS(content="CI + merge", status="pending")
+    u = _named("AgentPlanUpdate", entries=[entry_a, entry_b])
+    assert render_update(u) == RenderedItem(
+        kind="plan",
+        entries=(("Push + PR", "in_progress"), ("CI + merge", "pending")),
+    )
+
+
+def test_render_plan_update_empty():
+    u = _named("AgentPlanUpdate", entries=[])
+    assert render_update(u) == RenderedItem(kind="plan", entries=())
+
+
 def test_render_unknown_returns_none():
-    assert render_update(_named("AgentPlanUpdate", plan=[])) is None
+    assert render_update(_named("SomeFutureUpdate", foo=1)) is None
 
 
 def test_status_style_all_str_forms():

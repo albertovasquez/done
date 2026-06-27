@@ -12,12 +12,13 @@ from harness.tui.tokens import GLYPH
 
 @dataclass(frozen=True)
 class RenderedItem:
-    kind: str                 # "message" | "thought" | "user" | "tool" | "tool_update"
+    kind: str                 # "message" | "thought" | "user" | "tool" | "tool_update" | "plan"
     text: str = ""            # message/thought/user body
     id: str = ""              # tool_call_id (tool / tool_update correlation)
     title: str = ""           # "$ <command>" (tool)
     status: str = ""          # pending|in_progress|completed|failed
     body: str = ""            # tool output (tool_update)
+    entries: tuple[tuple[str, str], ...] = ()   # plan: ((content, status), …)
 
 
 _STATUS_COLORS = {
@@ -58,7 +59,13 @@ def render_update(update) -> RenderedItem | None:
                             id=getattr(update, "tool_call_id", ""),
                             status=str(getattr(update, "status", "")),
                             body=body)
-    return None                      # plan, current_mode_update, etc. — forward-compat
+    if name == "AgentPlanUpdate":
+        entries = tuple(
+            (getattr(e, "content", "") or "", str(getattr(e, "status", "")))
+            for e in (getattr(update, "entries", None) or [])
+        )
+        return RenderedItem(kind="plan", entries=entries)
+    return None                      # current_mode_update, etc. — forward-compat
 
 
 def harness_chips(field_meta: dict | None) -> list[str]:

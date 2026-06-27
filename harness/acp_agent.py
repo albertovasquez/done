@@ -22,7 +22,8 @@ from harness import config
 from harness import memory as memory_mod
 from harness import persona
 from harness import skills
-from harness.acp_emit import tool_call_start, tool_call_done, message_chunk, with_meta
+from harness.acp_emit import (tool_call_start, tool_call_done, message_chunk,
+                              with_meta, plan_update)
 from harness.acp_env import AcpEnvironment
 from harness.acp_session import SessionStore
 from harness.router import Router, Classification
@@ -403,6 +404,12 @@ class HarnessAgent(acp.Agent):
                 self._conn.session_update(session_id, upd), loop)
             fut.result()
 
+        def on_plan(entries: list[tuple[str, str]]) -> None:
+            # runs on the worker thread → marshal the ACP plan update to the loop.
+            # Full-snapshot replace: the agent re-emits the whole list each time.
+            asyncio.run_coroutine_threadsafe(
+                self._conn.session_update(session_id, plan_update(entries)), loop).result()
+
         def request_permission(command: str) -> bool:
             # --yolo: auto-allow everything, no client round-trip, no modal.
             if self._auto_allow():
@@ -467,7 +474,8 @@ class HarnessAgent(acp.Agent):
         env = AcpEnvironment(cwd=state.cwd, on_command=on_command,
                              request_permission=request_permission,
                              cancel_flag=state.cancel_flag,
-                             client_terminal=client_terminal)
+                             client_terminal=client_terminal,
+                             on_plan=on_plan)
 
         def run_engine() -> dict:
             from harness.tracing_agent import TracingAgent
