@@ -32,16 +32,21 @@ reducer (`state.py`), or the four-category event model — it *uses* them.
 3. **The core problem** ("everything is just thrown out, no blocks") is a
    **part model** problem, not a styling problem. OpenCode renders a message as a
    sequence of typed **parts** (text · tool · reasoning), each its own block with
-   its own rhythm. We render the response as one undifferentiated Markdown blob.
-   The fix is structural (§5), and it slots onto our existing reducer.
-4. **Recommended now:** adopt a **message-parts model** for the transcript, an
-   assistant-part **indentation + 1-line-rhythm** discipline, a **collapsible
-   reasoning block**, and a **syntax/diff token expansion** (§6) — all expressed
-   through the existing catalog and tokens.
+   its own rhythm; we render the response as coarse Markdown runs that don't know
+   prose from code from reasoning. **The fix is a real new seam, not a free
+   catalog add:** the ordered typed-part model does **not** exist end-to-end today
+   (§3.1, §7 Q0) — it is the *gating build* everything else waits on.
+4. **Recommended now:** build that part model, then adopt an **indentation +
+   1-line-rhythm** discipline, a **collapsible reasoning block**, and a small
+   brand-derived **syntax/diff token expansion** (§6) — rejecting OpenCode's
+   maximalism. **Spend first design energy on the two calmest-looking risks:** the
+   live→settled tool **transition** (§4, §7 Q1b) and the **diff renderer** (§7 Q2,
+   plausibly the single largest build) — that's where the elegance meets friction.
 5. **The one genuinely contested decision — tools *inline* (OpenCode) vs *pinned*
-   (our principle #7) — is left as a worked open question (§4, §7),** resolved
-   *by the methodology* rather than decreed, because that is exactly the kind of
-   call the framework exists to make.
+   (our principle #7) — is a worked open question (§4, §7).** Persistence (L2)
+   resolves *placement* into a lifecycle; restraint (L4) then **bites the
+   resulting transition** (§3.2 worked example B) — the one place the methodology
+   turns against a decision its own author proposed.
 
 ---
 
@@ -121,32 +126,62 @@ this principle needs **does not exist yet end-to-end** — fenced code and diffs
 sub-spans *inside* a `message`, and reasoning is silently dropped. The methodology
 says it must be made to exist; §8 scopes that as the gating work.
 
-### 3.2 The four decision lenses
+### 3.2 The decision procedure: two lenses + two checks
 
-For **any** "how should this render?" question, pass it through these four lenses
-in order. They are derived from the existing laws, not invented:
+> **[corrected — held to our own P2.** The first draft framed this as "four
+> lenses (L1–L4) of equal weight." That over-built the apparatus and, worse,
+> failed the document's own rule (P2: use the weakest device that reads). On
+> inspection only **two** of the four actually *decide* anything; the other two
+> are a precondition and a knob. Naming four made the procedure scan as
+> systematic; it isn't. Here is the pruned, honest version.**]**
 
-- **L1 — Kind.** *What part-kind is this, and what does the engine actually emit
-  for it?* (engine-truthful, per H1/H5). Never style something you can't name
-  from a real signal.
-- **L2 — Persistence.** *Is this a permanent record of what happened, or a
-  transient view of what's happening now?* Permanent → it belongs in the
-  scrollback transcript. Transient → it belongs in the pinned activity zone.
-  **This single lens resolves the tools tension (§4).**
-- **L3 — Density & default state.** *How much does the user need by default vs.
-  on demand?* Pick the collapsed-by-default vs. expanded default, and the line
-  cap, from this — not from the data's size. (OpenCode's `collapseToolOutput`,
-  reasoning-collapsed-by-default.)
-- **L4 — Restraint (H4).** *Does any motion/color here communicate a state
-  change, or is it decoration?* Decoration is cut. One looping glyph, ≤250ms
-  transitions, monochrome-survivable status. This lens is where we **reject**
-  parts of OpenCode (its Knight-Rider gradient spinner, §6.4).
+Two of these are **lenses** — they resolve contested questions. Two are
+**checks** — steps you run, but they don't adjudicate a fight:
 
-> **Worked example (the contested one):** "Where does a tool call render?"
-> L1: kind = tool (engine emits start/progress/end). L2: a *completed* tool call
-> is a permanent record of what the agent did → transcript; a *running* tool is a
-> transient view → pinned zone. **The lens reveals the tension isn't binary —
-> it's a lifecycle.** See §4.
+- **L2 — Persistence (the *generative* lens).** *Is this a permanent record of
+  what happened, or a transient view of what's happening now?* Permanent →
+  scrollback transcript. Transient → pinned activity zone. This is the only lens
+  in the document that produced an answer *not already contained in its inputs*:
+  applied to the tools tension it yields neither "inline" nor "pinned" but a
+  **lifecycle** (§4). A generative lens earns its place by telling you something
+  the priors didn't.
+- **L4 — Restraint / H4 (the *eliminative* lens).** *Does any motion or color
+  here communicate a state change, or is it decoration?* Decoration is cut. One
+  looping glyph, ≤250ms transitions, monochrome-survivable status. L4 only ever
+  says **no** — it rejects (the Knight-Rider spinner §6.4, hover-bg, 40 themes).
+  A "no" lens is real, but note it builds nothing; keep that distinct from L2.
+- **C1 — Name the kind (a *check*, = P1).** *What part-kind is this, and what does
+  the engine actually emit for it?* This is the precondition, not a decision — it
+  is P1 restated as step one. (The first draft called it "L1" to pad the list.)
+- **C2 — Pick a default density (a *check*).** *How much does the user need by
+  default vs. on demand?* Choose collapsed-vs-expanded and the line cap. A knob,
+  not an arbiter; in this document every C2 call resolves to "collapsed," which
+  is taste, not the procedure forcing a hand.
+
+So the real procedure is: **name the kind (C1), set a default density (C2),
+resolve placement with persistence (L2), and prune with restraint (L4).** Two
+lenses doing the adjudication; two checks keeping you honest.
+
+> **Worked example A — the lens that *agrees* with taste (L2, the contested
+> case).** "Where does a tool call render?" C1: kind = tool. L2: a *completed*
+> tool call is a permanent record → transcript; a *running* tool is transient →
+> pinned. The tension isn't binary, it's a lifecycle (§4). Clean — but note this
+> verdict is one the author was happy to reach.
+>
+> **Worked example B — the lens that *bites against* the author's own
+> recommendation (L4 vs. Proposal T).** §4 recommends the live→settled handoff:
+> the tool call dissolves from the pinned zone and rematerializes as a collapsed
+> line in scrollback. Run L4 on **that transition**, not on its resting states: a
+> tracked element disappearing from where the user was looking and reappearing
+> elsewhere is *motion that does not cleanly communicate a single state change* —
+> exactly what H4/L4 is built to distrust. **L4 does not bless Proposal T's
+> cutover for free; it flags it.** This is the procedure turning on a decision its
+> own author proposed — the only real test of whether a framework is more than
+> after-the-fact narration. The transition is therefore elevated to an explicit
+> open question (§7, Q1b), not waved through. *Honesty note: every other lens
+> verdict in this document happens to match the author's prior taste; until a
+> lens forces a genuinely unwelcome ship-or-don't-ship, treat the procedure as
+> scaffolding, not scripture.*
 
 ### 3.3 The hierarchy ladder (how blocks separate, cheaply)
 
@@ -210,6 +245,33 @@ and gives the user **durable history** (the OpenCode win) — and it fell out of
 lens, which is the point. **Left as an open question (§7) only because it amends a
 committed principle and deserves the team's explicit sign-off — the methodology
 produced the answer; ratification is theirs.**
+
+> **⚠ The risk is the *transition*, not the resting states.** The table above is
+> clean because both *endpoints* are clean. But Proposal T is a **migration**: the
+> tool call disappears from the pinned zone the user was watching and
+> rematerializes as a collapsed line in scrollback. That cutover is the hazard —
+> *where does the eye go; is there a duplicate flash while both render; does
+> something the user was tracking just vanish?* By L4 (worked example B, §3.2)
+> this is exactly the motion H4 distrusts. **This transition is more likely to
+> sink Proposal T than the principle-#7 ratification is**, and it gets its own
+> open question (§7, Q1b). Do not treat "the resting states are clean" as "the
+> proposal is clean."
+
+---
+
+## 4.5 The gate — read this before the ground truth and the catalog
+
+> **Everything in §5 (OpenCode anatomy) and §6 (the catalog: `MessagePartList`,
+> `CodeBlock`, `DiffBlock`, `ReasoningBlock`, `ToolResultBlock`) is the *easy,
+> downstream* layer.** None of it can exist until one piece of *engine* work
+> lands first: an **ordered, typed per-turn part model** in `render.py` /
+> `state.py` (§3.1, §7 Q0). Today `render.py` kinds are coarse and `state.reduce`
+> drops `thought`; there is no `parts` field on `AgentSnapshot`. So read the next
+> two sections as *"what to build once the gate is open,"* not as a pick-list of
+> widgets you can start on Monday. The document's bulk is in §5–§6 because that
+> layer is large; its **risk and its first task** are here and in §7 Q0–Q3. If you
+> read only one thing before scoping: the gate (Q0), the transition (Q1b), and the
+> diff renderer (Q2) are the work — the rest is downstream of them.
 
 ---
 
@@ -412,40 +474,63 @@ the **in-flight** half — unchanged. The split is exactly L2.
 
 ## 7. Open questions for the refinement team
 
-Each is framed *with the lens that bears on it*, so the team decides the way the
-methodology intends.
+Each is framed *with the lens or check that bears on it* (L2/L4 lenses, C1/C2
+checks, P3; see §3.2). **Ordered by risk, not by topic** — the first three are
+where the elegance is most likely to meet friction, and where the team should
+spend its first real design energy. Q0 gates all of them.
 
+0. **[the gate — build this first, it does not exist].** The reducer exposes no
+   per-turn ordered parts today (`AgentSnapshot` has no `parts` field;
+   `state.reduce` has no `thought` case — `state.py:60-69,178-190`). This is
+   **scoped engine work, not a yes/no**: extend `render.py` kinds (split fenced
+   code / diff out of `message`, surface `thought`), add an ordered `parts` field
+   + reducer cases, then build `MessagePartList`. *Check: C1.* Decide *how much* of
+   the part model to build first (recommend text+code+reasoning before diff).
+   **Everything below is downstream of this.**
 1. **Ratify Proposal T?** (§4) — tools settle into a collapsed `ToolResultBlock`
-   in the transcript, refining principle #7 to "responses **and settled
-   records**; only in-flight activity is pinned." *Lens: L2.* This is the one
-   committed-decision amendment and needs explicit sign-off.
-2. **Code-block chrome:** faint left-bar, muted language label, or background
-   tint to delimit code from prose? *Lens: L4 (weakest device that reads).*
-   Recommend left-bar + language label, no full box.
-3. **Reasoning default state:** collapsed-by-default (OpenCode "hide") or shown?
-   *Lens: L3.* Recommend collapsed, `+ Thought · {duration}`, expandable.
-4. **Syntax sub-palette scope:** ship the full §6.2 set, or a minimal
+   in the transcript. *Lens: L2.* This **amends** principle #7 ("never in the
+   transcript" → "responses **and settled records**"); a genuine reversal, needs
+   explicit sign-off, not a clarification.
+   - **Q1b — the live→settled transition (the real risk).** *Lens: L4.* Even if T
+     is ratified, the **cutover** — tool call leaving the pinned zone and
+     reappearing collapsed in scrollback — is unresolved: eye-tracking, possible
+     duplicate flash, a tracked element vanishing. By L4 this is suspect motion
+     (§3.2 worked example B). **More likely to sink T than the ratification is.**
+     Needs a real interaction pilot, not a paper decision. Options to weigh: leave
+     a persistent in-place anchor; cross-fade ≤250ms; or never animate the move
+     (instant swap on turn-settle).
+2. **`DiffBlock` — likely the single largest build in the effort.** *Check: C1 +
+   pilot.* Split/unified, line numbers, syntax highlighting, and add/remove
+   backgrounds **in a cell grid with no `rich.diff` to lean on** (§6.1). This is
+   not a styling tweak; it's a renderer. Edit-tool results are central to the
+   product, so scope it as a first-class build, not a §6 footnote. Decide
+   split-vs-unified and whether to ship a minimal `+`/`-` gutter renderer before
+   the full thing.
+3. **Streaming `CodeBlock`/`DiffBlock` (the genuinely unsolved one).** *P3.*
+   Render incrementally (OpenCode `streaming=true`) or buffer until the fence
+   closes? Re-highlight flicker on a partially-streamed fence is a real, fiddly
+   problem — "needs a pilot" is the honest answer, and it is *more* fiddly than
+   the calm tone elsewhere implies. Likely outcome: buffer code/diff to the fence
+   close even though prose streams live.
+4. **Code-block chrome:** faint left-bar, muted language label, or background
+   tint? *Lens: L4 (weakest device that reads).* Recommend left-bar + language
+   label, no full box.
+5. **Reasoning default state:** collapsed-by-default (OpenCode "hide") or shown?
+   *Check: C2.* Recommend collapsed, `+ Thought · {duration}`, expandable.
+6. **Syntax sub-palette scope:** full §6.2 set or a minimal
    keyword/string/comment/diff subset first? *Lens: L4.* Recommend the minimal
    subset first; expand only if code legibility demands.
-5. **Streaming appearance of `CodeBlock`/`DiffBlock`:** render incrementally
-   (OpenCode `streaming=true`) or buffer until the fence closes? *Lens: P3.*
-   Tradeoff: live feel vs. re-highlight flicker. Needs a pilot.
-6. **[corrected] Part-model build (the gate, not a question):** the reducer does
-   **not** expose per-turn ordered parts today (`AgentSnapshot` has no `parts`
-   field; `state.reduce` has no `thought` case — `state.py:60-69,178-190`). So
-   this is **scoped work, not a yes/no**: extend `render.py` kinds, add an ordered
-   `parts` field + reducer cases, then build `MessagePartList`. *Lens: P1.* Decide
-   *how much* of the part model to build first (e.g. text+code+reasoning before
-   diff). Everything in §6.3 is downstream of this.
 
 ---
 
 ## 8. Validation the refinement team should do before building
 
-Per the project's debugging rule (validate against the running app, not theory):
+Per the project's debugging rule (validate against the running app, not theory).
+§7 frames the *decisions* (in risk order); this is the *validation* to run for
+them — the items map to §7 Q0–Q3.
 
-- **[corrected] Build the part model first — it does not exist.** Verified
-  against live code: `render.py:15` kinds are coarse
+- **(Q0) Build the part model first — it does not exist.** Verified against live
+  code: `render.py:15` kinds are coarse
   (`message|thought|user|tool|tool_update`, no code/diff split), `state.reduce`
   has **no `thought` case** and `AgentSnapshot` has **no ordered `parts` field**
   (`state.py:60-69,178-190`). `MessagePartList` and every block in §6.3 depend on
@@ -453,6 +538,14 @@ Per the project's debugging rule (validate against the running app, not theory):
   one thing that *does* help: `app.py` already breaks the Markdown stream at
   in-turn boundaries (`_end_stream(boundary=True)`, `app.py:635`), so the coarse
   prose-run split is a partial head start.
+- **(Q1b) Pilot the live→settled tool transition on the running app, not paper.**
+  Trigger a real tool call and watch the cutover from pinned zone to collapsed
+  scrollback line: is there a duplicate flash, does the eye lose the element, does
+  anything jump? Compare the three Q1b options (in-place anchor / cross-fade /
+  instant swap) live. This is the highest-risk interaction in the spike.
+- **(Q2) Spike the diff renderer early as its own task.** Build a throwaway
+  add/remove + line-number diff in a cell grid (no `rich.diff`) to size the real
+  cost before committing the catalog — it is plausibly the largest single build.
 - **Pilot the rhythm on a real transcript** — indent+1-line-margin parts — before
   committing tokens, to confirm "blocks" reads in our terminal at real width.
 - **Snapshot the new blocks** (idle/streaming/settled) like the existing
@@ -464,19 +557,27 @@ Per the project's debugging rule (validate against the running app, not theory):
 
 ## 9. Summary
 
-- **Deliverable is a methodology, not a paint job.** §3's part-model (P1), four
-  lenses (L1–L4), hierarchy ladder (P2), and streaming-is-a-state rule (P3) are
-  the reusable "how we think" the brainstorm asked for.
+- **Trust the reframe; prune the apparatus.** The load-bearing idea is **part,
+  not message** (P1) — trust it completely. The *procedure* around it is **two
+  lenses + two checks**, not four equal lenses (§3.2, corrected): **L2
+  (persistence)** is the only generative lens, **L4 (restraint)** the eliminative
+  one; **C1 (name the kind)** and **C2 (default density)** are checks. Treat the
+  procedure as scaffolding to prune, not scripture — it has not yet forced a
+  genuinely unwelcome answer (the one place it bites, L4-vs-transition, is its
+  first real test).
 - **The "blocks" fix is structural:** render a turn as an ordered list of typed
-  **parts** (`MessagePartList`), not one Markdown blob. Everything legible about
-  OpenCode follows from that one decision.
+  **parts** (`MessagePartList`), not Markdown runs. Everything legible about
+  OpenCode follows from that one decision — and it is **gated on building the
+  part model first** (Q0).
 - **OpenCode is a fair reference** because it's now an OpenTUI **cell-grid**
   renderer, not a Go TUI and not a web app — its patterns (left-`┃` bar, indent
   rhythm, inline-collapsible tools, first-class code/diff, flat semantic theme,
   `thinkingOpacity`) port almost directly.
-- **The tools tension is resolved by lens L2 into a lifecycle** (transient while
-  live → settled record in transcript), offered as **Proposal T** for the team to
-  ratify rather than decreed.
+- **The tools tension: L2 resolves placement into a lifecycle; L4 then flags the
+  transition.** Persistence yields "transient while live → settled record in
+  transcript" (**Proposal T**). But the live→settled **cutover** is the real
+  risk (§4, §7 Q1b), and the **diff renderer** (§7 Q2) is plausibly the single
+  largest build — spend first design energy there, not on the catalog.
 - **A small, brand-derived syntax/diff sub-palette is recommended** (§6.2) —
   additive and documented like green/amber, the antithesis of OpenCode's
   40-theme maximalism.
