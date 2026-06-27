@@ -33,3 +33,22 @@ def read_skills(workspace_dir: Path | None) -> list[Path]:
     if not isinstance(skills, list):
         return []
     return [Path(s).expanduser() for s in skills if isinstance(s, str)]
+
+
+def read_name(workspace_dir: Path | None) -> str | None:
+    """The persona's display name from <workspace_dir>/persona.toml `name`.
+    Returns None when the dir/file is absent, unreadable, corrupt, or the key is
+    missing or not a string. The caller falls back to the persona id."""
+    if workspace_dir is None:
+        return None
+    path = workspace_dir / PERSONA_TOML
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return None
+    try:
+        data = tomllib.loads(raw.decode("utf-8"))
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError):
+        return None
+    name = data.get("name")
+    return name if isinstance(name, str) and name else None
