@@ -166,14 +166,12 @@ class HarnessAgent(acp.Agent):
         # happen before routing; the telemetry EMIT is deferred until after
         # classification so memory_load is ordered after task_classified and is
         # skipped on the clarify/ambiguous branches — mirroring persona_load.
-        memory_first_load = None
         if state.memory_block is None:
             from datetime import date
             mload = await loop.run_in_executor(
                 None, lambda: memory_mod.resolve_memory(state.workspace_dir, today=date.today()))
             state.memory_block = mload.block
             state.memory_load = mload
-            memory_first_load = mload
 
         # 1) classify in the executor (sync litellm call must not block the loop)
         try:
