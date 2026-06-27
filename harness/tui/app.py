@@ -258,6 +258,11 @@ class HarnessTui(App):
         try:
             await self._connect()
         except Exception as e:                # startup failure is fatal but must not crash the UI
+            # _connect opened the tracer before spawning, so this lands in the
+            # trace file too — a failed spawn/init is otherwise just a UI line.
+            self.log(f"agent startup failed: {e!r}")
+            if self._tracer is not None:
+                self._tracer.emit("dn", "spawn.failed", error=str(e))
             self._fatal(f"could not start agent: {e}")
 
     async def _mount_status_contents(self) -> None:

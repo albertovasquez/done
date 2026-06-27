@@ -61,6 +61,27 @@ def test_debug_trace_captures_both_sources(tmp_path, monkeypatch):
     asyncio.run(go())
 
 
+def test_spawn_failure_is_traced(tmp_path, monkeypatch):
+    """A failed agent spawn at startup must land in the trace file (spawn.failed),
+    not just flash a fatal UI line. The tracer opens before the spawn, so it's
+    available to record the failure."""
+    monkeypatch.setattr("harness.paths.runs_dir", lambda: tmp_path / "runs")
+    bad_cmd = [sys.executable, "-c", "import sys; sys.exit(3)"]  # dies immediately
+
+    async def go():
+        app = HarnessTui(agent_cmd=bad_cmd, cwd=str(REPO), model="mock", debug=True)
+        async with app.run_test() as pilot:
+            for _ in range(50):
+                await pilot.pause()
+                if app._conn is None and app._tracer is not None:
+                    break
+        rows = _trace_rows(tmp_path / "runs")
+        assert any(r["type"] == "spawn.failed" and r["source"] == "dn" for r in rows), \
+            f"spawn failure must be traced; got {[(r['source'], r['type']) for r in rows]}"
+
+    asyncio.run(go())
+
+
 def test_debug_off_writes_no_trace_file(tmp_path, monkeypatch):
     monkeypatch.setattr("harness.paths.runs_dir", lambda: tmp_path / "runs")
 

@@ -77,13 +77,17 @@ def test_2_low_confidence_and_ambiguous_set_gate():
     assert r2.classify("do the thing").needs_clarification is True
 
 
-def test_3_unparseable_and_fenced_json():
-    # (a) garbage -> safe ambiguous, no raise
-    c = Router(_stub("I cannot help with that, here's some prose."),
-               catalog=_CATALOG).classify("x")
+def test_3_unparseable_and_fenced_json(caplog):
+    # (a) garbage -> safe ambiguous, no raise — AND a warning (so a garbage-
+    # spewing cheap model is diagnosable, not just silently "ambiguous").
+    with caplog.at_level("WARNING", logger="harness.router"):
+        c = Router(_stub("I cannot help with that, here's some prose."),
+                   catalog=_CATALOG).classify("x")
     assert c.task_type == "ambiguous"
     assert c.confidence == 0.0
     assert c.needs_clarification is True
+    assert any("unparseable" in r.message for r in caplog.records), \
+        f"unparseable router output must warn; got {[r.message for r in caplog.records]}"
 
     # (b) fenced JSON -> parsed
     fenced = "```json\n" + json.dumps({"task_type": "ops_task", "skills": [],

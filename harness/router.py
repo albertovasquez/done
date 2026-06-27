@@ -10,10 +10,13 @@ unclear request never silently runs the agent.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from typing import Callable
 
 from harness.transcript import router_preamble
+
+logger = logging.getLogger("harness.router")
 
 # NOTE: `litellm` is imported lazily inside complete() — importing it at module
 # scope costs ~1s and pulls the whole agent-startup path down (router is imported
@@ -108,7 +111,12 @@ class Router:
             data = json.loads(_strip_fences(raw))
             if not isinstance(data, dict):
                 raise ValueError("not an object")
-        except Exception:
+        except Exception as e:
+            # Degrading to 'ambiguous' is correct, but silently: during an
+            # incident where the cheap model returns garbage, every request looks
+            # "unclear" with no clue why. Log the reason + a bounded preview.
+            logger.warning("router classification unparseable (%s); raw=%r",
+                           e, raw[:200])
             return Classification(
                 task_type="ambiguous", confidence=0.0, needs_clarification=True,
                 reasoning="router output was not parseable JSON",

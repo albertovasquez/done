@@ -261,6 +261,11 @@ class HarnessAgent(acp.Agent):
             cls: Classification = await loop.run_in_executor(
                 None, lambda: self._router.classify(text, history=transcript))
         except Exception as e:  # router/VibeProxy unreachable
+            # A turn that dies before it even classifies is one of the most
+            # confusing failures to debug — log it (always) AND trace it (--debug),
+            # not just flash a user message that scrolls away.
+            logger.exception("router classify failed for persona %r", self._persona_key())
+            await self._trace(session_id, "router.failed", sid=session_id, error=str(e))
             await self._conn.session_update(session_id,
                 message_chunk(f"router unavailable: {e}"))
             return acp.PromptResponse(stop_reason="refusal")
