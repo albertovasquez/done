@@ -356,6 +356,8 @@ class HarnessTui(App):
         }
         if a.state.value not in working_states:
             return
+        if not self._turn_start:
+            return  # no turn timestamp yet — don't show monotonic-since-boot
         elapsed = time.monotonic() - self._turn_start
         agents = tuple(
             _replace(x, elapsed=elapsed) if x.id == a.id else x
