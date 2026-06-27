@@ -162,6 +162,9 @@ class HarnessAgent(acp.Agent):
                     resolve_ws=persona_select.resolve_workspace,
                     resolve_model=resolve_session_model_for)
             except (persona_select.UnknownPersona, persona_select.InvalidPersonaId) as e:
+                # The error dict reaches the TUI, but a durable log is the only
+                # place a persona-switch failure is diagnosable after the fact.
+                logger.warning("set_persona rejected id %r: %s", pid, e)
                 return {"ok": False, "error": str(e)}
             self._active_persona = pid
             self._worker_model_id = seat.model      # mirror active seat for read sites

@@ -242,11 +242,16 @@ def test_acp_main_seeds_default_workspace(monkeypatch, tmp_path):
 
 # --- set_persona tests (Task 3) ---
 
-def test_set_persona_unknown_keeps_active(agent):
+def test_set_persona_unknown_keeps_active(agent, caplog):
     before = agent._active_persona
-    resp = asyncio.run(agent.ext_method("harness/set_persona", {"id": "nope-does-not-exist"}))
+    with caplog.at_level("WARNING", logger="harness.acp_agent"):
+        resp = asyncio.run(agent.ext_method("harness/set_persona", {"id": "nope-does-not-exist"}))
     assert resp["ok"] is False
     assert agent._active_persona == before          # unchanged on failure
+    # the rejection must be logged (the error dict reaches the TUI, but a durable
+    # log is the only post-hoc diagnosis of a failed persona switch)
+    assert any("set_persona rejected" in r.message for r in caplog.records), \
+        f"rejected persona switch must be logged; got {[r.message for r in caplog.records]}"
 
 
 def test_set_persona_invalid_charset(agent):
