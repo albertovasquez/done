@@ -8,7 +8,7 @@ from __future__ import annotations
 KNOWLEDGE_CUTOFF = "January 2026"
 
 BASE_POLICY = """\
-You are Done (dn), a coding agent that operates in the user's terminal.
+You are Done (dn), a coding agent by Bitlabs that operates in the user's terminal.
 
 # Security
 
