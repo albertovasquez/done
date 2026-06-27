@@ -87,6 +87,11 @@ binary session mode (backend, fleet-mode, …).
   (loud, reversible). Making a mode *survive launches* is the deliberate
   `/yolo pin` (writes `yolo_pinned` to `done.conf`) — never the click. This
   split is the pattern's safety contract; reuse it for any persisted mode.
+- **Placement = far LEFT of the status bar** (mounted first), where the eye
+  lands — a security-sensitive mode must not be buried behind the `1fr` cwd at
+  the right edge (where it clips on narrow terminals). For an always-on bypass,
+  also mirror the marker into the top mode line (`Build · YOLO · model`,
+  amber) so it shows top **and** bottom.
 
 ```
 · ask          ! YOLO          ! YOLO · pin

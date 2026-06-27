@@ -887,3 +887,26 @@ def test_yolo_chip_click_toggles_state():
             assert "YOLO" in app.query_one("#statusbar-mode", Static)._Static__content
 
     asyncio.run(go())
+
+
+def test_compose_meta_shows_yolo_marker_when_on():
+    """The top mode line ('Build · …') gains an amber YOLO marker when the live
+    gate is on, so the bypass is visible at the top as well as the footer."""
+    app = HarnessTui.__new__(HarnessTui)        # bypass Textual mount; pure method
+    app.model = "mock"
+    app._yolo = False
+    assert "YOLO" not in app._compose_meta_markup("mock model", "Mock")
+    app._yolo = True
+    markup = app._compose_meta_markup("mock model", "Mock")
+    assert "YOLO" in markup and "$scheduled" in markup   # amber, present
+
+
+def test_yolo_chip_is_leftmost_in_statusbar():
+    """The mode chip mounts FIRST (left edge), not buried behind the 1fr cwd."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock", yolo=True)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            ids = [w.id for w in app.query_one("#statusbar").children]
+            assert ids[0] == "statusbar-mode", f"chip not leftmost: {ids}"
+    asyncio.run(go())
