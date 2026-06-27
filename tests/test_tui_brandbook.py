@@ -47,3 +47,30 @@ def test_markup_translator_resolves_token_to_real_hex():
     assert HARNESS_THEME.accent in html
     assert "RUNNING" in html
     assert "[$" not in html                   # fully translated
+
+
+def test_usage_notes_have_single_source_in_components_md():
+    # The "When to use" guidance must come ONLY from components.md (no copy in
+    # the generator). Parser finds several; each shipped component we mock has one.
+    notes = brandbook._parse_usage_notes()
+    for name in ("StatusChip", "ActivityStatus", "ToolCallRow", "SelectModal",
+                 "DecisionPrompt"):
+        assert name in notes and notes[name], f"no usage note parsed for {name}"
+
+
+def test_usage_notes_render_into_html_from_markdown():
+    # A note's text in components.md must appear on the page — proving the HTML
+    # pulls from the markdown rather than holding its own copy.
+    notes = brandbook._parse_usage_notes()
+    out = brandbook.build_html("test")
+    sample = notes["StatusChip"]
+    # first few words of the real note appear verbatim in the rendered page
+    head = " ".join(sample.split()[:6])
+    assert head in out
+
+
+def test_shared_header_maps_both_component_names():
+    # "### `StateDot` / `ActivityGlyph`" must give BOTH names the same note.
+    notes = brandbook._parse_usage_notes()
+    assert notes.get("StateDot") and notes.get("ActivityGlyph")
+    assert notes["StateDot"] == notes["ActivityGlyph"]

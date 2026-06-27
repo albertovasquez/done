@@ -33,6 +33,68 @@ from harness.tui.widgets.status_chip import (
     TOOL_STATUS_TOKEN, TOOL_STATUS_LABEL,
 )
 
+# ── usage notes: SINGLE SOURCE = components.md ────────────────────────────────
+# The "When to use" guidance lives ONLY in components.md. The brand book parses it
+# out and renders it under each mock, so the two artifacts never diverge. If a
+# component has no note in the markdown, the HTML simply omits it (never invents).
+
+_COMPONENTS_MD = Path(__file__).with_name("components.md")
+_HEADER = re.compile(r"^#{3,4}\s+(.*)$")
+_NAME = re.compile(r"`([^`]+)`")
+_WHEN = re.compile(r"^\s*-\s*\*\*When to use:\*\*\s*(.+)$")
+
+
+def _parse_usage_notes(md_path: Path = _COMPONENTS_MD) -> dict[str, str]:
+    """Map every backticked component name in a `### ` header → its 'When to use'
+    text (collapsed to one paragraph). Names normalized: stripped of a leading
+    `.for_yolo`-style suffix is kept as-is so 'StatusChip.for_yolo' resolves too.
+    Shared headers (e.g. 'StateDot / ActivityGlyph') map BOTH names to the note."""
+    notes: dict[str, str] = {}
+    if not md_path.exists():
+        return notes
+    cur_names: list[str] = []
+    buf: list[str] = []
+
+    def flush():
+        if cur_names and buf:
+            text = " ".join(s.strip() for s in buf).strip()
+            for n in cur_names:
+                notes[n] = text
+
+    for line in md_path.read_text(encoding="utf-8").splitlines():
+        h = _HEADER.match(line)
+        if h:
+            flush()
+            cur_names = _NAME.findall(h.group(1))
+            buf = []
+            continue
+        w = _WHEN.match(line)
+        if w:
+            buf = [w.group(1)]
+        elif buf:
+            # Wrapped continuation of the bullet: indented prose, not a new
+            # bullet / heading / fence / table. Anything else ends the note.
+            if line.strip() and not line.lstrip().startswith(("-", "#", "```", "|")):
+                buf.append(line)
+            else:
+                flush()
+                buf = []
+    flush()
+    return notes
+
+
+USAGE_NOTES = _parse_usage_notes()
+
+
+def usage_html(name: str) -> str:
+    """Render the 'When to use' note for a component, pulled from components.md."""
+    note = USAGE_NOTES.get(name)
+    if not note:
+        return ""
+    return (f'<p class="usage"><span class="usage-k">When to use</span> '
+            f'{html.escape(note)}</p>')
+
+
 # ── token → hex resolution ────────────────────────────────────────────────────
 # One map from every semantic token name to its hex, pulled from the live theme.
 # This is what makes the page faithful: the SAME token names the widgets use in
@@ -126,15 +188,26 @@ def term(inner_html: str, label: str = "") -> str:
     return f'{cap}<div class="term">{inner_html}</div>'
 
 
-def component_card(name: str, status: str, desc: str, mock_html: str) -> str:
+def component_card(name: str, status: str, desc: str, mock_html: str,
+                   usage_key: str | None = None) -> str:
     badge = {"shipped": "✅ shipped", "unwired": "🟡 built · unwired",
              "designed": "📐 designed-only", "inlined": "◻ inlined in app.py"}.get(status, status)
     cls = {"shipped": "ok", "unwired": "warn", "designed": "dim", "inlined": "dim"}[status]
+    # Usage note is pulled from components.md by name (single source). usage_key
+    # lets a card whose title differs from the catalog name still resolve its note.
+    note = usage_html(usage_key or _first_name(name))
     return f"""<div class="card">
       <div class="card-head"><h3>{html.escape(name)}</h3><span class="badge {cls}">{badge}</span></div>
       <p class="desc">{desc}</p>
       {mock_html}
+      {note}
     </div>"""
+
+
+def _first_name(title: str) -> str:
+    """The catalog key for a card title: first identifier-ish token (so
+    'SelectModal / PermissionModal' → 'SelectModal', 'Tool status pills' → 'Tool')."""
+    return title.split()[0].split("/")[0].strip()
 
 
 # ── faithful component mocks (from the widgets' OWN markup) ────────────────────
@@ -491,6 +564,10 @@ td.mono{font-family:ui-monospace,monospace;color:var(--muted)}
 .card-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .card h3{margin:0;color:var(--fg);text-transform:none;letter-spacing:0;font-size:15.5px}
 .card .desc{color:var(--muted);font-size:13px;margin:.35em 0 12px}
+.usage{margin:12px 0 0;font-size:13px;line-height:1.5;color:#c3cdda;
+  border-left:2px solid var(--accent);padding:6px 0 6px 12px;background:rgba(40,108,233,.06)}
+.usage-k{display:inline-block;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--accent);font-weight:700;margin-right:8px}
 .badge{font-size:11px;padding:3px 9px;border-radius:999px;white-space:nowrap}
 .badge.ok{background:rgba(126,231,135,.12);color:#7ee787}
 .badge.warn{background:rgba(227,179,65,.14);color:#e3b341}

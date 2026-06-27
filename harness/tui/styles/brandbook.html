@@ -50,6 +50,10 @@ td.mono{font-family:ui-monospace,monospace;color:var(--muted)}
 .card-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .card h3{margin:0;color:var(--fg);text-transform:none;letter-spacing:0;font-size:15.5px}
 .card .desc{color:var(--muted);font-size:13px;margin:.35em 0 12px}
+.usage{margin:12px 0 0;font-size:13px;line-height:1.5;color:#c3cdda;
+  border-left:2px solid var(--accent);padding:6px 0 6px 12px;background:rgba(40,108,233,.06)}
+.usage-k{display:inline-block;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--accent);font-weight:700;margin-right:8px}
 .badge{font-size:11px;padding:3px 9px;border-radius:999px;white-space:nowrap}
 .badge.ok{background:rgba(126,231,135,.12);color:#7ee787}
 .badge.warn{background:rgba(227,179,65,.14);color:#e3b341}
@@ -133,51 +137,63 @@ footer{margin-top:64px;padding-top:20px;border-top:1px solid var(--surface);
       <div class="card-head"><h3>StatusChip</h3><span class="badge ok">✅ shipped</span></div>
       <p class="desc">Uppercase status pill. The atomic status atom, reused everywhere.</p>
       <div class="term-label">StatusChip.from_state — every AgentState</div><div class="term"><div class="line"><span style="color:#5B6577"><span style="font-weight:700">IDLE</span>[/]</span>&nbsp;&nbsp;<span style="color:#286CE9"><span style="font-weight:700">THINKING</span>[/]</span>&nbsp;&nbsp;<span style="color:#286CE9"><span style="font-weight:700">RESPONDING</span>[/]</span>&nbsp;&nbsp;<span style="color:#286CE9"><span style="font-weight:700">RUNNING_TOOL</span>[/]</span>&nbsp;&nbsp;<span style="color:#e3b341"><span style="font-weight:700">AWAITING_PERMISSION</span>[/]</span>&nbsp;&nbsp;<span style="color:#e3b341"><span style="font-weight:700">AWAITING_DECISION</span>[/]</span>&nbsp;&nbsp;<span style="color:#e3b341"><span style="font-weight:700">SCHEDULED</span>[/]</span>&nbsp;&nbsp;<span style="color:#7ee787"><span style="font-weight:700">COMPLETED</span>[/]</span>&nbsp;&nbsp;<span style="color:#E02F07"><span style="font-weight:700">FAILED</span>[/]</span></div></div>
+      <p class="usage"><span class="usage-k">When to use</span> for a *settled* status label (a state that just is). Use `ActivityStatus` instead when work is *live* (it carries elapsed/tokens and the looping glyph); a chip is static.</p>
     </div><div class="card">
       <div class="card-head"><h3>Tool status pills</h3><span class="badge ok">✅ shipped</span></div>
       <p class="desc">ToolStatus → QUEUED / RUNNING / COMPLETED / FAILED.</p>
       <div class="term-label">Tool status pills (ToolStatus)</div><div class="term"><div class="line"><span style="color:#e3b341"><span style="font-weight:700">QUEUED</span>[/]</span>&nbsp;&nbsp;<span style="color:#286CE9"><span style="font-weight:700">RUNNING</span>[/]</span>&nbsp;&nbsp;<span style="color:#7ee787"><span style="font-weight:700">COMPLETED</span>[/]</span>&nbsp;&nbsp;<span style="color:#E02F07"><span style="font-weight:700">FAILED</span>[/]</span></div></div>
+      
     </div><div class="card">
       <div class="card-head"><h3>StatusChip.for_yolo</h3><span class="badge ok">✅ shipped</span></div>
       <p class="desc">Footer permission-mode line. Red = active bypass (loudest signal).</p>
       <div class="term-label">StatusChip.for_yolo — footer permission-mode line</div><div class="term"><div class="line"><span style="color:#5B6577"><span style="font-weight:700">▶▶ bypass permissions off</span>[/]</span></div><div class="line"><span style="color:#E02F07"><span style="font-weight:700">▶▶ bypass permissions on</span>[/]</span></div><div class="line"><span style="color:#E02F07"><span style="font-weight:700">▶▶ bypass permissions on · pinned</span>[/]</span></div></div>
+      <p class="usage"><span class="usage-k">When to use</span> for a binary *session mode* the user toggles and must always see (bypass, later backend/fleet). Use `PermissionModal` instead for a one-off per-command yes/no — `for_yolo` is a persistent posture, not a prompt.</p>
     </div><div class="card">
       <div class="card-head"><h3>StateDot</h3><span class="badge warn">🟡 built · unwired</span></div>
       <p class="desc">Leading state indicator (defined in status_chip.py, not yet mounted).</p>
       <div class="term-label">StateDot — leading state indicator</div><div class="term"><div class="line"><span style="color:#5B6577">•</span><span class="dim">&nbsp;idle</span>&nbsp;&nbsp;&nbsp;<span style="color:#286CE9">◐</span><span class="dim">&nbsp;thinking</span>&nbsp;&nbsp;&nbsp;<span style="color:#286CE9">▌</span><span class="dim">&nbsp;responding</span>&nbsp;&nbsp;&nbsp;<span style="color:#286CE9">◐</span><span class="dim">&nbsp;running_tool</span>&nbsp;&nbsp;&nbsp;<span style="color:#e3b341">?</span><span class="dim">&nbsp;awaiting_permission</span>&nbsp;&nbsp;&nbsp;<span style="color:#e3b341">?</span><span class="dim">&nbsp;awaiting_decision</span>&nbsp;&nbsp;&nbsp;<span style="color:#e3b341">⏱</span><span class="dim">&nbsp;scheduled</span>&nbsp;&nbsp;&nbsp;<span style="color:#7ee787">✓</span><span class="dim">&nbsp;done</span>&nbsp;&nbsp;&nbsp;<span style="color:#E02F07">✗</span><span class="dim">&nbsp;failed</span></div></div>
+      <p class="usage"><span class="usage-k">When to use</span> `StateDot` to mark an agent&#x27;s state in a *list* (the fleet rail), where many states show at once. `ActivityGlyph` only for the *one* actively-working agent — never run two looping glyphs at once (brand restraint).</p>
     </div><div class="card">
       <div class="card-head"><h3>ActivityStatus</h3><span class="badge ok">✅ shipped</span></div>
       <p class="desc">The live work line: one looping ◐ + label · elapsed · tokens · N done.</p>
       <div class="term-label">ActivityStatus — the live work line (one looping ◐)</div><div class="term"><div class="line"><span style="color:#286CE9">◐</span> <span style="color:#E3E3E3">Asking clarifying questions…</span><span style="color:#5B6577">&nbsp;· 2 done</span> <span style="color:#5B6577">(1m 18s · ↓ 4.0k tokens)</span></div></div>
+      <p class="usage"><span class="usage-k">When to use</span> as the single live-work line while the agent is busy. Use a `StatusChip` instead once work has *settled* — `ActivityStatus` blanks itself when state is idle/done/failed and is not a record.</p>
     </div><div class="card">
       <div class="card-head"><h3>ActivityRegion</h3><span class="badge ok">✅ shipped</span></div>
       <p class="desc">Pinned transient zone above the composer; status-only by default.</p>
       <div class="term-label">ActivityRegion — pinned transient zone (status-only default)</div><div class="term"><div class="line"><span style="color:#5B6577">────────────────────────────────────────────</span></div><div class="line"><span style="color:#286CE9">◐</span> <span style="color:#E3E3E3">Running test…</span><span style="color:#5B6577">&nbsp;· 1 done (4s)</span><span style="color:#5B6577">&nbsp;&nbsp;&nbsp;&nbsp;ctrl+o details</span></div></div>
+      <p class="usage"><span class="usage-k">When to use</span> as *the* home for all in-flight tool/work activity — pinned and transient. Anything about &quot;what the agent is doing now&quot; belongs here, never in the transcript (principle #7). Settled records are a separate concern.</p>
     </div><div class="card">
       <div class="card-head"><h3>ToolCallRow</h3><span class="badge ok">✅ shipped</span></div>
       <p class="desc">One tool call: subtype glyph + title + status (collapsed) / capped body (expanded).</p>
       <div class="term-label">ToolCallRow — collapsed line + expanded capped body</div><div class="term"><div class="line"><span style="color:#286CE9">✎</span> <span style="color:#E3E3E3">harness/api.ts</span>&nbsp;&nbsp;&nbsp;<span style="color:#286CE9;font-weight:700">RUNNING</span></div><div class="line" style="margin-top:.5em"><span style="color:#7ee787">◇</span> <span style="color:#E3E3E3">app.py</span>&nbsp;&nbsp;&nbsp;<span style="color:#7ee787;font-weight:700">COMPLETED</span><br><span style="color:#9DB8E8">  def compose(self) -> ComposeResult:<br>      yield Header()<br>  … (+6 more lines)</span></div></div>
+      <p class="usage"><span class="usage-k">When to use</span> for one tool call&#x27;s detail *inside* `ActivityRegion` (ctrl+o). Don&#x27;t mount it directly in the transcript or app — it&#x27;s a child of the region, not a standalone surface.</p>
     </div><div class="card">
       <div class="card-head"><h3>UserMessage</h3><span class="badge ok">✅ shipped</span></div>
       <p class="desc">Accent ▌ bar + bold text in the transcript (rendered inline in app.py).</p>
       <div class="term-label">User message — accent ▌ bar + bold</div><div class="term"><div class="line"><span style="color:#286CE9;font-weight:700">▌ Build me a brand-book page for the design system</span></div></div>
+      <p class="usage"><span class="usage-k">When to use</span> for what the *human* sent, to anchor each turn. The `▌` accent bar is the user marker — don&#x27;t reuse it for agent output (that&#x27;s borderless).</p>
     </div></div></section>
 <section><h2>Surfaces (modals · composer · footer)</h2><p class='note'>The larger surfaces beyond the atomic primitives — what you actually see every session. Mocks are faithful to the widgets' markup / layout.</p><div class="cards"><div class="card">
       <div class="card-head"><h3>AnswerStream + chips</h3><span class="badge dim">◻ inlined in app.py</span></div>
       <p class="desc">The streamed agent response + DoneDone's request-type / skills chips. Drawn directly in app.py (no standalone widget).</p>
       <div class="term-label">AnswerStream + chips — streamed markdown (inlined in app.py)</div><div class="term"><div class="line"><span style="color:#E3E3E3">Here's the fix. The bug was an off-by-one in the loop bound:</span></div><div class="line"><span style="color:#9DB8E8">  for i in range(n + 1):  # was range(n)</span></div><div class="line" style="margin-top:.4em"><span style="color:#286CE9">code_fix</span><span style="color:#5B6577"> · skills: debugging, tdd</span></div></div>
+      <p class="usage"><span class="usage-k">When to use</span> for the agent&#x27;s *prose* answer. Tool calls and reasoning are NOT this — they go to `ActivityRegion` (principle #7); never push tool output into the transcript stream.</p>
     </div><div class="card">
       <div class="card-head"><h3>SelectModal / PermissionModal</h3><span class="badge ok">✅ shipped</span></div>
       <p class="desc">Searchable picker (● = current). PermissionModal is a sibling with Allow / Reject options; both shipped & wired.</p>
       <div class="term-label">SelectModal — searchable picker (● = current). PermissionModal is a sibling (Allow / Reject).</div><div class="term"><div class="line"><span style="color:#E3E3E3;font-weight:700">Select model</span>&nbsp;&nbsp;&nbsp;<span style="color:#5B6577">esc</span></div><div class="line" style="margin-top:.3em"><span style="color:#5B6577">Search</span></div><div class="line"><span style="color:#286CE9">●</span> claude-opus-4-8</div><div class="line">&nbsp;&nbsp;claude-sonnet-4-6</div><div class="line">&nbsp;&nbsp;mock</div><div class="line" style="margin-top:.3em"><span style="color:#5B6577">↑↓ move · enter select · esc cancel</span></div></div>
+      <p class="usage"><span class="usage-k">When to use</span> to pick *one item from a list* (model, persona, command). It&#x27;s the base both modals extend — reuse it before building any new picker; don&#x27;t hand-roll a list overlay.</p>
     </div><div class="card">
       <div class="card-head"><h3>SlashMenu</h3><span class="badge ok">✅ shipped</span></div>
       <p class="desc">Filtered command list shown as you type after '/'. Shipped & wired.</p>
       <div class="term-label">SlashMenu — filtered command list (typed after &#x27;/&#x27;)</div><div class="term"><div class="line"><span style="color:#286CE9">/model</span>&nbsp;&nbsp;&nbsp;<span style="color:#5B6577">switch the model</span></div><div class="line"><span style="color:#286CE9">/yolo</span>&nbsp;&nbsp;&nbsp;<span style="color:#5B6577">toggle permission bypass</span></div><div class="line"><span style="color:#286CE9">/reload</span>&nbsp;&nbsp;&nbsp;<span style="color:#5B6577">reload the agent</span></div></div>
+      <p class="usage"><span class="usage-k">When to use</span> for *command discovery while composing* (the `/` menu). It&#x27;s a transient composer affordance — use `SelectModal` instead for a full-screen pick that isn&#x27;t tied to typing in the prompt.</p>
     </div><div class="card">
       <div class="card-head"><h3>Status bar / footer</h3><span class="badge dim">◻ inlined in app.py</span></div>
       <p class="desc">Mode · model · permission-bypass posture · cwd. Inlined in app.py.</p>
       <div class="term-label">Status bar / footer meta — mode · model · bypass · cwd (inlined in app.py)</div><div class="term"><div class="line"><span style="color:#286CE9;font-weight:700">Build</span><span style="color:#5B6577"> · claude-opus-4-8 vibeproxy</span></div><div class="line"><span style="color:#E02F07;font-weight:700">▶▶ bypass permissions on</span>&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#8a6d3b">~/Work/Quiubo/</span><span style="color:#d9a441">harness</span></div></div>
+      
     </div></div></section>
 <footer>
   18 tokens · 15 glyphs · 9 agent states ·

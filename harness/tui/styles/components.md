@@ -92,6 +92,9 @@ Uppercase status pill: `RUNNING` / `QUEUED` / `SCHEDULED` / `COMPLETED` / `FAILE
 The atomic status atom, reused everywhere.
 - **In:** `(state, ToolStatus | None)`
 - **Look:** tracked bold caps, status-token color.
+- **When to use:** for a *settled* status label (a state that just is). Use
+  `ActivityStatus` instead when work is *live* (it carries elapsed/tokens and the
+  looping glyph); a chip is static.
 
 ```
 RUNNING   QUEUED   SCHEDULED   COMPLETED   FAILED
@@ -103,6 +106,9 @@ Leading state indicator. `StateDot` is static (`• ◐ ▌ ✓ ✗ ⏱ ?`). `Ac
 is the **single looping animation** in the whole UI (active `◐` cycle).
 - **In:** `state`
 - **Reduced-motion:** `ActivityGlyph` → static `◐`.
+- **When to use:** `StateDot` to mark an agent's state in a *list* (the fleet
+  rail), where many states show at once. `ActivityGlyph` only for the *one*
+  actively-working agent — never run two looping glyphs at once (brand restraint).
 
 ### `StatusChip.for_yolo` — clickable footer mode line
 A `StatusChip` mounted in the status bar that toggles a **session mode** on
@@ -115,6 +121,9 @@ session mode (backend, fleet-mode, …).
   the security state directly. Red on the active state is the loudest signal:
   a full bypass that auto-runs commands. The safe state stays muted (quiet, not
   cryptic). Wording mirrors Claude Code's own permission-mode footer.
+- **When to use:** for a binary *session mode* the user toggles and must always
+  see (bypass, later backend/fleet). Use `PermissionModal` instead for a one-off
+  per-command yes/no — `for_yolo` is a persistent posture, not a prompt.
 - **Click → action:** the app's `on_click` (guarded on `#statusbar-mode`) calls
   `action_toggle_yolo()`, which flips the live state, refreshes the line in
   place (`_refresh_yolo_chip`), and fires `ext_method("harness/set_yolo",
@@ -147,9 +156,14 @@ Brand grammar primitives: a thin rule, and a tracked-bold-caps label
 The canonical response renderer: the live `Markdown` widget that accumulates deltas
 and `.update()`s per token (`app._stream_message`). The reducer marks the agent
 `responding`; this widget owns the text. **Do not replace.**
+- **When to use:** for the agent's *prose* answer. Tool calls and reasoning are
+  NOT this — they go to `ActivityRegion` (principle #7); never push tool output
+  into the transcript stream.
 
 ### `UserMessage`  *(exists today — promoted)*
 The accent-bar user line (`▌ bold text`, `.user-msg`).
+- **When to use:** for what the *human* sent, to anchor each turn. The `▌` accent
+  bar is the user marker — don't reuse it for agent output (that's borderless).
 
 ---
 
@@ -160,6 +174,9 @@ The live activity line: `· <label>… (1m 18s · ↓ 4.0k tokens)`.
 - **In:** `(activity_label, elapsed, tokens, state)`
 - **Drives:** the one looping `ActivityGlyph` + a `set_interval` elapsed tick.
 - **Supersedes:** today's bare `LoadingIndicator` (`#working`).
+- **When to use:** as the single live-work line while the agent is busy. Use a
+  `StatusChip` instead once work has *settled* — `ActivityStatus` blanks itself
+  when state is idle/done/failed and is not a record.
 
 ```
 · Asking clarifying questions…  (1m 18s · ↓ 4.0k tokens)
@@ -169,6 +186,9 @@ The live activity line: `· <label>… (1m 18s · ↓ 4.0k tokens)`.
 Nested checklist, updated in place.
 - **In:** `tasks: tuple[TaskItem, ...]`
 - Glyphs: `✓` done · `▣` in-progress · `□` pending.
+- **When to use:** for a *multi-step plan* with known sub-steps. NOT for raw tool
+  commands — the status-only decision retired that (the per-command summary was a
+  whack-a-mole liability); `TaskTree` is currently unwired pending real plan data.
 
 ```
 └ ✓ Explore project context
@@ -188,6 +208,9 @@ activity lives — never in the transcript (principle #7).
 - **Methods:** `update_from(snapshot)`, `toggle_details()`
 - **State:** `is_idle(snap)` → render nothing (zero height); details toggled → show
   each `tools` entry as an expanded `ToolCallRow`.
+- **When to use:** as *the* home for all in-flight tool/work activity — pinned and
+  transient. Anything about "what the agent is doing now" belongs here, never in
+  the transcript (principle #7). Settled records are a separate concern.
 
 ```
 ──────────────────────────────────────────
@@ -207,6 +230,9 @@ One tool call, rendered as a **collapsed one-liner or expanded detail row inside
   - `detail_for(tool)` → expanded: header + capped body.
   - `cap_body(body, subtype)` → per-subtype line cap (`read`=6, generic=10).
 - Subtype glyph is **inferred for display only** (neutral `$` fallback).
+- **When to use:** for one tool call's detail *inside* `ActivityRegion` (ctrl+o).
+  Don't mount it directly in the transcript or app — it's a child of the region,
+  not a standalone surface.
 
 ```
 [collapsed]   ✎ harness/api.ts                       RUNNING
@@ -234,6 +260,9 @@ truly blocked.
 - **In:** `DecisionView` (question, options[title + dimmed rationale], fallbacks)
 - Keyboard: number / ↑↓ / enter. Fallbacks: `Type something`, `Chat about this`.
 - The answer persists in the transcript as a record.
+- **When to use:** when the agent wants *richer input than yes/no* (pick an option,
+  refine a plan) and isn't hard-blocked — it's inline & non-blocking. Use
+  `PermissionModal` instead for a blocking allow/reject before a command runs.
 
 ```
 Where should the streaming seam live?  …
@@ -251,9 +280,22 @@ Where should the streaming seam live?  …
 ### `PermissionModal`  *(exists today — kept)*
 Command-permission modal. Sibling of `DecisionPrompt` ("agent needs your input");
 shares footer / keybinding styling.
+- **When to use:** for a *blocking* per-command yes/no that must be answered before
+  the agent proceeds. For a persistent "always allow" posture use
+  `StatusChip.for_yolo`; for non-blocking richer input use `DecisionPrompt`.
 
 ### `SelectModal`  *(exists today — kept)*
 Search + scrollable list modal; the base both modals extend.
+- **When to use:** to pick *one item from a list* (model, persona, command). It's
+  the base both modals extend — reuse it before building any new picker; don't
+  hand-roll a list overlay.
+
+### `SlashMenu`  *(exists today — input/nav)*
+Filtered command list, mounted/removed by the app as `/` is typed/cleared.
+- **In:** `list[Command]`; `update_query`, `move`, `highlighted_command`.
+- **When to use:** for *command discovery while composing* (the `/` menu). It's a
+  transient composer affordance — use `SelectModal` instead for a full-screen
+  pick that isn't tied to typing in the prompt.
 
 ---
 
