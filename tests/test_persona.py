@@ -89,7 +89,7 @@ def _write_skill(root: Path, name: str, body: str):
 def test_compose_context_bundles_given_persona_and_skills(tmp_path):
     skroot = tmp_path / "sk"
     _write_skill(skroot, "tdd", "TDD body")
-    ctx = compose_context("PERSONA TEXT", [skroot], ["tdd"])
+    ctx = compose_context("PERSONA TEXT", "", [skroot], ["tdd"])
     assert ctx.persona_block == "PERSONA TEXT"
     assert "TDD body" in ctx.skill_block
     assert ctx.skills.injected == ["tdd"]
@@ -98,13 +98,13 @@ def test_compose_context_bundles_given_persona_and_skills(tmp_path):
 def test_compose_context_empty_persona_still_resolves_skills(tmp_path):
     skroot = tmp_path / "sk"
     _write_skill(skroot, "tdd", "TDD body")
-    ctx = compose_context("", [skroot], ["tdd"])
+    ctx = compose_context("", "", [skroot], ["tdd"])
     assert ctx.persona_block == ""
     assert "TDD body" in ctx.skill_block
 
 
 def test_compose_context_all_empty(tmp_path):
-    ctx = compose_context("", [tmp_path], [])
+    ctx = compose_context("", "", [tmp_path], [])
     assert ctx == TurnContext()
 
 
@@ -194,3 +194,10 @@ def test_meaningful_and_trim_are_importable_helpers():
     assert _meaningful("<!-- only a comment -->") is False
     body, trimmed = _trim("x" * 10, 4)
     assert body == "xxxx" and trimmed is True
+
+
+def test_compose_context_carries_memory_block(tmp_path):
+    from harness.persona import compose_context, TurnContext
+    ctx = compose_context("PERSONA", "MEMORY", [tmp_path], [])
+    assert ctx.persona_block == "PERSONA"
+    assert ctx.memory_block == "MEMORY"
