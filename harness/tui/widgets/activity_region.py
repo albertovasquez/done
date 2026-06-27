@@ -2,8 +2,9 @@
 the agent is doing RIGHT NOW. Tool calls live here, NOT in the transcript scroll.
 While working, shows only the status line (which carries a '· N done' tool
 count); ctrl+o switches to a scannable per-tool list (one-line heads: glyph +
-title + status chip); renders empty when idle/terminal. The TaskTree widget is
-mounted but never displayed by default. Reads an AgentSnapshot. See spec §3.
+title + status chip); renders empty when idle/terminal. The TaskTree widget shows
+the agent's plan checklist when the snapshot carries one (snap.plan), else stays
+hidden. Reads an AgentSnapshot. See spec §3.
 
 Mount strategy: TaskTree and the tools container are ALWAYS mounted in compose()
 and toggled via `.display`. This avoids async mount-timing races that arise when
@@ -42,6 +43,10 @@ class ActivityRegion(Vertical):
     def is_idle(self, snap: AgentSnapshot) -> bool:
         return snap is None or snap.state not in _WORKING
 
+    @staticmethod
+    def show_plan(snap: AgentSnapshot) -> bool:
+        return snap is not None and snap.state in _WORKING and bool(snap.plan)
+
     def toggle_details(self) -> None:
         self._details = not self._details
         if self._snap is not None:
@@ -65,10 +70,14 @@ class ActivityRegion(Vertical):
             return
 
         show_tools = self._details and bool(snap.tools)
-        # Default view = status line only; the per-command TaskTree is never
-        # shown (the status line carries '· N done'). ctrl+o reveals the tools.
-        task_tree.display = False
+        show_plan = self.show_plan(snap)
+        # Default view = status line + plan checklist (when the agent emitted one).
+        # The status line carries '· N done'; ctrl+o reveals the per-tool list.
+        task_tree.display = show_plan
         tools_container.display = show_tools
+
+        if show_plan:
+            task_tree.update_tasks(snap.plan)
 
         if show_tools:
             tools_container.remove_children()
