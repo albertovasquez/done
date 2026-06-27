@@ -299,53 +299,149 @@ Filtered command list, mounted/removed by the app as `/` is typed/cleared.
 
 ---
 
+> **Visual reference for groups E & F:** the fleet/drawer/cron concept mockups
+> (2026-06-27). Three screens — (1) full fleet dashboard with left `AgentRail` +
+> `ProgressRow`s + a cron task row, (2) `AgentRail` as a right **drawer** over the
+> chat with a header dropdown, (3) drawer closed. These encode the intended look
+> the components below target. (Raw PNGs: drop into `docs/superpowers/assets/` if
+> committing them; the decisions are captured in text here so they survive.)
+
 ## E. Future / scheduled
 
-### `ScheduleBadge`
-The "something will happen later" signal.
-- **In:** `ScheduleView`
-- Amber `⏱`.
+> **Reality:** there is **no cron/schedule backend** in the engine today, and
+> `AgentSnapshot.schedule` / `ScheduleView` are defined but never populated. Both
+> components below are `📐 designed-only` with **no data source** — build the
+> backend (or wire a stub) before them.
+
+### `ScheduleBadge`   `📐 designed-only`
+The "something will happen later" signal — a single inline badge.
+- **In:** `ScheduleView` (`label`, `when`)
+- **Look:** amber `⏱` + relative time. From the mockup: `in 2d 14h SCHEDULED`,
+  or a cron task row `□ Weekly report cron · emails reports … SCHEDULED`.
+- **When to use:** to mark *one* future event inline next to its task/agent (e.g. a
+  cron task in the task list, or a `scheduled · 1 job` rail sub-line). Use `CronRow`
+  instead for a *dedicated list* of scheduled jobs.
 
 ```
-SCHEDULED · in 2d 14h          cron · every 24h · next 04:00
+□ Weekly report cron · emails reports          in 2d 14h   SCHEDULED
 ```
 
-### `CronRow`
-A scheduled job as a row (for a crons sidebar). Sibling of `ProgressRow` for future
-work.
+### `CronRow`   `📐 designed-only`
+A scheduled job as a full row, for a crons list/sidebar. Sibling of `ProgressRow`.
 - **In:** `ScheduleView`
+- **Look (mockup):** `↻` cron glyph (amber) + name + cadence/next-run; in the rail,
+  a `cron` status word on an agent that's mid-scheduled-run (`robbie · cron ·
+  nightly-sync · syncing`).
+- **When to use:** for a *roster* of scheduled jobs (a crons panel). For a single
+  inline "happens later" hint, use `ScheduleBadge`.
 
 ---
 
 ## F. Shell & navigation
 
-### `AppShell`
+> **Reality:** `FleetSnapshot`/`AgentSnapshot` (with `active_id`) exist and are
+> tested, and the **persona indicator** (C2a, below) ships today. But the shell
+> widgets (`AppShell`, `AgentRail`, `SidebarToggle`, `FleetHeader`) are
+> `📐 designed-only` — no classes yet. C2b is their spec; C2c brings the true
+> N-concurrent fleet (own brainstorm + Codex review). See
+> `docs/superpowers/specs/2026-06-27-persona-C2-drawer-arc-design.md`.
+
+### `PersonaIndicator` (status-bar chip)   `✅ shipped` (C2a, PR #46)
+Shows **which agent/persona you're talking to**, sourced from the engine's real
+resolved id (not the `--persona` flag) via `FleetSnapshot.active_id`.
+- **In:** `FleetSnapshot.active_id` (set by `PersonaResolved` ← `persona_from_meta`)
+- **Look:** a `#statusbar-persona` `Static` chip (`persona: fred`).
+- **When to use:** as the always-visible "who am I addressing" anchor. This is the
+  shipped seed of the whole fleet UI — the rail/drawer/header read the *same*
+  `FleetSnapshot`. Don't echo the launch flag; read the engine-reported id.
+
+### `AppShell`   `📐 designed-only`
 Responsive frame: `[left rail] [main column] [right rail] [status bar]`, two
 collapsible sidebars.
 - **In:** `FleetSnapshot` + UI prefs.
 - **N=1 / narrow:** collapses to today's single-column LANDING / CONVERSATION.
+- **When to use:** as the *frame* once a rail/drawer exists. At N=1 it must be a
+  no-op (collapse to today's view) — don't introduce it until C2b needs a rail.
 
-### `AgentRail`
-The AGENTS list: per-agent name + `StateDot` + `StatusChip` + sub-line
-(`editing api.ts` / `idle · 1 task`), selectable.
-- **In:** `FleetSnapshot.agents`
-- **N=1:** hidden / collapsed.
-- **Recommended placement:** right rail (per mockups; adjustable per phase).
+### `AgentRail`   `📐 designed-only`
+The AGENTS list. Per-agent card: `StateDot` (state-colored) + name + status word
+(`active`/`running`/`cron`/`idle`/`scheduled`) + sub-line (`editing api.ts` /
+`idle · 1 task` / `nightly-sync · syncing`). Selectable; active highlighted via
+`FleetSnapshot.active_id`.
+- **In:** `FleetSnapshot.agents` (active from the snapshot; full roster needs
+  `list_personas()` wiring — the honest C2b gap)
+- **Two placements (mockups):** a persistent **left rail** (dashboard, image 1) or
+  a toggled **right drawer** over the chat (`AGENTS  N · esc to close`, image 2).
+  Footer: `↑↓ select · ⏎ switch · n new`.
+- **When to use:** to *see and switch between* agents/personas. Use the drawer form
+  when chat is primary (toggle on demand); the left rail when the fleet dashboard
+  is primary. One `StateDot` per row — never one looping `ActivityGlyph` per row.
 
-### `SidebarToggle`
-Open/close affordances for the left & right rails (`≡`-style glyph + keybinding).
+### `SidebarToggle`   `📐 designed-only`
+Open/close affordance for the rail/drawer (`≡`-style glyph + keybinding `tab`).
 - **In:** toggle state.
+- **When to use:** the single control that flips the drawer (image 2 ↔ image 3).
+  The header pill doubles as the affordance (`fred · ●●● 3 running ▾` open / `▸`
+  closed).
 
-### `FleetHeader`
-Top bar: wordmark / `≡`, active-agent name + state, `3 online · 2 running` counts,
-model label.
-- **In:** `FleetSnapshot` + model. Extends today's header / status bar.
+### `FleetHeader`   `📐 designed-only`
+Top bar: wordmark / `≡`, active-agent name + state, fleet counts
+(`● 3 online · 2 running`), model label (`Build · Vibeproxy`).
+- **In:** `FleetSnapshot` + model. Extends today's header.
+- **Look (mockup):** a right-side pill — a **dropdown** `fred · ●●● 3 running ▾`
+  that also toggles the drawer; the colored dots summarize the fleet at a glance.
+- **When to use:** as the fleet's at-a-glance summary + drawer trigger. Counts are
+  **derived** from `FleetSnapshot.agents`, never stored.
 
-### `StatusBar`  *(exists today — kept)*
-Bottom hairline bar; gains keybinding-hint segments
+### `ProgressRow`   `📐 designed-only`
+Columnar task row from the dashboard: `● TITLE` + `StatusChip` + description +
+**progress bar** + `% · elapsed`.
+- **In:** a task with optional `progress` (0–100).
+- **Look (mockup):** `● Index repo dependencies  RUNNING` / `Scanning package
+  graphs…` / `▓▓▓▓▓▓░░░  64% · 18:42`. Below the list: `□ 2 completed · …`.
+- **When to use:** when a task has a **known % complete** (use the `ProgressBar`).
+  When progress is unknown, fall back to `ActivityStatus`/`ActivityGlyph` — don't
+  fake a bar. This is the dashboard's per-task row; the pinned single-agent view
+  uses `ActivityRegion` instead.
+
+### `StatusBar`  *(exists today — kept)*   `◻ inlined`
+Bottom hairline bar; keybinding-hint segments
 (`tab switch · / prompt · ctrl+p commands · q quit`).
+- **When to use:** persistent global controls/keys + cwd + mode. Drawn in `app.py`.
 
 ---
+
+## Composition — the components compose
+
+**The catalog is a kit, not a list of screens.** The fleet mockups are not new
+widgets — they are the existing primitives *composed*. Build new surfaces by
+assembling these, not by inventing one-offs (Principle: reuse before invent).
+
+```
+PersonaIndicator  = StatusChip            reading FleetSnapshot.active_id
+AgentRail row     = StateDot + name + status-word + sub-line     (per agent)
+FleetHeader pill  = wordmark + derived dots + counts + dropdown  (← same snapshot)
+ProgressRow       = StateDot + StatusChip + ProgressBar + elapsed (one task)
+Cron task row     = StateDot(□) + title + ScheduleBadge          (a task that is scheduled)
+ActivityRegion    = ActivityStatus + (ctrl+o) ToolCallRow×N      (already shipped this way)
+SelectModal       ← PermissionModal extends it                   (modal reuse)
+AppShell          = SidebarToggle + AgentRail + [main] + StatusBar
+```
+
+Two consequences the mockups make concrete:
+
+- **One snapshot, many views.** `FleetHeader` counts, the `AgentRail` roster, and
+  the `PersonaIndicator` chip all read the **same** `FleetSnapshot` — header counts
+  are *derived*, never stored. Add an agent to the tuple and every surface updates.
+- **The same row scales N=1 → N.** An `AgentRail` row is one `StateDot`+chip
+  composition; the fleet is that row × N. This is design-system H2 ("the fleet with
+  N members; single-agent is N=1") — which is why C2a (N=1 chip) and C2b (the rail)
+  reuse one data path instead of two.
+
+When composing, the atoms (`StateDot`, `StatusChip`, `ProgressBar`, `SectionLabel`,
+`Hairline`) carry color+glyph+weight; the composite just arranges them. If a new
+need can't be met by arranging existing atoms, *that* is when a new catalog entry
+is justified (with rationale in the spec).
 
 ## Catalog at a glance — with real status
 
@@ -372,7 +468,8 @@ Verified against `harness/tui/app.py` + `harness/tui/widgets/`. Tags:
 | | `PromptArea` | ✅ shipped | wired in `app.py` |
 | | `StatusBar` / footer meta | ◻ inlined | drawn in `app.py` |
 | **E** future | `ScheduleBadge` · `CronRow` | 📐 designed-only | no class; `schedule` snapshot field unpopulated |
-| **F** shell/nav | `AppShell` · `AgentRail` · `SidebarToggle` · `FleetHeader` | 📐 designed-only | no class (fleet phase) |
+| **F** shell/nav | `PersonaIndicator` (status-bar chip) | ✅ shipped | C2a, PR #46; reads `FleetSnapshot.active_id` |
+| | `AgentRail` (rail / drawer) · `AppShell` · `SidebarToggle` · `FleetHeader` · `ProgressRow` | 📐 designed-only | no class (C2b/C2c fleet phase) |
 
 **Reality check:** only the `✅` rows are usable today. `SlashMenu` / `PromptArea`
 ship but were missing from the original A–F grouping — listed here under

@@ -344,6 +344,78 @@ def mock_status_bar() -> str:
                 "Status bar / footer meta — mode · model · bypass · cwd (inlined in app.py)")
 
 
+def mock_persona_indicator() -> str:
+    """C2a — the SHIPPED status-bar persona chip."""
+    acc, muted = hex_for("accent"), hex_for("muted")
+    chip = f'<span style="color:{muted}">persona: </span><span style="color:{acc};font-weight:700">fred</span>'
+    return term(f'<div class="line">{chip}</div>',
+                "PersonaIndicator — which agent you're addressing (shipped, C2a)")
+
+
+def mock_fleet_header() -> str:
+    acc, muted, fg = hex_for("accent"), hex_for("muted"), hex_for("foreground")
+    succ, sched = hex_for("success"), hex_for("scheduled")
+    wm = f'<span style="color:{acc};font-weight:700">DoneDone</span><span style="color:{muted}"> v0.5.0</span>'
+    dots = (f'<span style="color:{succ}">●</span><span style="color:{acc}">●</span>'
+            f'<span style="color:{sched}">●</span>')
+    pill = (f'<span style="color:{fg}">fred</span> <span style="color:{muted}">·</span> '
+            f'{dots} <span style="color:{fg}">3 running</span> <span style="color:{muted}">▾</span>')
+    right = f'<span style="color:{acc}">Build</span> <span style="color:{muted}">· Vibeproxy</span>'
+    return term(f'<div class="line">{wm}&nbsp;&nbsp;&nbsp;&nbsp;[ {pill} ]&nbsp;&nbsp;&nbsp;&nbsp;{right}</div>',
+                "FleetHeader — wordmark + fleet dropdown pill (derived dots/counts) + mode")
+
+
+def mock_agent_rail() -> str:
+    fg, muted, acc = hex_for("foreground"), hex_for("muted"), hex_for("accent")
+    succ, sched = hex_for("success"), hex_for("scheduled")
+    label = f'<span style="color:{muted}">AGENTS&nbsp;&nbsp;&nbsp;&nbsp;5 · esc to close</span>'
+    def row(arrow, dot_color, name, status, status_color, sub, cron=False):
+        marker = f'<span style="color:{acc}">▸</span> ' if arrow else '&nbsp;&nbsp;'
+        cglyph = f'<span style="color:{sched}">↻</span> ' if cron else ''
+        return (f'<div class="line">{marker}{cglyph}'
+                f'<span style="color:{dot_color}">●</span> '
+                f'<span style="color:{fg}">{name}</span>'
+                f'&nbsp;&nbsp;&nbsp;<span style="color:{status_color}">{status}</span>'
+                f'<br>&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:{muted}">{sub}</span></div>')
+    rows = (row(True, acc, "fred", "active", acc, "editing harness/api.ts")
+            + row(False, succ, "sam", "running", succ, "tracing auth regression")
+            + row(False, "#b58cf0", "nova", "running", "#b58cf0", "generating migration")
+            + row(False, sched, "robbie", "cron", sched, "nightly-sync · syncing", cron=True)
+            + row(False, muted, "dex", "idle", muted, "queued: lint sweep"))
+    footer = f'<span style="color:{muted}">↑↓ select · ⏎ switch · n new</span>'
+    return term(f'<div class="line">{label}</div>{rows}'
+                f'<div class="line" style="margin-top:.4em">{footer}</div>',
+                "AgentRail — agents list / drawer (active highlighted, cron row, state dots)")
+
+
+def mock_progress_row() -> str:
+    fg, muted, acc = hex_for("foreground"), hex_for("muted"), hex_for("accent")
+    bar_done = "▓" * 8
+    bar_left = "░" * 5
+    row = (f'<span style="color:{acc}">●</span> '
+           f'<span style="color:{fg};font-weight:700">Index repo dependencies</span>'
+           f'&nbsp;&nbsp;&nbsp;<span style="color:{acc};font-weight:700">RUNNING</span>'
+           f'<br>&nbsp;&nbsp;<span style="color:{muted}">Scanning package graphs and lockfiles</span>'
+           f'<br>&nbsp;&nbsp;<span style="color:{acc}">{bar_done}</span>'
+           f'<span style="color:{muted}">{bar_left}  64% · 18:42</span>')
+    return term(f'<div class="line">{row}</div>',
+                "ProgressRow — task with known % (StateDot + StatusChip + ProgressBar + elapsed)")
+
+
+def mock_cron_row() -> str:
+    fg, muted, sched = hex_for("foreground"), hex_for("muted"), hex_for("scheduled")
+    task = (f'<span style="color:{muted}">□</span> '
+            f'<span style="color:{fg};font-weight:700">Weekly report cron</span>'
+            f'<span style="color:{muted}"> · emails reports</span>'
+            f'&nbsp;&nbsp;&nbsp;<span style="color:{sched}">in 2d 14h</span> '
+            f'<span style="color:{sched};font-weight:700">SCHEDULED</span>')
+    done = (f'<span style="color:{hex_for("success")}">□</span> '
+            f'<span style="color:{muted}">2 completed · customer import, background audit</span>')
+    return term(f'<div class="line">{task}</div>'
+                f'<div class="line" style="margin-top:.3em">{done}</div>',
+                "Cron task row + ScheduleBadge (a task that is scheduled) · completed count")
+
+
 def mock_activity_region() -> str:
     acc, fg, muted = hex_for("accent"), hex_for("foreground"), hex_for("muted")
     rule = f'<span style="color:{muted}">{"─"*44}</span>'
@@ -514,6 +586,39 @@ def section_surfaces() -> str:
             '<div class="cards">' + "".join(cards) + "</div></section>")
 
 
+def section_fleet() -> str:
+    """The agent / fleet / cron surfaces (from the concept mockups). Only the
+    persona indicator ships today; the rest are designed-only and composed from
+    the primitives above."""
+    cards = [
+        component_card("PersonaIndicator", "shipped",
+            "Which agent/persona you're talking to — the engine's real resolved id.",
+            mock_persona_indicator(), usage_key="PersonaIndicator"),
+        component_card("FleetHeader", "designed",
+            "Wordmark + a fleet dropdown pill (derived dots + counts) + mode. "
+            "Composed; counts derived from FleetSnapshot.",
+            mock_fleet_header(), usage_key="FleetHeader"),
+        component_card("AgentRail (rail / drawer)", "designed",
+            "The agents list — left rail or right drawer. Each row = StateDot + "
+            "name + status word + sub-line; active highlighted; cron rows get ↻.",
+            mock_agent_rail(), usage_key="AgentRail"),
+        component_card("ProgressRow", "designed",
+            "A task with a known % — StateDot + StatusChip + ProgressBar + elapsed.",
+            mock_progress_row(), usage_key="ProgressRow"),
+        component_card("Cron task row + ScheduleBadge", "designed",
+            "A scheduled task. No cron backend exists yet — this is the target look.",
+            mock_cron_row(), usage_key="ScheduleBadge"),
+    ]
+    return ("<section><h2>Agents · fleet · crons</h2>"
+            "<p class='note'>From the fleet/drawer/cron concept mockups "
+            "(2026-06-27). Only <b>PersonaIndicator</b> ships today (C2a); the rest "
+            "are <b>📐 designed-only</b> — and are <em>composed from the primitives "
+            "above</em> (a rail row is a StateDot + chip; the header derives its "
+            "dots from the same <code>FleetSnapshot</code>). See "
+            "<code>persona-C2-drawer-arc-design.md</code>.</p>"
+            '<div class="cards">' + "".join(cards) + "</div></section>")
+
+
 # ── page assembly ─────────────────────────────────────────────────────────────
 
 _CSS = """
@@ -599,6 +704,7 @@ def build_html(stamp: str) -> str:
 {section_status()}
 {section_components()}
 {section_surfaces()}
+{section_fleet()}
 <footer>
   {n_colors} tokens · {n_glyphs} glyphs · {len(list(AgentState))} agent states ·
   {len(list(ToolStatus))} tool statuses. Source of truth:
