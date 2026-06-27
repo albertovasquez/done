@@ -182,13 +182,27 @@ The live activity line: `· <label>… (1m 18s · ↓ 4.0k tokens)`.
 · Asking clarifying questions…  (1m 18s · ↓ 4.0k tokens)
 ```
 
-### `TaskTree`  ⭐
-Nested checklist, updated in place.
+### `TaskTree`  `🟡 built·unwired`
+Live checklist, updated in place — a plan's steps, struck through as they finish.
 - **In:** `tasks: tuple[TaskItem, ...]`
-- Glyphs: `✓` done · `▣` in-progress · `□` pending.
+- **Glyphs:** `✓` done · `▣` in-progress · `□` pending · `✗` failed.
+- **Desired look (target, from the concept screenshot):** sits *under* an
+  `ActivityStatus` line and **strikes through completed items** so the eye tracks
+  what's left, not what's done. The activity line carries live elapsed/tokens;
+  the tree carries the plan. (Today's `lines_for` has no strikethrough and the
+  widget is never displayed — this is the look to build toward when it's revived.)
 - **When to use:** for a *multi-step plan* with known sub-steps. NOT for raw tool
   commands — the status-only decision retired that (the per-command summary was a
-  whack-a-mole liability); `TaskTree` is currently unwired pending real plan data.
+  whack-a-mole liability), which is why `TaskTree` is currently unwired; revive it
+  only with real plan/subtask data, in the struck-through form above.
+
+```
+◦ Stewing…  (4m 45s · ↓ 17.0k tokens)
+  └ ✓ S̶a̶v̶e̶ ̶c̶o̶n̶c̶e̶p̶t̶ ̶m̶o̶c̶k̶u̶p̶s̶          (done → struck through, muted)
+    ✓ A̶d̶d̶ ̶c̶o̶m̶p̶o̶n̶e̶n̶t̶s̶ ̶t̶o̶ ̶c̶a̶t̶a̶l̶o̶g̶
+    ▣ Render mocks in brand book          (in-progress → bright)
+    □ Wire it up                          (pending → muted)
+```
 
 ```
 └ ✓ Explore project context

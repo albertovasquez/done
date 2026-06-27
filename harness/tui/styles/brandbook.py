@@ -416,6 +416,28 @@ def mock_cron_row() -> str:
                 "Cron task row + ScheduleBadge (a task that is scheduled) · completed count")
 
 
+def mock_task_tree() -> str:
+    """Desired TaskTree look (from the concept screenshot): an ActivityStatus line
+    over a checklist that STRIKES THROUGH completed items. Currently unwired."""
+    sched, fg, muted, succ, acc = (hex_for("scheduled"), hex_for("foreground"),
+                                   hex_for("muted"), hex_for("success"), hex_for("accent"))
+    status = (f'<span style="color:{sched}">◦</span> '
+              f'<span style="color:{sched};font-weight:700">Stewing…</span> '
+              f'<span style="color:{muted}">(4m 45s · ↓ 17.0k tokens)</span>')
+    def done(t):
+        return (f'<div class="line">&nbsp;&nbsp;<span style="color:{succ}">✓</span> '
+                f'<span style="color:{muted};text-decoration:line-through">{t}</span></div>')
+    prog = (f'<div class="line">&nbsp;&nbsp;<span style="color:{acc}">▣</span> '
+            f'<span style="color:{fg}">Render mocks in brand book</span></div>')
+    pend = (f'<div class="line">&nbsp;&nbsp;<span style="color:{muted}">□ Wire it up</span></div>')
+    return term(f'<div class="line">{status}</div>'
+                f'<div class="line">&nbsp;<span style="color:{muted}">└</span></div>'
+                + done("Save concept mockups into repo")
+                + done("Add agent/fleet/cron components to catalog")
+                + prog + pend,
+                "TaskTree — desired look: activity line + checklist, completed items struck through (unwired)")
+
+
 def mock_activity_region() -> str:
     acc, fg, muted = hex_for("accent"), hex_for("foreground"), hex_for("muted")
     rule = f'<span style="color:{muted}">{"─"*44}</span>'
@@ -545,6 +567,10 @@ def section_components() -> str:
         component_card("ActivityRegion", "shipped",
             "Pinned transient zone above the composer; status-only by default.",
             mock_activity_region()),
+        component_card("TaskTree", "unwired",
+            "Live plan checklist — desired look: activity line + items struck "
+            "through as they finish. Built but unwired (status-only decision).",
+            mock_task_tree()),
         component_card("ToolCallRow", "shipped",
             "One tool call: subtype glyph + title + status (collapsed) / capped body (expanded).",
             mock_tool_call_row()),
