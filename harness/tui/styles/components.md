@@ -372,11 +372,12 @@ A scheduled job as a full row, for a crons list/sidebar. Sibling of `ProgressRow
 ## F. Shell & navigation
 
 > **Reality:** `FleetSnapshot`/`AgentSnapshot` (with `active_id`) exist and are
-> tested, and the **persona indicator** (C2a, below) ships today. But the shell
-> widgets (`AppShell`, `AgentRail`, `SidebarToggle`, `FleetHeader`) are
-> `📐 designed-only` — no classes yet. C2b is their spec; C2c brings the true
-> N-concurrent fleet (own brainstorm + Codex review). See
-> `docs/superpowers/specs/2026-06-27-persona-C2-drawer-arc-design.md`.
+> tested, the **persona indicator** (C2a) and the **`AgentRail`** (C2b widget,
+> switching wired by C2c) ship today. The remaining shell widgets (`AppShell`,
+> `SidebarToggle`, `FleetHeader`) are `📐 designed-only` — no classes yet. C2c
+> wired in-process persona switching (`harness/set_persona`); the true
+> N-concurrent fleet (live ticking / state dots) is a later pass. See
+> `docs/superpowers/specs/2026-06-27-persona-C2c-design.md` and `…-C2-drawer-arc-design.md`.
 
 ### `PersonaIndicator` (status-bar chip)   `✅ shipped` (C2a, PR #46)
 Shows **which agent/persona you're talking to**, sourced from the engine's real
@@ -395,13 +396,15 @@ collapsible sidebars.
 - **When to use:** as the *frame* once a rail/drawer exists. At N=1 it must be a
   no-op (collapse to today's view) — don't introduce it until C2b needs a rail.
 
-### `AgentRail`   `📐 designed-only`
+### `AgentRail`   `✅ shipped` (C2b widget; C2c wires switching)
 The AGENTS list. Per-agent card: `StateDot` (state-colored) + name + status word
 (`active`/`running`/`cron`/`idle`/`scheduled`) + sub-line (`editing api.ts` /
 `idle · 1 task` / `nightly-sync · syncing`). Selectable; active highlighted via
-`FleetSnapshot.active_id`.
-- **In:** `FleetSnapshot.agents` (active from the snapshot; full roster needs
-  `list_personas()` wiring — the honest C2b gap)
+`FleetSnapshot.active_id`. Selecting a row switches the persona **in-process** via
+the `harness/set_persona` ext-method (C2c) — no re-exec.
+- **In:** the full roster from `list_personas()` (wired C2b via `roster.persona_rows`,
+  active from `FleetSnapshot.active_id`). The live per-row `StateDot`/status word is
+  still designed-only (no per-agent state source yet — deferred to a later fleet pass).
 - **Two placements (mockups):** a persistent **left rail** (dashboard, image 1) or
   a toggled **right drawer** over the chat (`AGENTS  N · esc to close`, image 2).
   Footer: `↑↓ select · ⏎ switch · n new`.
@@ -501,7 +504,8 @@ Verified against `harness/tui/app.py` + `harness/tui/widgets/`. Tags:
 | | `StatusBar` / footer meta | ◻ inlined | drawn in `app.py` |
 | **E** future | `ScheduleBadge` · `CronRow` | 📐 designed-only | no class; `schedule` snapshot field unpopulated |
 | **F** shell/nav | `PersonaIndicator` (status-bar chip) | ✅ shipped | C2a, PR #46; reads `FleetSnapshot.active_id` |
-| | `AgentRail` (rail / drawer) · `AppShell` · `SidebarToggle` · `FleetHeader` · `ProgressRow` | 📐 designed-only | no class (C2b/C2c fleet phase) |
+| | `AgentRail` (rail / drawer) | ✅ shipped | `widgets/agent_rail.py` (C2b); switching wired in `app.py` (C2c) |
+| | `AppShell` · `SidebarToggle` · `FleetHeader` · `ProgressRow` | 📐 designed-only | no class (later fleet phase) |
 
 **Reality check:** only the `✅` rows are usable today. `SlashMenu` / `PromptArea`
 ship but were missing from the original A–F grouping — listed here under
