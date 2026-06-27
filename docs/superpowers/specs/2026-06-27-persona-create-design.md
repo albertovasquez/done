@@ -32,23 +32,39 @@ components.
 Persona creation is a thin path that reuses existing machinery. Three layers:
 
 **Engine — `harness/persona.py`:**
-- **`create_persona(persona_id: str) -> Path`** — the new core. Validates the id
-  (reuse `persona_select._VALID_ID` `^[a-z0-9_-]+$` + reject `RESERVED_KEY` "default"),
-  refuses if the dir already exists (no clobber), `mkdir`s `config_dir()/agents/<id>`,
-  copies the bundled `PERSONA_FILES` (SOUL/IDENTITY/USER.md) templates. Returns the
-  new workspace `Path`. Raises `InvalidPersonaId` (bad charset or "default") or
-  `PersonaExists` (NEW exception — dir already there).
-- **`seed_default_workspace()`** — refactored to share `create_persona`'s template-copy
-  logic (ONE seeding implementation, DRY). It keeps its startup contract: no-op if the
-  default dir exists, never raises (best-effort).
+- **`_copy_persona_templates(dest: Path) -> None`** (NEW private helper) — the ONLY
+  shared logic: `mkdir(parents=True, exist_ok=True)` then copy each `PERSONA_FILES`
+  entry from `bundled_persona_templates_dir()` into `dest`, **byte-for-byte**
+  (`read_bytes`/`write_bytes`), skipping any file that already exists. No validation, no
+  raise-policy of its own — callers own those. (Codex 1A/1B/5B: seed must NOT route
+  through the validating `create_persona`; the byte-copy makes "byte-identical" provable.)
+- **`create_persona(persona_id: str) -> Path`** — the new public core. Validates the id
+  (reuse `persona_select._VALID_ID` `^[a-z0-9_-]+$` + **explicitly reject** `RESERVED_KEY`
+  "default" — `_VALID_ID` alone allows "default", so the reserved check is separate),
+  refuses if the target **`.exists()`** (file OR dir — `PersonaExists`, not just `is_dir`;
+  Codex 3C), then calls `_copy_persona_templates(target)`. Returns the new workspace
+  `Path`. Raises `InvalidPersonaId` (bad charset or "default"), `PersonaExists` (target
+  already present), or lets `OSError` propagate (read-only home, etc. — explicit creation
+  REPORTS).
+- **`seed_default_workspace()`** — refactored: **no-op if the default dir exists**
+  (returns immediately — does NOT backfill an existing dir; Codex 1B), else
+  `_copy_persona_templates(default_workspace_dir())` wrapped in its existing
+  try/except-OSError-pass (never raises — startup contract). It does NOT call
+  `create_persona` (which would reject "default").
 
 **ACP ext-method — `harness/acp_agent.py`:**
-- **`harness/create_persona`** (mirrors C2c's `harness/set_persona` shape) — calls
-  `persona.create_persona(id)`, then **chains into the same seat activation as
-  `set_persona`** (get-or-create the seat, set `_active_persona`, stamp the session
-  model), returning `{ok, id, session_id, model}`. On `InvalidPersonaId`/`PersonaExists`/
-  `OSError` → `{ok: false, error}`. The shared activation is factored so create and
-  switch use ONE path.
+- **`_activate_seat(id) -> dict`** (NEW private method, extracted from the current
+  `set_persona` body) — get-or-create the seat, set `_active_persona = id`, mirror
+  `_worker_model_id`, stamp the session's `worker_model`, return `{ok:true, id,
+  session_id, model}`. `set_persona`'s ext-method branch becomes a thin wrapper
+  (validate id → `_activate_seat`). ONE activation path.
+- **`harness/create_persona`** (mirrors `set_persona`) — wraps **both** create and
+  activation in one try: `persona.create_persona(id)` then `_activate_seat(id)`. On ANY
+  of `InvalidPersonaId`/`PersonaExists`/`OSError`/`UnknownPersona` → `{ok:false, error}`
+  with **`_active_persona` unchanged** (the `_active_persona =` assignment lives inside
+  `_activate_seat`, which only runs after a successful create; if activation itself
+  raises before that assignment, active stays unchanged). A just-created dir orphaned by
+  a later activation failure is acceptable (no rollback — §5). (Codex 2A.)
 
 **TUI — `harness/tui/widgets/new_persona_modal.py` (NEW) + `harness/tui/app.py`:**
 - **`NewPersonaModal(ModalScreen)`** — an `Input` for the name + a status line. States:
@@ -144,8 +160,9 @@ modal owns focus — no rail race (modal-lifecycle-scoped, analogous to C2c's
 
 | Unit | Test |
 |---|---|
-| `create_persona` | creates dir + copies the trio; **rejects "default"** (`InvalidPersonaId`); rejects bad charset (e.g. `fred.smith`, `Fred`, spaces); **rejects existing** (`PersonaExists`); returns the workspace path; the copied files match the bundled templates |
-| `seed_default_workspace` refactor | no-op when default exists; never raises (read-only home); default still seeded on first run (regression) |
+| `_copy_persona_templates` | copies the trio byte-for-byte (assert `read_bytes()` equals the bundled template bytes); skips a file that already exists; creates the dir |
+| `create_persona` | creates dir + copies the trio; **rejects "default"** (`InvalidPersonaId`); rejects bad charset (`fred.smith`, `Fred`, spaces); **rejects existing dir AND existing file** at the target (`PersonaExists`); returns the workspace path |
+| `seed_default_workspace` refactor | no-op when default exists (does NOT backfill missing files into an existing default dir — regression of the current contract); never raises (read-only home); default still seeded on first run with byte-identical inert templates |
 | `create_persona` ext-method | valid → `{ok, id, session_id, model}` + `_active_persona == id` + the workspace exists on disk; dup id → `{ok:false}` (active unchanged); invalid id → `{ok:false}`; missing id → `{ok:false}` |
 | `NewPersonaModal` | Enter with a name → posts the id; empty/whitespace name → ignored (no post); error state → message shown + modal stays open; cancel/esc → posts None |
 | app `n`-opens + `_on_created` | `n` in rail opens the modal; successful create repoints `_session_id` + applies `PersonaResolved` + rail lists+highlights the new id; failed create keeps current persona + shows notice |
