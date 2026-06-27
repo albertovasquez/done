@@ -910,3 +910,21 @@ def test_yolo_chip_is_leftmost_in_statusbar():
             ids = [w.id for w in app.query_one("#statusbar").children]
             assert ids[0] == "statusbar-mode", f"chip not leftmost: {ids}"
     asyncio.run(go())
+
+
+def test_statusbar_children_share_one_row():
+    """Regression: #statusbar is a horizontal layout, so chip + cwd + version sit
+    on the SAME row. A vertical Container default stacked them onto 3 rows and the
+    height:1 bar clipped all but the first (the chip), hiding the cwd/version and
+    making the bar look broken. Assert on region.y (NOT size.width — width is set
+    per-widget regardless of which row it lands on, so it can't catch this)."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock", yolo=False)
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            kids = {w.id: w.region for w in app.query_one("#statusbar").children}
+            ys = {wid: r.y for wid, r in kids.items()}
+            assert len(set(ys.values())) == 1, f"statusbar children not on one row: {ys}"
+            # left-to-right order: mode chip, then cwd, then version
+            assert kids["statusbar-mode"].x < kids["statusbar-left"].x < kids["statusbar-right"].x
+    asyncio.run(go())
