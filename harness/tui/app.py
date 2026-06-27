@@ -246,8 +246,12 @@ class HarnessTui(App):
                 and self._worker_model_id != self._launch_worker_model_id):
             try:
                 await self._conn.ext_method("harness/set_model", {"model": self._worker_model_id})
-            except Exception:
-                pass
+            except Exception as e:
+                # Benign for an editor client without the harness extension
+                # (method-not-found); but a real failure here means the TUI
+                # silently runs the WRONG model after a respawn. self.log keeps it
+                # off the user's screen while making it visible in `textual console`.
+                self.log(f"reapply_model failed ({self._worker_model_id!r}): {e!r}")
 
     async def on_mount(self) -> None:
         # theme is registered + activated in __init__ (before CSS parse)
