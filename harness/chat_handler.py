@@ -14,6 +14,7 @@ it works in mock mode too).
 
 from __future__ import annotations
 
+import os
 import re
 from typing import Iterator
 
@@ -34,6 +35,28 @@ def is_capability_question(prompt: str) -> bool:
     from the catalog, no model). Narrow by design: a false negative just falls
     through to the model; a false positive would hijack legitimate chat."""
     return bool(_ABILITY_Q.search(prompt) or _SKILL_WORD.search(prompt))
+
+
+def _deterministic_skills_list_enabled() -> bool:
+    """Whether the legacy DETERMINISTIC skills-list path is enabled. OFF by
+    default; set HARNESS_DETERMINISTIC_SKILLS_LIST=1 (or true) to turn it on.
+
+    WHY OFF BY DEFAULT: `is_capability_question` is a bare keyword match — it
+    fires on the word "skill(s)" alone, so it cannot tell "list my skills"
+    (enumeration) from a real question that merely mentions skills ("are these
+    descriptions sent to the model's context?", "how are skills loaded?"). When
+    it fired, it short-circuited the model and dumped the catalog, giving the
+    wrong answer to genuine questions. It also acted as a hidden SECOND
+    classifier downstream of the LLM router, which is brittle as caching /
+    routing optimizations are added.
+
+    With the flag OFF, every skill question goes to the model, which already has
+    the full skills MENU (names + descriptions) in its system prompt via
+    `compose_menu` -> `base_block`, so it answers from real intent. The
+    deterministic path (catalog dump + skipped/shadowed surfacing) is preserved
+    but dormant; whether to improve or remove it is a deferred decision.
+    """
+    return os.getenv("HARNESS_DETERMINISTIC_SKILLS_LIST", "").lower() in ("1", "true")
 
 
 # User-facing header + path hint per origin (bundled is hidden, so it has none).
@@ -112,9 +135,11 @@ class ChatHandler:
                       history: list[dict] | None = None) -> Iterator[str]:
         """Yield the answer in pieces (one message_chunk per delta downstream).
         `history` (plain {role, content} turns) is prepended for context.
-        A capability question is answered from the catalog (one piece, no model);
-        mock mode otherwise yields one honest piece."""
-        if is_capability_question(prompt):
+        By default every question (including skill questions) goes to the model,
+        which has the skills menu in its context. The legacy deterministic
+        catalog-dump path is gated behind HARNESS_DETERMINISTIC_SKILLS_LIST
+        (OFF by default; see `_deterministic_skills_list_enabled`)."""
+        if _deterministic_skills_list_enabled() and is_capability_question(prompt):
             yield _format_catalog(self._catalog, self._skipped, self._shadowed)
             return
         if self._model_id is None:

@@ -97,9 +97,16 @@ def test_is_capability_question_rejects_ordinary_chat():
         assert not is_capability_question(q), q
 
 
-def test_capability_question_answered_from_catalog_even_in_mock_mode():
-    # The whole point: routing already knows the catalog, so we can answer a
+# --- deterministic skills-list path (flag-gated, OFF by default) -------------
+# HARNESS_DETERMINISTIC_SKILLS_LIST=1 enables the legacy catalog-dump path. The
+# tests below opt in explicitly; the default-OFF behavior is covered after.
+FLAG = "HARNESS_DETERMINISTIC_SKILLS_LIST"
+
+
+def test_capability_question_answered_from_catalog_when_flag_on(monkeypatch):
+    # With the flag ON, routing already knows the catalog, so we answer a
     # capability question deterministically WITHOUT a model (works in mock mode).
+    monkeypatch.setenv(FLAG, "1")
     out = "".join(ChatHandler(None, catalog=CAT).answer_stream("what skills do we have?"))
     assert "test-driven-development" in out
     assert "Write a failing test first" in out
@@ -107,9 +114,10 @@ def test_capability_question_answered_from_catalog_even_in_mock_mode():
     assert MOCK_LINE not in out                 # did NOT fall through to the mock line
 
 
-def test_capability_question_does_not_call_the_model(monkeypatch):
-    # Even with a real model id, a capability question must be answered from the
-    # catalog and must NOT hit litellm.
+def test_capability_question_does_not_call_the_model_when_flag_on(monkeypatch):
+    # With the flag ON, even with a real model id, a capability question is
+    # answered from the catalog and must NOT hit litellm.
+    monkeypatch.setenv(FLAG, "1")
     import litellm
 
     def boom(**kwargs):
@@ -120,14 +128,44 @@ def test_capability_question_does_not_call_the_model(monkeypatch):
     assert "test-driven-development" in out
 
 
-def test_capability_question_with_empty_catalog_says_none():
+def test_capability_question_with_empty_catalog_says_none_when_flag_on(monkeypatch):
+    monkeypatch.setenv(FLAG, "1")
     out = "".join(ChatHandler(None, catalog=[]).answer_stream("what skills do we have?"))
     assert "no skills" in out.lower()
 
 
-def test_catalog_answer_groups_by_origin_hides_bundled_and_skips_empty():
-    # The user-facing answer groups visible skills by origin (global/user/project),
-    # hides bundled (the curated spine), and omits empty groups.
+def test_capability_question_goes_to_model_by_default(monkeypatch):
+    # Default (flag unset): a skill question is NOT hijacked into a list dump —
+    # it goes to the model, which has the skills menu in its context and can
+    # answer the actual question (e.g. "are descriptions sent to context?").
+    monkeypatch.delenv(FLAG, raising=False)
+    captured = {}
+    import litellm
+
+    def fake_completion(**kwargs):
+        captured.update(kwargs)
+        return iter([_Chunk("answer")])
+
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+    out = "".join(ChatHandler("gpt-5.4", catalog=CAT).answer_stream(
+        "are all these skills descriptions sent to the llm in context?"))
+    assert captured                              # the model WAS called
+    assert "test-driven-development" not in out  # NOT a deterministic catalog dump
+    assert out == "answer"
+
+
+def test_skill_question_in_mock_mode_is_honest_by_default(monkeypatch):
+    # Default + mock mode: a skill question yields the honest mock line, not a
+    # list dump (we can't answer without a model, and won't pretend to).
+    monkeypatch.delenv(FLAG, raising=False)
+    out = "".join(ChatHandler(None, catalog=CAT).answer_stream("what skills do we have?"))
+    assert out == MOCK_LINE
+
+
+def test_catalog_answer_groups_by_origin_hides_bundled_and_skips_empty(monkeypatch):
+    # The deterministic answer (flag ON) groups visible skills by origin
+    # (global/user/project), hides bundled (the curated spine), omits empty groups.
+    monkeypatch.setenv(FLAG, "1")
     cat = [
         SkillMeta("hidden-spine", "internal", origin="bundled"),
         SkillMeta("caveman", "compress speech", origin="global"),
