@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import platform
+import time
 from pathlib import Path
 
 import acp
@@ -259,7 +260,7 @@ class HarnessAgent(acp.Agent):
             # grant all required).  ops.add is NOT exposed as a normal agent
             # tool — this ext-method is the only way to write a job.
             try:
-                return handle_create_job(params or {}, now=__import__("time").time())
+                return handle_create_job(params or {}, now=time.time())
             except (ValueError, KeyError, TypeError) as e:
                 return {"ok": False, "error": str(e)}
         return {}

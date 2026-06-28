@@ -122,7 +122,6 @@ class CronDetail(Widget):
         series = read_run_series(job_id)
         if not series:
             plt.title("No runs recorded")
-            plt.plotsize(plot_widget.size.width or 40, plot_widget.size.height or 10)
             plot_widget.refresh()
             return
 

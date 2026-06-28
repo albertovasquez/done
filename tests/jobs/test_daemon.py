@@ -196,8 +196,6 @@ class TestRunForever:
 
         assert all(i == 15.0 for i in sleep_intervals)
 
-        assert all(i == 15.0 for i in sleep_intervals)
-
     def test_run_forever_survives_tick_error(self, monkeypatch):
         """A transient tick failure must be logged and the loop must continue to
         the next interval, not propagate and die."""

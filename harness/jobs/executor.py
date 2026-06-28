@@ -139,6 +139,7 @@ def _default_deps() -> Deps:
         from minisweagent.environments.local import LocalEnvironment  # noqa: E402
         env = LocalEnvironment(cwd=str(workspace))
 
+        # agent cfg re-read per run — negligible at cron cadence, keeps run_turn self-contained
         agent_cfg = _load_agent_cfg()
         runner = MiniSweAgentRunner(model, env, agent_cfg=agent_cfg)
         # Pass the REAL skill_block + base_block (run_traced.py:195-198 parity).

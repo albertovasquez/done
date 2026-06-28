@@ -52,6 +52,9 @@ def main(argv: list[str] | None = None) -> int:
     # here so tests can monkeypatch harness.jobs.cron_main.load_dotenv.
     # Daemon has no project_dir, so only the global config .env is relevant.
     # load_dotenv is a no-op (returns False) when the path does not exist.
+    # NOTE: only the global config_dir/.env is loaded here (daemon has no project cwd).
+    # A project-only VIBEPROXY_MODEL will NOT be inherited; per-persona models still
+    # resolve via done.conf (persona_sessions.py resolve_session_model).
     load_dotenv(paths.config_dir() / ".env", override=False)
 
     if args.once:

@@ -19,7 +19,6 @@ from __future__ import annotations
 import time
 import logging
 
-from textual import on
 from textual.binding import Binding
 from textual.message import Message
 from textual.widgets import ListItem, ListView, Static
