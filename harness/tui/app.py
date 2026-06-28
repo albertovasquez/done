@@ -127,6 +127,7 @@ class HarnessTui(App):
         self._tokens = 0                      # last-known token count from usage updates
         self._persona_seen = False            # True after the first real PersonaResolved lands
         self._turn_active = False             # True while a prompt turn is in flight (used by Esc-rail guard)
+        self._cancel_posted = False           # True after the first action_cancel this turn (de-dupe double BINDING fire)
         self._queued: list[str] = []          # prompts typed mid-turn; drained FIFO when the turn ends
         self._pending_persona: str | None = None   # a switch requested mid-turn; applied on turn-end
         self._snapshot = initial_snapshot()   # the presentation model (pure, immutable)
@@ -601,6 +602,7 @@ class HarnessTui(App):
         # next message (Enter while _turn_active enqueues — see on_prompt_area_submitted).
         self._turn_start = time.monotonic()
         self._turn_active = True
+        self._cancel_posted = False           # reset per-turn so ESC is fresh again
         self._active_input().placeholder = "Type to queue your next message…"
         self._apply(TurnStarted())
         self._send_gen = self._gen            # tag this turn's worker with its generation
@@ -1206,7 +1208,12 @@ class HarnessTui(App):
             if self._tracer is not None:
                 self._tracer.emit("dn", "tx.cancel", sid=self._session_id)
             await self._conn.cancel(session_id=self._session_id)
-            if self._started:
+            # Guard against double-fire: on_key calls action_cancel directly AND
+            # event.stop() does NOT suppress BINDINGS dispatch in Textual, so the
+            # global ("escape", "cancel", …) binding fires too.  _conn.cancel() is
+            # idempotent; the visible feedback line must not appear twice.
+            if self._started and not self._cancel_posted:
+                self._cancel_posted = True
                 self._append_line(_c("muted", "— canceling… —"))
 
     async def action_clear(self) -> None:

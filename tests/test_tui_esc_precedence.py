@@ -1,8 +1,9 @@
-# tests/test_tui_esc_precedence.py  (new file)
+# tests/test_tui_esc_precedence.py
 import sys
 sys.path.insert(0, "upstream/src"); sys.path.insert(0, ".")
 import asyncio
 from pathlib import Path
+from textual.widgets import Static
 from harness.tui.app import HarnessTui
 from harness.tui.widgets.prompt_area import PromptArea
 
@@ -40,4 +41,53 @@ def test_esc_during_turn_cancels_even_with_text_in_box():
                 await pilot.pause()
                 if not app._turn_active:
                     break
+    asyncio.run(go())
+
+
+def test_esc_during_turn_posts_single_canceling_line():
+    """ESC during an active turn must append exactly ONE '— canceling… —' line.
+
+    The defect: on_key calls action_cancel() directly then returns, but
+    event.stop() does NOT suppress BINDINGS dispatch in Textual — the global
+    BINDING ("escape", "cancel", …) fires too, so action_cancel runs twice and
+    the muted feedback line appears twice.  The fix makes action_cancel
+    idempotent within a single turn via _cancel_posted.
+    """
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        canceling_calls = []
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            # Intercept _append_line to count "canceling" calls without
+            # touching widget internals (avoids renderable attribute issues)
+            orig_append = app._append_line
+            def counting_append(markup, **kw):
+                if "canceling" in markup.lower():
+                    canceling_calls.append(markup)
+                return orig_append(markup, **kw)
+            app._append_line = counting_append
+
+            # Send a SLOW prompt so there is a live turn to cancel
+            app.query_one("#landing-input", PromptArea).focus()
+            app.query_one("#landing-input", PromptArea).value = "SLOW look at file"
+            await pilot.press("enter")
+            # Wait until turn is active (same pattern as existing test)
+            for _ in range(50):
+                await pilot.pause()
+                if app._turn_active and app._streaming_md is None:
+                    break
+            # Press ESC exactly once
+            await pilot.press("escape")
+            # Give the event loop time to process both action_cancel invocations
+            # (on_key direct call + BINDING dispatch)
+            for _ in range(10):
+                await pilot.pause()
+            # Wait for the in-flight worker to finish so teardown doesn't crash
+            for _ in range(80):
+                await pilot.pause()
+                if not app._turn_active:
+                    break
+        assert len(canceling_calls) == 1, (
+            f"Expected exactly 1 '— canceling… —' append, got {len(canceling_calls)}: {canceling_calls}"
+        )
     asyncio.run(go())
