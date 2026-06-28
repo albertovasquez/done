@@ -68,17 +68,25 @@ class AgentRail(ListView):
         super().__init__(*args, **kwargs)
         self._rows: tuple[PersonaRow, ...] = ()
 
-    def set_rows(self, rows: tuple[PersonaRow, ...]) -> None:
+    def set_rows(self, rows: tuple[PersonaRow, ...], *, subline_of=None) -> None:
         self._rows = rows
         self.clear()
-        for r in rows:
-            item = ListItem(Label(_row_label(r), markup=False))
+        active_index = 0
+        for i, r in enumerate(rows):
+            subline = subline_of(r) if subline_of else "idle"
+            item = ListItem(Static(card_markup(r, subline), markup=True))
             item.data = r.id                 # carry the id for selection (select_modal pattern)
+            item.add_class("persona-card")
+            if r.active:
+                item.add_class("active")
+                active_index = i
             self.append(item)
+        if rows:
+            self.index = active_index        # pre-highlight the active persona on open
 
     def _rail_text(self) -> str:
-        """The rendered lines as one string (test helper)."""
-        return "\n".join(_row_label(r) for r in self._rows)
+        """The rendered card markup as one string (test helper)."""
+        return "\n".join(card_markup(r, "idle") for r in self._rows)
 
     def select_id(self, persona_id: str) -> None:
         """Programmatic selection entrypoint (used by tests + enter/click)."""
