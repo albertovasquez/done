@@ -88,12 +88,19 @@ router catalog + skills menu + load_skill  (unchanged downstream)
 - `skills_dirs()` with no `project_cwd` adds only the `~/.claude/skills` compat root, which is an absent dir for nearly all users → skipped → catalog identical. Callers that pass `project_cwd` get the project roots, also absent unless the user created them.
 - Existing tests that assert `skills_dirs() == [bundled, config/skills]` **will change** — they must be updated to the new ordered list (enumerable, few sites). This is an intended, documented behavior change, not a regression.
 - The bundled spine and all current behavior are unchanged when no new dirs exist.
+- **Caveman-review follow-up:** a Claude Code user who already has `~/.claude/skills` gets a behavior change on upgrade (their skills are now consumed). This is intended portability, but it is NOT silent-safe for them — add a one-line **release note** ("Done now reads `.claude/skills` / `.agents/skills`") in addition to the docs.
+
+## Security callout (elevated from caveman-review) 🔴
+
+Reading `<cwd>/.claude/skills` (and `.agents/skills`) means **when Done runs inside a cloned repo, that repo's skill instructions enter Done's prompt** — attacker-controllable content if the repo is untrusted. The mitigation holds because Done **only injects SKILL.md text and never executes skill `scripts/`** (no execution path exists), so the blast radius is "prompt injection," identical to the repo's own code/AGENTS.md that Done already reads. Document that **a project skills dir is trusted to the same degree as that repo's code** — cloning and running Done in an untrusted repo is the user's trust boundary, unchanged by this PR. (No new execution; the install command, when built, adds the explicit confirm step.)
 
 ## Testing strategy
 
-- `paths.skills_dirs(project_cwd=...)` returns the exact ordered list; `None` omits project roots; ordering is lowest-precedence-first.
+- `paths.skills_dirs(project_cwd=...)` returns the exact ordered list; `None` omits the two PROJECT roots but keeps the user roots; ordering is lowest-precedence-first.
 - `load_catalog_with_skips` across roots: later root wins by name; a shadowed skill is recorded in `shadowed` with the winning root; a skill present in only one root is not shadowed.
-- A skill dropped into `<cwd>/.agents/skills` appears in the catalog; one in `<cwd>/.claude/skills` appears (compat); native Done dir outranks compat dir on a name clash.
+- A skill dropped into `<cwd>/.agents/skills` appears in the catalog; one in `<cwd>/.claude/skills` appears (compat).
+- **The subtle tie-break (explicit test):** a same-named skill in BOTH `~/.config/harness/skills` (native) and `~/.claude/skills` (compat) → the native Done one wins; assert it by name+description.
+- **`CatalogLoad` field guard:** adding `shadowed` is a 3rd field — assert no caller positionally-unpacks `CatalogLoad` (grep: only `.skills`/`.skipped` attribute access in run_traced/acp; keep it that way).
 - Capability answer surfaces shadows alongside skips.
 - Dispatch threads `project_cwd` (run_traced + acp).
 - Audit tests asserting the old `skills_dirs()` shape; update to the new list.
