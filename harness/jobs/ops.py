@@ -1,6 +1,7 @@
 # harness/jobs/ops.py
 from dataclasses import replace
 from harness.jobs import store, model as m
+from harness.jobs.executor import OrphanPersona
 
 def add(job: m.Job, *, now: float) -> m.Job:
     if not job.agent_id:
@@ -48,6 +49,8 @@ def run(job_id: str, *, executor, now: float, force: bool = False) -> m.JobRun:
     try:
         executor(job)
         status = "ok"
+    except OrphanPersona:
+        raise                            # daemon.tick handles orphan — do NOT record a run
     except BaseException as e:           # mirror runner.py: process death = BaseException
         status, error = "error", str(e)
     run_rec = m.JobRun(job_id=job_id, started_at=now, duration=0.0, status=status, error=error)
