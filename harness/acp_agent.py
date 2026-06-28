@@ -61,6 +61,41 @@ def _instance_template_for(task_type: str, default: str) -> str:
     return ANSWER_ONLY_INSTANCE if task_type == "code_explain" else default
 
 
+def handle_create_job(spec: dict, *, now: float) -> dict:
+    """The SINGLE privileged door that writes a job.  Validates all gates fail-closed
+    (agent_id, cost, grant must all be present), then delegates to ops.add.
+
+    NOT registered as a normal agent tool — only reachable via the
+    "harness/create_job" ext-method in HarnessAgent.ext_method.
+    Callable directly in tests as `handle_create_job(spec, now=...)`.
+    """
+    from harness.jobs import ops, model as m
+
+    if not spec.get("agent_id"):
+        raise ValueError("agent_id required")
+    if not spec.get("cost"):
+        raise ValueError("cost gate required (fail closed)")
+    if not spec.get("grant"):
+        raise ValueError("grant required (fail closed)")
+
+    job = m.Job(
+        id=spec["id"],
+        name=spec.get("name", spec["id"]),
+        agent_id=spec["agent_id"],
+        description=spec.get("description", ""),
+        enabled=spec.get("enabled", True),
+        delete_after_run=spec.get("delete_after_run"),
+        session_target=spec.get("session_target", "isolated"),
+        schedule=m.schedule_from_dict(spec["schedule"]),
+        payload=m.payload_from_dict(spec["payload"]),
+        grant=m.Grant(**spec["grant"]),
+        cost=m.CostGate(**spec["cost"]),
+        state=m.JobState(),
+    )
+    result = ops.add(job, now=now)
+    return m.job_to_dict(result)
+
+
 class HarnessAgent(acp.Agent):
     def __init__(self, *, model_factory, agent_cfg, skills_dir: list[Path], router: Router,
                  worker_model_id, yolo: bool = False, backend: str = "vibeproxy",
@@ -209,6 +244,14 @@ class HarnessAgent(acp.Agent):
                 return self._activate_seat(pid)          # raises UnknownPersona/InvalidPersonaId
             except (persona_select.InvalidPersonaId, persona.PersonaExists,
                     persona_select.UnknownPersona, OSError) as e:
+                return {"ok": False, "error": str(e)}
+        if method == "harness/create_job":
+            # Privileged single-door path: fail-closed gate (agent_id, cost,
+            # grant all required).  ops.add is NOT exposed as a normal agent
+            # tool — this ext-method is the only way to write a job.
+            try:
+                return handle_create_job(params or {}, now=__import__("time").time())
+            except (ValueError, KeyError, TypeError) as e:
                 return {"ok": False, "error": str(e)}
         return {}
 
