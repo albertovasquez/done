@@ -1101,16 +1101,20 @@ class HarnessTui(App):
         if isinstance(self.screen, PermissionModal):
             self.pop_screen()
 
+    def _persona_display_name(self, pid: str) -> str:
+        """The persona's display name from its persona.toml `name`, falling back
+        to the id. One lookup shared by the rail rows and the room header."""
+        from harness import persona_config, paths
+        ws = paths.default_workspace_dir() if pid == "default" \
+            else paths.config_dir() / "agents" / pid
+        return persona_config.read_name(ws) or pid
+
     def _persona_rows(self):
-        from harness import persona_select, persona_config, paths
+        from harness import persona_select
         from harness.tui.roster import persona_rows
-        def name_of(pid):
-            ws = paths.default_workspace_dir() if pid == "default" \
-                else paths.config_dir() / "agents" / pid
-            return persona_config.read_name(ws)
         active = self._snapshot.active
         return persona_rows(persona_select.list_personas(), self._current_persona(),
-                            name_of,
+                            self._persona_display_name,
                             active_status=(active.state if active else AgentState.IDLE))
 
     def _persona_subline(self, row):

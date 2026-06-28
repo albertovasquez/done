@@ -23,6 +23,15 @@ async def _send_first_prompt(pilot, app, text):
     await pilot.press("enter")
 
 
+def test_persona_display_name_falls_back_to_id(tmp_path, monkeypatch):
+    # default persona with no name set → returns the id "default"
+    app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+    name = app._persona_display_name("default")
+    assert isinstance(name, str) and name, "must return a non-empty string"
+    # an unknown persona id with no workspace → falls back to the id verbatim
+    assert app._persona_display_name("nope-nonexistent") == "nope-nonexistent"
+
+
 def test_clear_transcript_empties_children_and_resets_stream_state():
     async def go():
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
