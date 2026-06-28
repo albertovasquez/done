@@ -1160,16 +1160,18 @@ def test_yolo_chip_click_toggles_state():
     asyncio.run(go())
 
 
-def test_compose_meta_shows_bypass_marker_when_on():
-    """The top mode line ('Build · …') gains a RED 'bypass on' marker when the
-    live gate is on, so the posture is visible at the top as well as the footer."""
+def test_compose_meta_is_mode_only():
+    """The compose-meta line under the input is just the mode word ('Build') —
+    model/provider moved up under the header rule, bypass shows in the footer
+    chip, so neither appears here regardless of the live gate."""
     app = HarnessTui.__new__(HarnessTui)        # bypass Textual mount; pure method
     app.model = "mock"
-    app._yolo = False
-    assert "bypass" not in app._compose_meta_markup("mock model", "Mock")
-    app._yolo = True
-    markup = app._compose_meta_markup("mock model", "Mock")
-    assert "bypass on" in markup and "$error" in markup   # red, present
+    for yolo in (False, True):
+        app._yolo = yolo
+        markup = app._compose_meta_markup("mock model", "Mock")
+        assert "Build" in markup
+        assert "bypass" not in markup
+        assert "mock model" not in markup and "Mock" not in markup
 
 
 def test_yolo_chip_is_leftmost_in_statusbar():
