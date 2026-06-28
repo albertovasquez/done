@@ -186,6 +186,57 @@ def _is_done_sentinel(title: str) -> bool:
     return cmd.strip() == _DONE_SENTINEL_CMD
 
 
+def strip_done_sentinel_prose(buf: str) -> str:
+    """Remove the turn-end sentinel when a model TYPES it into its prose instead
+    of (or as well as) running it as a shell tool. The instance template tells
+    the agent to finish by issuing `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`;
+    some models echo that line into the visible answer, where _is_done_sentinel
+    (a tool-row guard) never sees it. This is the display-layer counterpart for
+    the message-stream path.
+
+    Operates on the WHOLE accumulated buffer (not a single delta) so a sentinel
+    split across chunks — `echo COMPLETE_TASK_AND_` then `SUBMIT_FINAL_OUTPUT` —
+    is still caught once both halves have arrived. We drop the sentinel only when
+    it stands as its own line (optionally fenced/quoted), so prose that merely
+    mentions the command inside a sentence renders untouched. A trailing PARTIAL
+    sentinel (the buffer ends mid-command, more chunks pending) is also dropped so
+    it never flickers on screen before the rest streams in."""
+    lines = buf.split("\n")
+    # Index of the last line carrying real content — a sentinel here (with only
+    # blank lines trailing it) counts as "trailing" even when split() left empty
+    # tail elements from a final newline.
+    last_content = max((i for i, ln in enumerate(lines) if ln.strip() != ""),
+                       default=len(lines) - 1)
+    removed_trailing = False
+    kept: list[str] = []
+    for i, line in enumerate(lines):
+        stripped = _strip_line_fencing(line)
+        if stripped == _DONE_SENTINEL_CMD:
+            removed_trailing = i >= last_content
+            continue                                  # full sentinel on its own line
+        if i == len(lines) - 1 and stripped and _DONE_SENTINEL_CMD.startswith(stripped):
+            removed_trailing = True
+            continue                                  # trailing partial — wait for the rest
+        kept.append(line)
+    # When the sentinel was the final content line it usually sat after a blank
+    # separator; drop the now-trailing blanks so the answer doesn't end on
+    # dangling whitespace. Mid-buffer removals leave surrounding lines intact.
+    if removed_trailing:
+        while kept and kept[-1].strip() == "":
+            kept.pop()
+    return "\n".join(kept)
+
+
+def _strip_line_fencing(line: str) -> str:
+    """Strip wrappers a model may put around the sentinel line — leading
+    bullet/quote markers and inline backticks — before matching."""
+    s = line.strip()
+    for prefix in ("- ", "* ", "> "):
+        if s.startswith(prefix):
+            s = s[len(prefix):].strip()
+    return s.strip("`").strip()
+
+
 def _reduce_agent(a: AgentSnapshot, event) -> AgentSnapshot:
     if isinstance(event, TurnStarted):
         return replace(a, state=AgentState.THINKING, activity_label="Classifying…",

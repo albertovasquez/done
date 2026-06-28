@@ -135,6 +135,36 @@ def test_pilot_streams_deltas_into_one_markdown_widget():
     asyncio.run(go())
 
 
+def test_pilot_hides_sentinel_typed_into_prose():
+    """Real render path: when a model TYPES `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`
+    into its answer prose (rather than running it as a tool), the rendered Markdown
+    widget must not show it. The tool-row guard never sees a typed line, so the
+    strip happens at flush time — verify through the actual streaming path."""
+    sentinel = "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await app._enter_conversation()
+            app._session_id = "fake-session"
+            # streamed in chunks, with the sentinel split across two deltas as the
+            # real agent stream can deliver it
+            app._stream_message("Here is the answer.\n\n")
+            app._stream_message("echo COMPLETE_TASK_AND_")
+            await pilot.pause()
+            app._stream_message("SUBMIT_FINAL_OUTPUT")
+            await pilot.pause()
+            await pilot.pause()
+            scroll = app.query_one("#transcript", VerticalScroll)
+            mds = list(scroll.query(Markdown))
+            src = _md_source(mds[0]) if mds else ""
+        assert len(mds) == 1, f"expected ONE markdown widget, got {len(mds)}"
+        assert sentinel not in src, f"sentinel leaked into prose: {src!r}"
+        assert "Here is the answer." in src, f"real answer was dropped: {src!r}"
+
+    asyncio.run(go())
+
+
 def _footer(app):
     """The most recent turn footer Static (class 'turn-meta-run')."""
     scroll = app.query_one("#transcript", VerticalScroll)
