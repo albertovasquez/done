@@ -601,6 +601,7 @@ class HarnessTui(App):
         # next message (Enter while _turn_active enqueues — see on_prompt_area_submitted).
         self._turn_start = time.monotonic()
         self._turn_active = True
+        self._active_input().placeholder = "Type to queue your next message…"
         self._apply(TurnStarted())
         self._send_gen = self._gen            # tag this turn's worker with its generation
         self.run_worker(self._send_prompt(text), thread=False)
@@ -944,6 +945,7 @@ class HarnessTui(App):
             if gen == self._gen:                  # only the CURRENT generation touches the UI
                 self._hide_working()
                 self._active_input().disabled = False
+                self._active_input().placeholder = "Reply…"
                 self._active_input().focus()
                 switched = self._apply_pending_persona()  # honor a mid-turn switch request first…
                 if not switched:                          # …drain immediately only when no switch
