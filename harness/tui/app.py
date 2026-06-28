@@ -126,6 +126,7 @@ class HarnessTui(App):
         self._tokens = 0                      # last-known token count from usage updates
         self._persona_seen = False            # True after the first real PersonaResolved lands
         self._turn_active = False             # True while a prompt turn is in flight (used by Esc-rail guard)
+        self._queued: list[str] = []          # prompts typed mid-turn; drained FIFO when the turn ends
         self._snapshot = initial_snapshot()   # the presentation model (pure, immutable)
         self._commands = build_registry()     # slash-command registry
         self._slash = None                    # the SlashMenu widget while open, else None
@@ -476,6 +477,14 @@ class HarnessTui(App):
             return
         if not text or self._conn is None or self._busy:
             return
+        # A turn is already in flight: queue this message instead of starting a
+        # second concurrent prompt() on the same session. It auto-sends when the
+        # current turn ends (see _send_prompt's finally → _drain_queue).
+        if self._turn_active:
+            self._queued.append(text)
+            self._active_input().value = ""
+            self._append_line(_c("muted", f"⏳ queued: {self._escape(text)}"))
+            return
         if not self._started:
             await self._enter_conversation()
         await self._submit_text(text)
@@ -486,7 +495,8 @@ class HarnessTui(App):
         self._add_user_message(text)
         inp = self._active_input()
         inp.value = ""
-        inp.disabled = True
+        # The input stays ENABLED during a turn so the user can type / queue the
+        # next message (Enter while _turn_active enqueues — see on_prompt_area_submitted).
         self._turn_start = time.monotonic()
         self._turn_active = True
         self._apply(TurnStarted())
@@ -822,6 +832,14 @@ class HarnessTui(App):
                 self._hide_working()
                 self._active_input().disabled = False
                 self._active_input().focus()
+                self._drain_queue()               # auto-send the next queued message, if any
+
+    def _drain_queue(self) -> None:
+        """Start the next message the user queued mid-turn. FIFO, one per turn —
+        each drained prompt runs a full turn whose own finally drains the next."""
+        if self._turn_active or not self._queued:
+            return
+        self.run_worker(self._submit_text(self._queued.pop(0)), thread=False)
 
     def _write_meta(self, elapsed: float) -> None:
         model_label = _model_label(self.model, self._worker_model_id)
