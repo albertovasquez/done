@@ -876,8 +876,9 @@ class HarnessTui(App):
                 self._hide_working()
                 self._active_input().disabled = False
                 self._active_input().focus()
-                self._apply_pending_persona()     # honor a mid-turn switch request first…
-                self._drain_queue()               # …then any queued prompt runs in the NEW room
+                switched = self._apply_pending_persona()  # honor a mid-turn switch request first…
+                if not switched:                          # …drain immediately only when no switch
+                    self._drain_queue()                   # (switch worker drains after it resolves)
 
     def _drain_queue(self) -> None:
         """Start the next message the user queued mid-turn. FIFO, one per turn —
@@ -892,19 +893,26 @@ class HarnessTui(App):
         yolo = f" {_c('error', 'bypass on')}" if self._yolo else ""   # records mode at turn time
         return f"{_c('accent', '▣ ' + _MODE)}{yolo} {_c('muted', f'· {model_label} · {elapsed:.1f}s')}"
 
-    def _apply_pending_persona(self) -> None:
+    def _apply_pending_persona(self) -> bool:
         """If a persona switch was requested mid-turn, apply it now (turn-end),
         BEFORE draining queued prompts — so a prompt typed during the old turn
-        runs in the NEW persona's room, not the old one."""
+        runs in the NEW persona's room, not the old one.
+
+        Returns True when a switch worker was scheduled (caller must NOT drain
+        immediately; _switch_persona will drain after _apply_persona_switch
+        repoints _session_id). Returns False when no switch was needed."""
         pid = self._pending_persona
         if pid is None or self._conn is None or pid == self._current_persona():
             self._pending_persona = None
-            return
+            return False
         self._pending_persona = None
         self.run_worker(self._switch_persona(pid), thread=False)
+        return True
 
     async def _switch_persona(self, pid: str) -> None:
-        """The async half of a deferred switch: call set_persona, then apply."""
+        """The async half of a deferred switch: call set_persona, then apply.
+        After applying (which repoints _session_id), drain any queued prompt so
+        it runs in the NEW persona's room — not the old one (I1 fix)."""
         try:
             resp = await self._conn.ext_method("harness/set_persona", {"id": pid})
         except Exception as e:
@@ -914,6 +922,7 @@ class HarnessTui(App):
             self._notify_line(f"persona: {resp.get('error', 'switch failed')}")
             return
         self._apply_persona_switch(resp)
+        self._drain_queue()               # _session_id is now the NEW room
 
     def _write_meta(self, elapsed: float) -> None:
         """Append the turn's run caption as a FOOTER below the response, once the

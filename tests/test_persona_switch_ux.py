@@ -137,6 +137,83 @@ def test_pending_switch_applies_on_turn_end_before_drain():
     asyncio.run(go())
 
 
+def test_queued_prompt_runs_in_new_persona_room_after_switch():
+    """I1 regression: a prompt queued mid-turn must be sent on the NEW session_id,
+    not the old one. The switch is async (round-trip), so without the fix the drain
+    races the switch and sends on the OLD session."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            # reach conversation state so a transcript exists
+            await _send_first_prompt(pilot, app, "hello")
+            for _ in range(60):
+                await pilot.pause()
+                if app._started and app.query("#transcript"):
+                    break
+
+            # A slow fake conn: set_persona yields several event-loop turns to
+            # simulate the subprocess round-trip. Without the fix, _drain_queue
+            # fires while ext_method is still awaiting and reads the old session_id.
+            prompt_session_ids: list[str | None] = []
+
+            class _SlowFakeConn:
+                ext_calls: list = []
+                set_persona_response = {
+                    "ok": True, "id": "maya",
+                    "session_id": "sess-maya", "model": "mock",
+                }
+
+                async def ext_method(self, method, params):
+                    self.ext_calls.append((method, params))
+                    if method == "harness/set_persona":
+                        # Multiple yields so the drain worker can race ahead
+                        for _ in range(5):
+                            await asyncio.sleep(0)
+                        return self.set_persona_response
+                    return {}
+
+                async def prompt(self, *, prompt, session_id):
+                    prompt_session_ids.append(session_id)
+                    # Return a minimal response object so _send_prompt doesn't crash
+                    class _Resp:
+                        stop_reason = "end_turn"
+                    return _Resp()
+
+            conn = _SlowFakeConn()
+            app._conn = conn
+            # Stash the OLD session_id so we can assert the prompt did NOT use it
+            old_session_id = app._session_id
+
+            # Simulate end-of-turn state with a pending switch and a queued prompt
+            app._turn_active = False
+            app._pending_persona = "maya"
+            app._queued = ["hello from new room"]
+
+            # Trigger the combined turn-end sequence (mirrors the new finally block):
+            # only drain immediately when no switch was scheduled.
+            switched = app._apply_pending_persona()
+            if not switched:
+                app._drain_queue()
+
+            # Allow all scheduled workers (switch + drain) to complete
+            for _ in range(30):
+                await pilot.pause()
+
+            # The switch must have resolved
+            assert app._session_id == "sess-maya", (
+                f"session_id not updated after switch: {app._session_id!r}"
+            )
+            # The drained prompt must have been sent on the NEW session, not old
+            assert prompt_session_ids, "conn.prompt was never called — drain did not fire"
+            assert prompt_session_ids[0] == "sess-maya", (
+                f"queued prompt used OLD session {prompt_session_ids[0]!r} "
+                f"instead of new 'sess-maya' (old was {old_session_id!r})"
+            )
+
+    asyncio.run(go())
+
+
 def test_clear_transcript_empties_children_and_resets_stream_state():
     async def go():
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
