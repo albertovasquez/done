@@ -35,6 +35,11 @@ templates** — each holds only a commented hint, so the agent's behavior is
 unchanged until you edit one. You don't create anything; you edit the files
 already there. A file you leave as-is (or delete) is simply skipped.
 
+A persona workspace may also hold an **`AGENTS.md`** (standing instructions — the
+persona's "ops manual") and a `persona.toml` (display `name`, enabled `flows`,
+extra `skills` roots). See [agents-md.md](agents-md.md) and
+[router-flows.md](router-flows.md).
+
 ## Quick start
 
 A fresh install already placed template files in

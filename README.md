@@ -27,9 +27,13 @@ event tracer, a request router, a skills layer, and the ACP interface.
   `git`. Point it at another project with `--cwd`.
 - **Editor-ready.** The same engine speaks ACP over stdio, so editors like Zed can
   drive it directly — no separate integration.
-- **Skills.** The router picks relevant engineering-methodology skills per request
-  and injects them into the agent's context — test-driven development, systematic
-  debugging, verification-before-completion, and more (see *System skills* below).
+- **Skills.** The agent sees a lightweight menu of available skills and pulls the
+  full instructions on demand (lazy `load_skill`), so a large skill set costs almost
+  nothing until used. Conforms to the [Agent Skills](https://agentskills.io) open
+  standard, so Done reads your project `.agents/skills` / `.claude/skills` too (see
+  *Skills* below).
+- **Instructions.** Drop an `AGENTS.md` in your project (or persona, or `~/.config/harness/`)
+  and it becomes standing policy in the agent's prompt (see [docs/agents-md.md](docs/agents-md.md)).
 - **You're in control.** The agent asks permission before running commands, and
   you can cancel an in-flight turn at any time.
 - **Fully traceable.** Every run is recorded as structured `events.jsonl` and
@@ -54,8 +58,9 @@ uv tool install --editable .
 
 Configure VibeProxy by putting your settings in `~/.config/harness/.env`
 (see `.env.example`), or drop a `.env` in the project directory you run `dn`
-from. Add your own skills in `~/.config/harness/skills/` — they override the
-bundled ones of the same name. (`$XDG_CONFIG_HOME` is honored if set.)
+from. Add your own skills in `~/.config/harness/skills/` (global) or a project's
+`.agents/skills` / `.claude/skills` (see *Skills* below); a user skill overrides a
+bundled one of the same name. (`$XDG_CONFIG_HOME` is honored if set.)
 
 The harness remembers your selected model across sessions in
 `~/.config/harness/done.conf` (TOML). Changing the model at runtime saves it
@@ -83,29 +88,59 @@ dn --cwd ~/myproject     # operate on a specific project instead of the cwd
 | `--cwd` | a path | `.` | the working directory the agent operates in |
 | `--yolo` | flag | off | auto-allow every command — never prompt for permission |
 
-## System skills
+## Skills
 
-DoneDone ships with a curated set of engineering-methodology skills (imported from
-[obra/superpowers](https://github.com/obra/superpowers), MIT). The router
-auto-selects the relevant ones per request and injects them into the agent's
-context:
+DoneDone ships a curated **maturity spine** — general skills that make the agent
+work like a professional (reframe before acting, plan before coding, root-cause
+before fixing, prove work before claiming done). The agent gets a lightweight
+**menu** (skill names + one-line descriptions); it pulls a skill's full instructions
+on demand with the `load_skill` tool, so the menu stays cheap no matter how many
+skills exist.
 
-| Skill | When the router picks it |
+| Skill | What it enforces |
 |---|---|
-| `test-driven-development` | implementing a feature or bugfix — write the failing test first |
-| `systematic-debugging` | a bug, test failure, or unexpected behavior — root-cause before fixing |
-| `verification-before-completion` | before declaring work done — prove it actually works |
-| `receiving-code-review` | responding to code-review feedback |
+| `clarify-before-acting` | tell a question from a work order — answer/scope before editing |
+| `planning-before-coding` | lock architecture, edge cases, and the test surface before code |
+| `systematic-debugging` | root-cause before fixing (the Iron Law); stop after 3 failed fixes |
+| `test-driven-development` | write the failing test first, then minimal code |
+| `verification-before-completion` | prove work actually works before declaring it done |
+| `receiving-code-review` | fold feedback with rigor, not reflexive agreement |
+| `ask-done` | user-invoked (`/ask-done`) — recommends which skill/flow fits your situation |
 
-Add your own skills in `~/.config/harness/skills/<name>/SKILL.md`; a user skill
-with the same name as a bundled one overrides it.
+Each `SKILL.md` carries an **invocation model** in its frontmatter: `disable-model-invocation`
+(user-only, like `ask-done`), `user-invocable`, and a `flow` tag. **Flows** group
+skills into families (e.g. a future `seo`/`marketing` flow) enabled per-persona in
+`persona.toml`; global skills (no flow tag) are always available.
+
+### Adding your own skills
+
+DoneDone conforms to the [Agent Skills](https://agentskills.io) open standard, so it
+reads skills from these roots (later wins on a name clash):
+
+```
+bundled                       (the maturity spine)
+~/.claude/skills              (ecosystem skills — consumed for free)
+~/.config/harness/skills      (your global Done skills — native, outranks compat)
+<cwd>/.claude/skills          (a project's ecosystem skills)
+<cwd>/.agents/skills          (a project's skills — the cross-tool standard, highest)
+```
+
+Drop a `<name>/SKILL.md` (frontmatter needs `name` matching the directory + a
+`description`) in any of these. A malformed or name-mismatched skill is surfaced to
+you (with the reason) rather than silently ignored. See
+[docs/router-flows.md](docs/router-flows.md) for the full skills/flows reference.
+
+> Skills shipped in `harness/skills/` are imported from / adapted after
+> [obra/superpowers](https://github.com/obra/superpowers),
+> [garrytan/gstack](https://github.com/garrytan/gstack), and
+> [mattpocock/skills](https://github.com/mattpocock/skills) — see `harness/skills/NOTICE.md`.
 
 ## Personas
 
 A **persona** gives the agent an identity — tone, boundaries, and who it's
-talking to. Where skills are task-knowledge the router selects per request, a
-persona is a small set of plain-text files injected into the agent's context for
-the whole session, on **both** the chat and coding paths.
+talking to. Where skills are task-knowledge the agent pulls on demand, a persona
+is a small set of plain-text files injected into the agent's context for the whole
+session, on **both** the chat and coding paths.
 
 A persona lives in a workspace directory. The built-in one is
 `~/.config/harness/agents/default/`, and it reads three files (all optional):
@@ -236,7 +271,7 @@ vendored agent:
 | **Tracer** | structured `events.jsonl` / `traj.json` for every run |
 | **Runner** | drives the engine against a real repository |
 | **Router** | classifies each request and decides how to handle it |
-| **Skills** | injects relevant skills into the agent's context per turn |
+| **Skills** | a lazy skill menu + `load_skill` tool (agent pulls bodies on demand); per-persona flows; `AGENTS.md` standing instructions |
 | **ACP agent** | exposes the engine as an ACP server over stdio |
 | **TUI** | a Textual ACP client (`dn`) that drives the agent like an editor would |
 
@@ -248,9 +283,9 @@ vendored agent:
 | `harness/tui/` | the Textual ACP client (render core, `acp.Client`, app); entrypoint `harness/tui_main.py` |
 | `harness/tui/styles/` | design system — component catalog (`components.md`) + living brand book (`brandbook.html`, generated by `brandbook.py`) |
 | `upstream/` | vendored mini-swe-agent — never edited |
-| `harness/skills/` | bundled system skills the router can inject (+ `NOTICE.md` attribution) |
+| `harness/skills/` | the bundled maturity spine, lazily loaded via `load_skill` (+ `NOTICE.md` attribution) |
 | `examples/sample-repo/` | a tiny repo with one failing test, for demos |
-| `docs/` | spec, plan, and learning log |
+| `docs/` | reference docs (skills/flows, AGENTS.md, personas, debugging), specs, plans, learning log |
 
 ## Development
 
