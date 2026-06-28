@@ -40,6 +40,10 @@ def run(job_id: str, *, executor, now: float, force: bool = False) -> m.JobRun:
     job = get(job_id)
     if job is None:
         raise KeyError(job_id)
+    if not job.enabled and not force:
+        run_rec = m.JobRun(job_id=job_id, started_at=now, duration=0.0, status="skipped", error=None)
+        store.append_run(run_rec, now=now)
+        return run_rec
     error = None
     try:
         executor(job)
