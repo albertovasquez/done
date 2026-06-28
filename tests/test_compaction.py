@@ -61,3 +61,85 @@ def test_degenerate_budget_is_noop():
                  fixed_overhead_tokens=10_000, ctx_window=200)  # int(0.5*200)=100 - 10000 < 0
     assert r.method == "none"
     assert r.messages == prior
+
+
+# ---------------------------------------------------------------------------
+# _sanitize_tool_pairs tests
+# ---------------------------------------------------------------------------
+from harness.compaction import _sanitize_tool_pairs
+
+
+def _asst(tool_ids):
+    """Assistant message carrying tool_calls with the given ids."""
+    return {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [{"id": tid, "type": "function", "function": {"name": "f", "arguments": "{}"}} for tid in tool_ids],
+    }
+
+
+def _tool_result(tool_call_id, content="result"):
+    return {"role": "tool", "tool_call_id": tool_call_id, "content": content}
+
+
+def test_sanitize_passthrough_when_all_pairs_intact():
+    """No compaction cuts happened; all tool results have matching calls → unchanged."""
+    msgs = [
+        _asst(["c1"]),
+        _tool_result("c1"),
+    ]
+    out = _sanitize_tool_pairs(msgs)
+    assert out == msgs
+
+
+def test_sanitize_drops_orphan_tool_result():
+    """Tool result whose call was cut (not in any assistant tool_calls) is dropped."""
+    msgs = [
+        _tool_result("c1"),  # no matching assistant message
+        {"role": "user", "content": "hello"},
+    ]
+    out = _sanitize_tool_pairs(msgs)
+    assert all(m.get("role") != "tool" for m in out)
+    assert len(out) == 1
+    assert out[0]["role"] == "user"
+
+
+def test_sanitize_injects_stub_for_orphan_call():
+    """Assistant tool_call with no surviving result gets a stub tool message injected after it."""
+    msgs = [
+        _asst(["c1"]),  # result was cut — no tool result follows
+        {"role": "user", "content": "hi"},
+    ]
+    out = _sanitize_tool_pairs(msgs)
+    # stub injected immediately after the assistant message
+    assert out[0]["role"] == "assistant"
+    assert out[1]["role"] == "tool"
+    assert out[1]["tool_call_id"] == "c1"
+    assert "[result omitted during context compaction]" in out[1]["content"]
+    assert out[2]["role"] == "user"
+
+
+def test_sanitize_mixed_orphans():
+    """
+    Realistic slice: some calls have results, one call's result was cut,
+    one result's call was cut.
+    """
+    msgs = [
+        _asst(["c1", "c2"]),       # c2's result was cut
+        _tool_result("c1"),
+        # c2 result is absent
+        _tool_result("c_dangling"), # dangling: its call was cut
+        {"role": "user", "content": "ok"},
+    ]
+    out = _sanitize_tool_pairs(msgs)
+    roles = [m["role"] for m in out]
+    # dangling tool result dropped
+    tool_msgs = [m for m in out if m.get("role") == "tool"]
+    tool_ids = [m["tool_call_id"] for m in tool_msgs]
+    assert "c_dangling" not in tool_ids
+    # c1 result kept
+    assert "c1" in tool_ids
+    # stub injected for c2
+    assert "c2" in tool_ids
+    stub = next(m for m in tool_msgs if m["tool_call_id"] == "c2")
+    assert "[result omitted during context compaction]" in stub["content"]

@@ -93,4 +93,49 @@ def compress(prior, *, summarize: Callable[[list[dict]], str],
 
 
 def _sanitize_tool_pairs(messages: list[dict]) -> list[dict]:
-    return messages  # implemented in Task 2
+    """Repair tool-call/tool-result pairs orphaned when the middle of the transcript is dropped.
+
+    Rules:
+    - A tool result whose call id is not present among surviving assistant tool_calls → DROP.
+    - An assistant tool_calls[].id with no surviving result → INJECT a stub tool message
+      immediately after that assistant message.
+    """
+    # Collect all call ids present in surviving assistant messages
+    surviving_call_ids: set[str] = set()
+    for m in messages:
+        if m.get("role") == "assistant":
+            for tc in m.get("tool_calls") or []:
+                tc_id = tc.get("id")
+                if tc_id:
+                    surviving_call_ids.add(tc_id)
+
+    # Collect all tool result ids that survive
+    surviving_result_ids: set[str] = set()
+    for m in messages:
+        if m.get("role") == "tool":
+            tc_id = m.get("tool_call_id")
+            if tc_id and tc_id in surviving_call_ids:
+                surviving_result_ids.add(tc_id)
+
+    # Build output: drop orphan tool results, inject stubs for orphan calls
+    out: list[dict] = []
+    for m in messages:
+        if m.get("role") == "tool":
+            # Drop if no matching call survives
+            if m.get("tool_call_id") not in surviving_call_ids:
+                continue
+            out.append(m)
+        elif m.get("role") == "assistant":
+            out.append(m)
+            # Inject a stub for each call whose result is absent
+            for tc in m.get("tool_calls") or []:
+                tc_id = tc.get("id")
+                if tc_id and tc_id not in surviving_result_ids:
+                    out.append({
+                        "role": "tool",
+                        "tool_call_id": tc_id,
+                        "content": "[result omitted during context compaction]",
+                    })
+        else:
+            out.append(m)
+    return out
