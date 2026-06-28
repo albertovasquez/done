@@ -465,3 +465,19 @@ def test_create_persona_without_display_name_still_works(agent_default, isolated
     resp = asyncio.run(agent_default.ext_method(
         "harness/create_persona", {"id": "plain"}))
     assert resp["ok"] is True
+
+
+# --- message_count tests (Phase 2) ---
+
+def test_set_persona_returns_message_count(agent_default, isolated_config):
+    """_activate_seat must include message_count == len(transcript) so the client
+    can decide whether to replay history without fetching the transcript itself."""
+    agent = agent_default
+    resp = agent._activate_seat("default")
+    sid = resp["session_id"]
+    agent._store.extend(sid, [
+        {"role": "user", "content": "hi", "origin": "chat"},
+        {"role": "assistant", "content": "hello", "origin": "chat"},
+    ])
+    resp2 = agent._activate_seat("default")
+    assert resp2["message_count"] == 2

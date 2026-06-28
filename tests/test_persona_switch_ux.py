@@ -236,3 +236,170 @@ def test_clear_transcript_empties_children_and_resets_stream_state():
             assert app._snapshot is snap_before, "_clear_transcript must NOT touch _snapshot"
 
     asyncio.run(go())
+
+
+# ---------------------------------------------------------------------------
+# Task 4: resumed seam + replay trigger + copy gating
+# ---------------------------------------------------------------------------
+
+def test_resumed_meta_renders_seam_divider():
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await _send_first_prompt(pilot, app, "hello")   # reach conversation view
+            for _ in range(60):
+                await pilot.pause()
+                if app._started and app.query("#transcript"):
+                    break
+            # craft a resumed-seam update and post it like the engine would
+            from harness.acp_emit import message_chunk, with_meta
+            seam = with_meta(message_chunk(""), {"resumed": True})
+            from harness.tui.messages import SessionUpdate
+            app.post_message(SessionUpdate(seam, session_id=app._session_id, gen=app._gen))
+            for _ in range(20):
+                await pilot.pause()
+            text = _transcript_text(app)
+        assert "resumed" in text.lower(), f"resumed seam not rendered:\n{text}"
+
+    asyncio.run(go())
+
+
+def test_switch_with_history_replays_and_skips_empty_copy():
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await _send_first_prompt(pilot, app, "first")
+            for _ in range(60):
+                await pilot.pause()
+                if app._started and app.query("#transcript"):
+                    break
+
+            class _ReplayConn:
+                def __init__(self):
+                    self.calls = []
+                async def ext_method(self, method, params):
+                    self.calls.append((method, params))
+                    if method == "harness/set_persona":
+                        return {"ok": True, "id": "maya", "session_id": "sess-maya",
+                                "model": "mock", "message_count": 3}
+                    if method == "harness/replay_session":
+                        return {"ok": True, "count": 3}
+                    return {}
+            app._conn = _ReplayConn()
+            app._turn_active = False
+            await app.on_persona_selected(PersonaSelected("maya"))
+            for _ in range(30):
+                await pilot.pause()
+            text = _transcript_text(app)
+        # with history: replay_session was called; the empty-room line is NOT shown
+        assert ("harness/replay_session", {"id": "maya"}) in app._conn.calls
+        assert "Say hello." not in text
+
+    asyncio.run(go())
+
+
+def test_switch_to_new_persona_shows_empty_copy_no_replay():
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await _send_first_prompt(pilot, app, "first")
+            for _ in range(60):
+                await pilot.pause()
+                if app._started and app.query("#transcript"):
+                    break
+
+            class _NewConn:
+                def __init__(self): self.calls = []
+                async def ext_method(self, method, params):
+                    self.calls.append((method, params))
+                    if method == "harness/set_persona":
+                        return {"ok": True, "id": "fresh", "session_id": "sess-fresh",
+                                "model": "mock", "message_count": 0}
+                    return {}
+            app._conn = _NewConn()
+            app._turn_active = False
+            await app.on_persona_selected(PersonaSelected("fresh"))
+            for _ in range(20):
+                await pilot.pause()
+            text = _transcript_text(app)
+        assert ("harness/replay_session", {"id": "fresh"}) not in app._conn.calls
+        assert "Say hello." in text
+
+    asyncio.run(go())
+
+
+# ---------------------------------------------------------------------------
+# Task 5: integration — switch-back replay end-to-end (client rendering path)
+# ---------------------------------------------------------------------------
+
+def test_switch_back_replay_renders_replayed_message_and_seam():
+    """Integration test: switch to maya (message_count=1) then switch back — the
+    fake _conn's replay_session posts a user_message_chunk("REMEMBER_ALPHA") +
+    a resumed seam SessionUpdate directly into the app, exactly as the real engine
+    would.  Asserts: (a) "REMEMBER_ALPHA" appears in transcript,
+    (b) "resumed" divider appears.
+
+    NOTE: fake_agent.py is a thin stub and does NOT implement ext_method routing
+    to HarnessAgent, so a real-subprocess e2e that exercises set_persona /
+    replay_session over the real conn is not viable without bloating the fake.
+    Task 3 (test_replay_session.py) covers the engine emitting the correct
+    sequence; this test covers the CLIENT rendering it end-to-end.
+    Together they prove the full loop.
+    """
+    async def go():
+        from harness.acp_emit import message_chunk, user_message_chunk, with_meta
+        from harness.tui.messages import SessionUpdate
+
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await _send_first_prompt(pilot, app, "ALPHA_FIRST")
+            for _ in range(60):
+                await pilot.pause()
+                if app._started and app.query("#transcript"):
+                    break
+
+            # A fake conn whose replay_session actually posts SessionUpdates
+            # into the app (simulating what TuiClient.session_update does when
+            # the engine streams back the transcript).
+            class _ReplayStreamConn:
+                def __init__(self_inner):
+                    self_inner.calls = []
+
+                async def ext_method(self_inner, method, params):
+                    self_inner.calls.append((method, params))
+                    if method == "harness/set_persona":
+                        return {"ok": True, "id": "maya", "session_id": "sess-maya",
+                                "model": "mock", "message_count": 1}
+                    if method == "harness/replay_session":
+                        # Mimic the engine streaming: one user_message_chunk then
+                        # a resumed seam, both via the normal SessionUpdate path.
+                        sid = app._session_id
+                        gen = app._gen
+                        upd_msg = user_message_chunk("REMEMBER_ALPHA")
+                        app.post_message(SessionUpdate(upd_msg, session_id=sid, gen=gen))
+                        seam = with_meta(message_chunk(""), {"resumed": True})
+                        app.post_message(SessionUpdate(seam, session_id=sid, gen=gen))
+                        return {"ok": True, "count": 1}
+                    return {}
+
+            app._conn = _ReplayStreamConn()
+            app._turn_active = False
+            await app.on_persona_selected(PersonaSelected("maya"))
+            # Wait for the worker (_replay_session) to complete and messages to render
+            for _ in range(60):
+                await pilot.pause()
+                txt = _transcript_text(app)
+                if "REMEMBER_ALPHA" in txt and "resumed" in txt.lower():
+                    break
+            text = _transcript_text(app)
+
+        assert "REMEMBER_ALPHA" in text, \
+            f"replayed user message not visible in transcript:\n{text}"
+        assert "resumed" in text.lower(), \
+            f"resumed seam divider not visible in transcript:\n{text}"
+
+    asyncio.run(go())

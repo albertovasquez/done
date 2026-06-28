@@ -186,6 +186,16 @@ class HarnessAgent(acp.Agent):
                 # place a persona-switch failure is diagnosable after the fact.
                 logger.warning("set_persona rejected id %r: %s", pid, e)
                 return {"ok": False, "error": str(e)}
+        if method == "harness/replay_session":
+            pid = (params or {}).get("id")
+            if not isinstance(pid, str) or not pid:
+                return {"ok": False, "error": "missing id"}
+            from harness import persona_select
+            try:
+                return await self._replay_session(pid)
+            except (persona_select.UnknownPersona, persona_select.InvalidPersonaId) as e:
+                logger.warning("replay_session rejected id %r: %s", pid, e)
+                return {"ok": False, "error": str(e)}
         if method == "harness/create_persona":
             pid = (params or {}).get("id")
             if not isinstance(pid, str) or not pid:
@@ -202,24 +212,57 @@ class HarnessAgent(acp.Agent):
                 return {"ok": False, "error": str(e)}
         return {}
 
-    def _activate_seat(self, pid: str) -> dict:
-        """Get-or-create the seat for persona `pid`, make it active, mirror its model
-        into the read-site fallback + the session state, and return the switch result.
-        Raises persona_select.UnknownPersona / InvalidPersonaId. The ONE activation path
-        shared by set_persona and create_persona."""
+    def _seat_for(self, pid: str):
+        """Resolve (get-or-create) the persona's seat — NO active-state mutation.
+        Shared by _activate_seat (which then mirrors the model) and _replay_session
+        (which only reads session_id). Raises UnknownPersona / InvalidPersonaId."""
         from harness import persona_select
         from harness.persona_sessions import resolve_session_model
         resolve_session_model_for = lambda p: resolve_session_model(
             p, shell_set_model=self._shell_set_model,
             shell_env=self._shell_env, dotenv=self._shell_env, backend=self._backend)
-        seat = self._persona_sessions.get_or_create(
+        return self._persona_sessions.get_or_create(
             pid, cwd=self._cwd, store=self._store,
             resolve_ws=persona_select.resolve_workspace,
             resolve_model=resolve_session_model_for)
+
+    def _activate_seat(self, pid: str) -> dict:
+        """Get-or-create the seat for persona `pid`, make it active, mirror its model
+        into the read-site fallback + the session state, and return the switch result.
+        Raises persona_select.UnknownPersona / InvalidPersonaId. The ONE activation path
+        shared by set_persona and create_persona."""
+        seat = self._seat_for(pid)
         self._active_persona = pid
         self._worker_model_id = seat.model      # mirror active seat for read sites
-        self._store.get(seat.session_id).worker_model = seat.model
-        return {"ok": True, "id": pid, "session_id": seat.session_id, "model": seat.model}
+        sess = self._store.get(seat.session_id)
+        sess.worker_model = seat.model
+        count = len(sess.transcript)
+        return {"ok": True, "id": pid, "session_id": seat.session_id,
+                "model": seat.model, "message_count": count}
+
+    async def _replay_session(self, pid: str) -> dict:
+        """Stream the persona's stored transcript back to the client as ACP
+        session_update notifications (rendered by the client's normal path), then
+        a `resumed` seam. Read-only — uses _seat_for (no re-activation)."""
+        from harness.acp_emit import message_chunk, user_message_chunk, with_meta
+        sid = self._seat_for(pid).session_id
+        transcript = self._store.get(sid).transcript
+        for i, m in enumerate(transcript):
+            # BOUNDARY between messages (Codex review — message-merge): the client's
+            # _stream_message keeps ONE markdown widget open across consecutive
+            # message deltas. Without a boundary, back-to-back replayed messages
+            # MERGE into a single block. Emit a stream_reset meta before every
+            # message after the first, so each renders as its OWN widget.
+            if i > 0:
+                await self._conn.session_update(
+                    sid, with_meta(message_chunk(""), {"stream_reset": True}))
+            upd = (user_message_chunk(m["content"]) if m["role"] == "user"
+                   else message_chunk(m["content"]))
+            await self._conn.session_update(sid, upd)
+        if transcript:
+            seam = with_meta(message_chunk(""), {"resumed": True})
+            await self._conn.session_update(sid, seam)
+        return {"ok": True, "count": len(transcript)}
 
     async def initialize(self, protocol_version, client_capabilities=None,
                          client_info=None, **kw):

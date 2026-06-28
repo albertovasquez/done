@@ -33,3 +33,13 @@ def test_message_chunk_carries_full_text():
 def test_with_meta_attaches_under_harness_key():
     chunk = with_meta(message_chunk("hi"), {"task_type": "code_fix"})
     assert chunk.field_meta["harness"]["task_type"] == "code_fix"
+
+
+def test_user_message_chunk_builds_user_update():
+    from harness.acp_emit import user_message_chunk
+    from harness.tui.render import render_update
+    upd = user_message_chunk("hello from the past")
+    item = render_update(upd)
+    assert item is not None
+    assert item.kind == "user"
+    assert item.text == "hello from the past"
