@@ -54,3 +54,45 @@ def test_policy_mentions_dedicated_file_tools_over_shell():
 
 def test_policy_does_not_promise_parallel_tool_calls():
     assert "parallel" not in base_prompt.BASE_POLICY.lower()  # deferred follow-up
+
+
+# --------------------------------------------------------------------------
+# Persona files section
+# --------------------------------------------------------------------------
+
+def _render(**kw):
+    base = dict(model_id="m", cwd="/proj", system_line="TestOS")
+    base.update(kw)
+    return base_prompt.render_base_prompt(**base)
+
+
+def test_persona_files_section_present_with_args():
+    out = _render(persona_id="fred", persona_dir="/abs/agents/fred")
+    assert "# Persona files" in out
+    assert "fred" in out
+    assert "/abs/agents/fred" in out
+    assert "SOUL.md" in out and "IDENTITY.md" in out and "USER.md" in out
+
+
+def test_persona_files_section_absent_without_args():
+    out = _render()                       # no persona_id/persona_dir
+    assert "# Persona files" not in out
+    # the rest of the base block is intact
+    assert "# Environment" in out
+
+
+def test_persona_files_section_absent_if_only_one_arg():
+    assert "# Persona files" not in _render(persona_id="fred")          # no dir
+    assert "# Persona files" not in _render(persona_dir="/abs/fred")    # no id
+
+
+def test_persona_files_section_renders_for_default():
+    out = _render(persona_id="default", persona_dir="/abs/agents/default")
+    assert "# Persona files" in out
+    assert "default" in out               # no special-casing of "default"
+
+
+def test_persona_files_section_is_byte_identical_no_args():
+    # adding the optional args must not change the no-args render at all
+    before = base_prompt.render_base_prompt(model_id="m", cwd="/p", system_line="OS")
+    assert "# Persona files" not in before

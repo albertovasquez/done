@@ -45,9 +45,13 @@ output. Skip the plan for single-step or trivial work.
 
 
 def render_base_prompt(*, model_id: str, cwd: str, system_line: str,
-                       cutoff: str = KNOWLEDGE_CUTOFF) -> str:
-    """Return the base block: the static policy followed by a runtime
-    # Environment section. Pure — no I/O, no globals read."""
+                       cutoff: str = KNOWLEDGE_CUTOFF,
+                       persona_id: str | None = None,
+                       persona_dir: str | None = None) -> str:
+    """Return the base block: the static policy, a runtime # Environment section,
+    and (when persona_id + persona_dir are given) a # Persona files section naming
+    the editable persona trio + its absolute path. Pure — no I/O, no globals read;
+    the persona id + path are resolved by the caller and passed in."""
     env = (
         "\n\n# Environment\n"
         f"- Working directory: {cwd}\n"
@@ -55,4 +59,17 @@ def render_base_prompt(*, model_id: str, cwd: str, system_line: str,
         f"- Knowledge cutoff: {cutoff}\n"
         f"- OS: {system_line}\n"
     )
-    return BASE_POLICY + env
+    persona = ""
+    if persona_id and persona_dir:
+        persona = (
+            "\n\n# Persona files\n"
+            f'You are running as the persona "{persona_id}". Its files live in '
+            f"{persona_dir} :\n"
+            "- SOUL.md — your tone, behavior, and boundaries\n"
+            "- IDENTITY.md — your name, vibe, and emoji\n"
+            "- USER.md — who the user is and how they want to be addressed\n"
+            "When the user asks you to update your persona — your soul, identity, "
+            "how you behave, or what you know about them — Read and then Edit the "
+            "relevant file in that directory.\n"
+        )
+    return BASE_POLICY + env + persona
