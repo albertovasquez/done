@@ -183,6 +183,17 @@ class HarnessTui(App):
             return '› Ask anything... "What is the tech stack of this project?"'
         return f"› Ask {self._persona_display_name(pid)} anything…"
 
+    def _conversation_placeholder(self) -> str:
+        """Idle placeholder for the conversation composer (between turns). Mirrors
+        _landing_placeholder's persona awareness: default → a plain 'Reply…'; a
+        non-default persona → '› Reply to <name>…' so the composer keeps its
+        identity after a turn instead of snapping back to a generic prompt. The
+        mid-turn queue hint ('Type to queue…') is separate and not persona-aware."""
+        pid = self._current_persona()
+        if pid == "default":
+            return "Reply…"
+        return f"› Reply to {self._persona_display_name(pid)}…"
+
     def _compose_meta_markup(self, model_label: str, provider: str) -> str:
         # Just the persona name now (replaced the 'Build' mode word). The
         # model·provider moved up under the header rule (see _header_markup);
@@ -838,7 +849,8 @@ class HarnessTui(App):
         await self.mount(VerticalScroll(id="transcript"), before="#statusbar")
         composer = Vertical(id="composer", classes="compose")
         await self.mount(composer, before="#statusbar")
-        await composer.mount(PromptArea(placeholder="Reply…", id="conversation-input"))
+        await composer.mount(PromptArea(placeholder=self._conversation_placeholder(),
+                                        id="conversation-input"))
         await self.mount(ActivityRegion(id="activity-region"), before="#composer")
         self._refresh_status()
         self.query_one("#conversation-input", PromptArea).focus()
@@ -967,7 +979,7 @@ class HarnessTui(App):
             if gen == self._gen:                  # only the CURRENT generation touches the UI
                 self._hide_working()
                 self._active_input().disabled = False
-                self._active_input().placeholder = "Reply…"
+                self._active_input().placeholder = self._conversation_placeholder()
                 self._active_input().focus()
                 switched = self._apply_pending_persona()  # honor a mid-turn switch request first…
                 if not switched:                          # …drain immediately only when no switch
