@@ -22,6 +22,20 @@ from acp import (
 # it, emits an ACP plan update, and does NOT execute it as a shell command — the
 # same "structured capability over the bash-only channel" pattern memory uses.
 _PLAN_STATUSES = {"pending", "in_progress", "completed"}
+# Bare tokens shlex.split leaves behind for unquoted shell control. Their
+# presence among a `plan` line's args means a real command was chained onto the
+# sentinel, so it is not a pure plan.
+_SHELL_OPERATORS = {"&&", "||", "|", ";", "&", ">", ">>", "<", "<<", "<<<"}
+
+
+def _is_shell_chain_token(tok: str) -> bool:
+    """True if a `plan` arg token signals a chained real command. shlex.split
+    yields operators in a few shapes: standalone (`&&`, `|`, `;`, `>`), a heredoc
+    redirect glued to its tag (`<<PY`), or a `;`/`&` glued to the previous word
+    (`Step;`). None can occur inside a properly quoted `label:status` arg."""
+    return (tok in _SHELL_OPERATORS
+            or tok.startswith("<<")
+            or tok.endswith((";", "&")))
 
 
 def tool_call_start(tool_call_id: str, command: str):
@@ -56,6 +70,12 @@ def parse_plan_command(command: str) -> list[tuple[str, str]] | None:
     'pending' and unknown statuses fall back to 'pending'. Labels may contain
     colons (we split on the LAST colon). Malformed quoting returns None.
 
+    A `plan` line that chains a real shell command (`plan "..." && gh ...`, a
+    pipe, a heredoc) is NOT a pure plan — returning None runs the whole line as
+    shell instead of shredding the chained command's words into checklist rows.
+    Unquoted shell-control operators survive shlex.split as bare tokens; an
+    operator inside a quoted label stays part of that label and is unaffected.
+
     Pure: no I/O. `plan` with no args is a valid empty plan -> []."""
     text = command.strip()
     if text.startswith("$ "):
@@ -66,6 +86,8 @@ def parse_plan_command(command: str) -> list[tuple[str, str]] | None:
         return None                      # unbalanced quotes — not a plan command
     if not tokens or tokens[0] != "plan":
         return None
+    if any(_is_shell_chain_token(t) for t in tokens[1:]):
+        return None                      # chained real command — not a pure plan
     entries: list[tuple[str, str]] = []
     for arg in tokens[1:]:
         label, sep, status = arg.rpartition(":")
