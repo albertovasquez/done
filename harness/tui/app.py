@@ -46,6 +46,7 @@ from harness.tui.widgets.select_modal import SelectModal, SelectOption
 from harness.tui.widgets.agent_rail import AgentRail, PersonaSelected
 from harness.tui.widgets.slash_menu import SlashMenu
 from harness.tui.widgets.prompt_area import PromptArea
+from harness.tui.widgets.decision_prompt import DecisionPrompt, TYPE_SOMETHING, CHAT_ABOUT_IT
 from harness.tui.widgets.status_chip import StatusChip
 from harness.tui.header import icon_markup, header_text_markup
 from harness import config as _config
@@ -491,6 +492,30 @@ class HarnessTui(App):
         self._send_gen = self._gen            # tag this turn's worker with its generation
         self.run_worker(self._send_prompt(text), thread=False)
 
+    # ---- structured clarification ----
+
+    def on_decision_prompt_selected(self, msg: "DecisionPrompt.Selected") -> None:
+        """A clarification option was chosen: option -> submit its title as the next
+        prompt; fallbacks focus/prefill the composer. Then dismiss the prompt."""
+        active = self._snapshot.active
+        view = active.decision if active else None
+        if msg.index == TYPE_SOMETHING:
+            self._active_input().focus()
+        elif msg.index == CHAT_ABOUT_IT:
+            inp = self._active_input()
+            inp.value = "Let's discuss: "
+            inp.focus()
+        elif view is not None and 0 <= msg.index < len(view.options):
+            self.run_worker(self._submit_text(view.options[msg.index][0]), thread=False)
+        self._dismiss_decision()
+
+    def _dismiss_decision(self) -> None:
+        for w in self.query("#decision-prompt"):
+            w.remove()
+        active = self._snapshot.active
+        if active and active.decision is not None:
+            self._apply(DecisionOpened(None))   # clear state.decision
+
     # ---- slash menu ----
 
     async def on_text_area_changed(self, event: TextArea.Changed) -> None:
@@ -892,6 +917,8 @@ class HarnessTui(App):
         dv = decision_from_meta(getattr(msg.update, "field_meta", None))
         if dv is not None:
             self._apply(DecisionOpened(dv))
+            if not self.query("#decision-prompt"):
+                self._append(DecisionPrompt(dv))
         # fold a persona resolution if present (structured path — NOT harness_chips)
         pid = persona_from_meta(getattr(msg.update, "field_meta", None))
         if pid:

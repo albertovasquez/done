@@ -274,6 +274,16 @@ def test_decision_opened_sets_state():
     assert a.decision == dv
 
 
+def test_decision_opened_none_clears_and_leaves_awaiting_state():
+    dv = DecisionView(question="q?", options=(("a", "b"),))
+    fs = reduce(initial_snapshot(), DecisionOpened(dv))
+    assert fs.active.state == AgentState.AWAITING_DECISION
+    cleared = reduce(fs, DecisionOpened(None))
+    assert cleared.active.decision is None
+    # no live tool → falls back to RESPONDING, NOT stuck in AWAITING_DECISION
+    assert cleared.active.state == AgentState.RESPONDING
+
+
 def test_tool_update_targets_live_tool_not_last_index():
     """tool_update must update the task matching the CURRENT live tool (a.tool.title),
     not the last task by index.
