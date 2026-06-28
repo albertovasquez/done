@@ -10,6 +10,63 @@ from harness.tui.widgets.prompt_area import PromptArea
 REPO = Path(__file__).resolve().parent.parent
 FAKE_CMD = [sys.executable, str(REPO / "tests/fake_agent.py")]
 
+
+def test_esc_calls_cancel_rpc_exactly_once():
+    """One ESC press during an active turn must produce exactly one cancel() RPC.
+
+    Without the _cancel_posted gate around the entire action_cancel body,
+    on_key fires action_cancel directly AND Textual's global binding fires a
+    second time (event.stop() does not suppress binding dispatch), resulting
+    in two cancel() calls per ESC press.
+    """
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            # Submit a SLOW prompt so the turn stays active long enough to ESC.
+            app.query_one("#landing-input", PromptArea).focus()
+            app.query_one("#landing-input", PromptArea).value = "SLOW hello"
+            await pilot.press("enter")
+
+            # Wait until the turn is active and a connection is established.
+            for _ in range(60):
+                await pilot.pause()
+                if app._turn_active and app._conn is not None:
+                    break
+            assert app._turn_active, "turn never became active — SLOW fake agent did not start"
+            assert app._conn is not None, "_conn is still None after turn started"
+
+            # Spy: wrap cancel() with a counter.
+            cancel_calls = 0
+            original_cancel = app._conn.cancel
+
+            async def counting_cancel(**kwargs):
+                nonlocal cancel_calls
+                cancel_calls += 1
+                return await original_cancel(**kwargs)
+
+            app._conn.cancel = counting_cancel
+
+            # Press ESC once — the double-fire must be swallowed by the gate.
+            await pilot.press("escape")
+            for _ in range(10):
+                await pilot.pause()
+
+            assert cancel_calls == 1, (
+                f"Expected cancel() called exactly once per ESC, got {cancel_calls}. "
+                "The _cancel_posted gate in action_cancel is missing or broken."
+            )
+
+            # Wait for the in-flight worker to finish so teardown doesn't crash.
+            for _ in range(80):
+                await pilot.pause()
+                if not app._turn_active:
+                    break
+
+    asyncio.run(go())
+
+
 def test_esc_during_turn_cancels_even_with_text_in_box():
     async def go():
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")

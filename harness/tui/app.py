@@ -960,6 +960,9 @@ class HarnessTui(App):
         finally:
             self._turn_active = False
             if not self._running:                 # app shut down mid-turn: skip DOM ops
+                # Intentionally do NOT drain the queue here: _running is False only
+                # during Textual teardown (after workers.cancel_all()), so starting a
+                # new worker to process a queued prompt would run on a dying event loop.
                 return
             if gen == self._gen:                  # only the CURRENT generation touches the UI
                 self._hide_working()
@@ -1248,16 +1251,21 @@ class HarnessTui(App):
         self.push_screen(PermissionModal(command, msg.options), _resolve)
 
     async def action_cancel(self) -> None:
+        # Gate the ENTIRE body on _cancel_posted: on_key calls action_cancel
+        # directly AND Textual's global ("escape","cancel") binding also fires
+        # because event.stop() does not suppress binding dispatch.  One ESC press
+        # therefore triggers two invocations — gating here means the second is a
+        # complete no-op (no extra cancel() RPC, no extra tx.cancel trace, no
+        # extra feedback line).  _cancel_posted is reset to False at the top of
+        # each new turn in _submit_text, so ESC works again on the next turn.
+        if self._cancel_posted:
+            return
         if self._conn is not None and self._session_id is not None:
+            self._cancel_posted = True
             if self._tracer is not None:
                 self._tracer.emit("dn", "tx.cancel", sid=self._session_id)
             await self._conn.cancel(session_id=self._session_id)
-            # Guard against double-fire: on_key calls action_cancel directly AND
-            # event.stop() does NOT suppress BINDINGS dispatch in Textual, so the
-            # global ("escape", "cancel", …) binding fires too.  _conn.cancel() is
-            # idempotent; the visible feedback line must not appear twice.
-            if self._started and not self._cancel_posted:
-                self._cancel_posted = True
+            if self._started:
                 self._append_line(_c("muted", "— canceling… —"))
 
     async def action_clear(self) -> None:
