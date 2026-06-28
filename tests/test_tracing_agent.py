@@ -1,5 +1,6 @@
 import json
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -132,3 +133,42 @@ def test_base_block_not_added_to_instance_template(tmp_path):
     agent.extra_template_vars = {"task": "t"}
     rendered = agent._render_template(agent.config.instance_template)
     assert "BASEBLOCK" not in rendered
+
+
+# ---- cancel_flag: the engine loop must stop between steps when set ----
+
+def test_cancel_flag_stops_loop_between_steps(tmp_path):
+    # A multi-step turn (3 non-terminal turns then submit). The flag is set after
+    # the first step runs, so the loop must end on the cancel checkpoint BEFORE
+    # consuming the rest — exit_status "cancelled", fewer LLM calls than turns.
+    flag = threading.Event()
+    turns = [
+        ("step1", ["echo a"]),
+        ("step2", ["echo b"]),
+        ("step3", ["echo c"]),
+        ("done", ["echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"]),
+    ]
+    emitter = Emitter(tmp_path / "events.jsonl", clock=lambda: 0.0, console=False)
+    model = _tc_model(turns)
+    env = LocalEnvironment(cwd=str(tmp_path))
+    cfg = _agent_config()
+    cfg["output_path"] = str(tmp_path / "traj.json")
+    agent = TracingAgent(model, env, emitter=emitter, cancel_flag=flag, **cfg)
+
+    # set the flag the moment the first LLM call fires, so step 2 is never reached
+    orig_query = agent.query
+    def query_then_cancel():
+        result = orig_query()
+        flag.set()
+        return result
+    agent.query = query_then_cancel
+
+    result = agent.run("dummy task")
+    assert result.get("exit_status") == "cancelled"
+    assert agent.n_calls == 1, "loop kept calling the model after cancel"
+
+
+def test_no_cancel_flag_runs_normally(tmp_path):
+    # Regression: an agent built without a cancel_flag (CLI/mock) behaves as before.
+    agent = _build_agent(tmp_path, _SUBMIT, cwd=tmp_path)
+    assert agent.run("the task").get("exit_status") == "Submitted"

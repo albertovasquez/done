@@ -6,12 +6,18 @@ callbacks marshal to the async ACP loop in acp_agent."""
 
 from __future__ import annotations
 
+import os
+import signal
+import subprocess
 import threading
 from typing import Any, Callable
 
 from minisweagent.environments.local import LocalEnvironment
 
 from harness.acp_emit import parse_plan_command
+
+# how often the run loop wakes to check the cancel flag while waiting on output.
+_POLL_INTERVAL_S = 0.1
 
 
 class AcpEnvironment(LocalEnvironment):
@@ -48,7 +54,61 @@ class AcpEnvironment(LocalEnvironment):
         if self._client_terminal is not None:
             out = self._client_terminal(command)   # client runs it; returns {output, returncode, exception_info}
             self._check_finished(out)              # raises Submitted if submit sentinel present
+        elif self._cancel_flag is not None:
+            # ESC mid-run: own the subprocess so a cancel set AFTER the command
+            # started kills it instead of blocking in communicate(). The no-flag
+            # branch keeps upstream's exact behavior (CLI/mock path).
+            out = self._run_cancellable(command, cwd, timeout)
+            if out.get("exception_info") == "cancelled":
+                return out                         # killed: skip done + Submitted check
+            self._check_finished(out)
         else:
             out = super().execute(action, cwd, timeout=timeout)   # REAL run; FULL output; may raise Submitted
         self._on_command("done", command, out)
         return out
+
+    def _run_cancellable(self, command: str, cwd: str, timeout: int | None) -> dict[str, Any]:
+        """Run `command`, polling the cancel flag so a mid-run ESC kills the whole
+        process group. Mirrors LocalEnvironment._run's shape/kill, plus the poll."""
+        cwd = cwd or self.config.cwd or os.getcwd()
+        deadline_timeout = timeout or self.config.timeout
+        try:
+            proc = subprocess.Popen(
+                command, shell=True, text=True, cwd=cwd,
+                env=os.environ | self.config.env,
+                encoding="utf-8", errors="replace",
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                start_new_session=os.name == "posix",   # new group → killpg reaches children
+            )
+        except Exception as e:                          # same shape upstream returns on failure
+            return {"output": "", "returncode": -1,
+                    "exception_info": f"An error occurred while executing the command: {e}",
+                    "extra": {"exception_type": type(e).__name__, "exception": str(e)}}
+
+        waited = 0.0
+        while True:
+            try:
+                stdout, _ = proc.communicate(timeout=_POLL_INTERVAL_S)
+                return {"output": stdout, "returncode": proc.returncode, "exception_info": ""}
+            except subprocess.TimeoutExpired:
+                if self._cancel_flag.is_set():
+                    self._kill(proc)
+                    return {"output": "", "returncode": -1, "exception_info": "cancelled"}
+                waited += _POLL_INTERVAL_S
+                if 0 < deadline_timeout <= waited:      # honor the real timeout too
+                    self._kill(proc)
+                    out = proc.communicate()[0] or ""
+                    return {"output": out, "returncode": -1,
+                            "exception_info": f"An error occurred while executing the command: "
+                                              f"Command '{command}' timed out after {deadline_timeout} seconds"}
+
+    @staticmethod
+    def _kill(proc: subprocess.Popen) -> None:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL) if os.name == "posix" else proc.kill()
+        except ProcessLookupError:
+            pass                                        # already gone
+        try:
+            proc.wait(timeout=5)                        # reap; never leave a zombie
+        except Exception:
+            pass

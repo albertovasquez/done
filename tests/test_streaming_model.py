@@ -55,6 +55,34 @@ def test_query_streams_each_prose_token_in_order(monkeypatch):
     assert result is rebuilt_sentinel          # returns the rebuilt full response
 
 
+def test_on_delta_exception_aborts_the_stream(monkeypatch):
+    """An exception raised by on_delta must abort the stream immediately — this is
+    the mechanism ESC uses to kill an in-flight LLM call. The loop must NOT keep
+    pulling chunks after the callback raises."""
+    pulled = []
+
+    def fake_completion(**kwargs):
+        def gen():
+            for p in ["a", "b", "c"]:
+                pulled.append(p)
+                yield _chunk(p)
+        return gen()
+
+    import litellm
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+
+    class Interrupt(Exception):
+        pass
+
+    def on_delta(piece):
+        raise Interrupt()                      # fire on the very first prose piece
+
+    model = _make_model(on_delta=on_delta)
+    with pytest.raises(Interrupt):
+        model._query([{"role": "user", "content": "x"}])
+    assert pulled == ["a"], "stream kept producing chunks after on_delta raised"
+
+
 def test_query_with_no_callback_takes_blocking_path(monkeypatch):
     called = {"stream": False, "blocking": False}
 
