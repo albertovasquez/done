@@ -1685,3 +1685,23 @@ def test_new_persona_modal_is_a_centered_box_not_fullscreen():
             assert box.styles.border.top[0] == "round", "box must have the round $accent border"
 
     asyncio.run(go())
+
+
+# ---- structured clarification (#66) ----
+
+def test_submit_text_starts_a_turn():
+    """_submit_text routes through the same path as a typed prompt: a chosen
+    option's text lands in the transcript as a user message."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await _send_first_prompt(pilot, app, "hello")
+            for _ in range(50):
+                await pilot.pause()
+                if app._started and app.query("#transcript"):
+                    break
+            await app._submit_text("chosen option title")
+            await pilot.pause()
+            assert "chosen option title" in _transcript_text(app)
+
+    asyncio.run(go())

@@ -476,6 +476,11 @@ class HarnessTui(App):
             return
         if not self._started:
             await self._enter_conversation()
+        await self._submit_text(text)
+
+    async def _submit_text(self, text: str) -> None:
+        """Start a user turn for `text` — the shared path for a typed prompt AND a
+        decision selection. Assumes conversation state is established."""
         self._add_user_message(text)
         inp = self._active_input()
         inp.value = ""
