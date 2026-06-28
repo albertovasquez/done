@@ -1948,3 +1948,44 @@ def test_enter_on_active_persona_is_noop_close():
             assert not app.query_one("#agent-drawer").display   # drawer closed
 
     asyncio.run(go())
+
+
+def test_highlighted_card_gets_accent_border():
+    """Moving the highlight (↑↓) to a NON-active card must give that card an
+    accent border — bold text alone is easy to miss. Drives a real keyboard
+    'down' (the highlight is set by cursor nav, not bare .index)."""
+    from textual.widgets import ListItem
+    from harness.tui.widgets.agent_rail import AgentRail
+    from harness.tui.roster import PersonaRow
+    from harness.tui.state import AgentState
+
+    ACCENT = (40, 108, 233)   # $accent #286CE9
+
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test(size=(90, 30)) as pilot:
+            await _send_first_prompt(pilot, app, "hi")
+            for _ in range(50):
+                await pilot.pause()
+                if app._started:
+                    break
+            app.action_toggle_rail()
+            await pilot.pause()
+            rail = app.query_one("#agent-rail", AgentRail)
+            # two rows: active fred (index 0) + idle sam (index 1)
+            rail.set_rows((
+                PersonaRow(id="fred", name="Fred", active=True, status=AgentState.RUNNING_TOOL),
+                PersonaRow(id="sam", name="Sam", active=False, status=AgentState.IDLE),
+            ))
+            rail.focus()
+            await pilot.pause()
+            await pilot.press("down")          # highlight the NON-active "sam"
+            await pilot.pause()
+            items = list(rail.query(ListItem))
+            assert items[1].has_class("-highlight"), "sam should be highlighted after down"
+            top = items[1].styles.border.top                  # (edge_type, Color)
+            assert top and top[1].rgb == ACCENT, (
+                f"highlighted non-active card must have an accent border, got {top!r}"
+            )
+
+    asyncio.run(go())
