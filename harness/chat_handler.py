@@ -36,14 +36,14 @@ def is_capability_question(prompt: str) -> bool:
     return bool(_ABILITY_Q.search(prompt) or _SKILL_WORD.search(prompt))
 
 
-def _format_catalog(catalog: list[tuple[str, str]]) -> str:
+def _format_catalog(catalog: "list[skills.SkillMeta]") -> str:
     """A markdown answer listing every skill (name + description)."""
     if not catalog:
         return ("I currently have **no skills** loaded — none are bundled or "
                 "configured in your skills directories.")
     n = len(catalog)
     lines = [f"I have **{n} skill{'s' if n != 1 else ''}** available:", ""]
-    lines += [f"- **{name}** — {desc}" for name, desc in catalog]
+    lines += [f"- **{m.name}** — {m.description}" for m in catalog]
     return "\n".join(lines)
 
 

@@ -16,14 +16,14 @@ def _bundled() -> Path:
 
 
 def test_catalog_is_exactly_the_four_system_skills():
-    cat = dict(load_catalog([_bundled()]))
+    cat = {m.name: m.description for m in load_catalog([_bundled()])}
     assert set(cat) == EXPECTED, sorted(cat)
     for name, desc in cat.items():
         assert desc.strip(), f"{name} has empty description"
 
 
 def test_removed_placeholders_are_gone():
-    cat = dict(load_catalog([_bundled()]))
+    cat = {m.name: m.description for m in load_catalog([_bundled()])}
     assert REMOVED.isdisjoint(cat), REMOVED & set(cat)
 
 
