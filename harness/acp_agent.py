@@ -219,7 +219,9 @@ class HarnessAgent(acp.Agent):
         self._active_persona = pid
         self._worker_model_id = seat.model      # mirror active seat for read sites
         self._store.get(seat.session_id).worker_model = seat.model
-        return {"ok": True, "id": pid, "session_id": seat.session_id, "model": seat.model}
+        count = len(self._store.get(seat.session_id).transcript)
+        return {"ok": True, "id": pid, "session_id": seat.session_id,
+                "model": seat.model, "message_count": count}
 
     async def initialize(self, protocol_version, client_capabilities=None,
                          client_info=None, **kw):
