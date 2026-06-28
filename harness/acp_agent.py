@@ -386,19 +386,22 @@ class HarnessAgent(acp.Agent):
         # this turn (C2c). Falls back to "mock" when there is no model.
         ws = state.workspace_dir
         # Lazy skill discovery: a flow-scoped MENU (names+descriptions) in the
-        # prompt; the agent pulls bodies on demand via load_skill. No persona
-        # flows => full catalog, no gating (no-op vs. before).
+        # prompt; the agent pulls bodies on demand via load_skill. Resolve roots
+        # PER TURN from the session cwd so this session's project .agents/.claude
+        # skills are included (the router's startup catalog is global-only).
         from harness import flows as _flows
         from harness import persona_config as _persona_config
+        from harness import paths as _paths
+        _skill_roots = _paths.skills_dirs(project_cwd=state.cwd)
+        _catalog_load = skills.load_catalog_with_skips(_skill_roots)
         _enabled_flows = _persona_config.read_flows(ws)
-        _menu_metas = (_flows.scope_catalog(self._router.catalog, _enabled_flows)
-                       if _enabled_flows else self._router.catalog)
+        _menu_metas = (_flows.scope_catalog(_catalog_load.skills, _enabled_flows)
+                       if _enabled_flows else _catalog_load.skills)
         _skills_menu = skills.compose_menu(_menu_metas)
         # Three-tier AGENTS.md (persona > project > global), folded into base_block
         # so BOTH the chat branch and the agent branch below inherit it (both consume
         # base_block). No-op when no AGENTS.md files exist.
         from harness import agents as _agents
-        from harness import paths as _paths
         _agents_block = _agents.resolve_agents(
             persona_dir=ws,
             project_cwd=Path(state.cwd) if state.cwd else None,
@@ -414,15 +417,15 @@ class HarnessAgent(acp.Agent):
             agents_block=_agents_block)
 
         if cls.task_type == "chat_question":
-            # hand the router's catalog so "what skills do we have?" is answered
-            # from data, not the model (see ChatHandler.is_capability_question).
-            # Also surface skills DROPPED at load (malformed/name-mismatch) so the
-            # user learns why a skill is unselectable rather than it vanishing.
-            _roots = self._skills_dir if isinstance(self._skills_dir, list) else [self._skills_dir]
-            _skipped = skills.load_catalog_with_skips(_roots).skipped
-            handler = ChatHandler(model_id, catalog=self._router.catalog,
+            # hand the (project-aware) catalog so "what skills do we have?" is
+            # answered from data, not the model. Surface DROPPED (malformed) and
+            # SHADOWED (overridden across roots) skills so the user sees why a skill
+            # is unselectable / which copy is active. Reuse the per-turn catalog load.
+            handler = ChatHandler(model_id, catalog=_catalog_load.skills,
                                   persona_block=(state.persona_block or "") + (state.memory_block or ""),
-                                  base_block=base_block, skipped=_skipped)
+                                  base_block=base_block,
+                                  skipped=_catalog_load.skipped,
+                                  shadowed=_catalog_load.shadowed)
             pieces: list[str] = []
 
             def pump() -> None:
@@ -450,7 +453,7 @@ class HarnessAgent(acp.Agent):
         # offload compose_context: it does filesystem I/O (skills); keep the event loop free
         ctx = await loop.run_in_executor(
             None, persona.compose_context, state.persona_block or "",
-            state.memory_block or "", self._skills_dir, cls.skills)
+            state.memory_block or "", _skill_roots, cls.skills)
         await self._conn.session_update(session_id,
             with_meta(message_chunk(""),
                       {"skill_load": {"injected": ctx.skills.injected,
@@ -637,7 +640,8 @@ class HarnessAgent(acp.Agent):
             try:
                 # pass the CURRENT worker model so /models hot-swaps the agent path
                 # too; the factory ignores the arg in mock mode.
-                model_obj = self._model_factory(model_id if model_id is not None else self._worker_model_id)
+                model_obj = self._model_factory(model_id if model_id is not None else self._worker_model_id,
+                                                project_cwd=state.cwd)
                 agent = TracingAgent(model_obj, env,
                                      emitter=emitter, skill_block=skill_block,
                                      persona_block=persona_block, memory_block=memory_block,

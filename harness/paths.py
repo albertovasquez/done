@@ -47,11 +47,28 @@ def bundled_persona_templates_dir() -> Path:
     return Path(importlib.resources.files("harness")) / "templates" / "agents" / "default"
 
 
-def skills_dirs() -> list[Path]:
-    """Ordered LOWEST precedence first: bundled, then the user dir. Absent roots
-    are kept in the list — skills.load_catalog/compose skip non-dirs — so callers
-    need not pre-filter."""
-    return [bundled_skills_dir(), config_dir() / "skills"]
+def skills_dirs(project_cwd: str | Path | None = None) -> list[Path]:
+    """Skill roots, ordered LOWEST precedence first (later root wins by name).
+
+    Adopts the cross-tool Agent Skills convention so Done picks up project skills
+    and consumes the ecosystem's skills for free:
+
+        bundled                       (shipped maturity spine)
+        ~/.claude/skills              (ecosystem USER compat — consume)
+        <config>/skills               (Done USER dir — native, outranks compat)
+        <cwd>/.claude/skills          (ecosystem PROJECT compat)   [if project_cwd]
+        <cwd>/.agents/skills          (cross-tool PROJECT standard — highest) [if project_cwd]
+
+    Native Done dirs outrank ecosystem-compat dirs at the same scope (a deliberate
+    Done skill beats a borrowed one); project outranks global. Absent roots are
+    kept (load_catalog/compose skip non-dirs). project_cwd=None omits the two
+    PROJECT roots; the ~/.claude/skills compat root is always listed but is skipped
+    when missing (a no-op for non-Claude users)."""
+    roots = [bundled_skills_dir(), Path.home() / ".claude" / "skills", config_dir() / "skills"]
+    if project_cwd is not None:
+        cwd = Path(project_cwd)
+        roots += [cwd / ".claude" / "skills", cwd / ".agents" / "skills"]
+    return roots
 
 
 def default_workspace_dir() -> Path:

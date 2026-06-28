@@ -45,7 +45,7 @@ def _load_agent_config() -> dict:
     return cfg["agent"]
 
 
-def _build_vibeproxy_model():
+def _build_vibeproxy_model(project_cwd=None):
     # StreamingLitellmModel (not bare LitellmModel) so the standalone CLI advertises
     # the full tool registry too; on_delta defaults None => byte-identical blocking path.
     from harness.streaming_model import StreamingLitellmModel
@@ -55,8 +55,9 @@ def _build_vibeproxy_model():
         model_name=vibeproxy.model_id(vibeproxy.default_model()),
         model_kwargs=vibeproxy.model_kwargs(),
         cost_tracking="ignore_errors",
-        # skill_roots => the agent gets a load_skill tool to pull bodies on demand.
-        registry=build_registry(skill_roots=_paths.skills_dirs()),
+        # skill_roots => the agent gets a load_skill tool to pull bodies on demand;
+        # project_cwd so it can resolve project .agents/.claude skills too.
+        registry=build_registry(skill_roots=_paths.skills_dirs(project_cwd=project_cwd)),
     )
 
 
@@ -149,7 +150,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.model == "mock":
         model = build_mock_model()
     else:
-        model = _build_vibeproxy_model()
+        model = _build_vibeproxy_model(project_cwd=args.cwd)
     env = LocalEnvironment(cwd=args.cwd)
     agent_cfg = _load_agent_config()
     agent_cfg["output_path"] = str(run_dir / "traj.json")
@@ -163,10 +164,11 @@ def main(argv: list[str] | None = None) -> int:
     # Lazy skill discovery: the agent gets a flow-scoped MENU (names+descriptions)
     # and pulls bodies on demand via load_skill. No flows on the persona => full
     # catalog, no gating (no-op vs. before).
-    skills_roots = _paths.skills_dirs()
+    skills_roots = _paths.skills_dirs(project_cwd=args.cwd)   # project .agents/.claude skills too
     _catalog_load = skills.load_catalog_with_skips(skills_roots)
     _full_catalog = _catalog_load.skills
-    _skipped_skills = _catalog_load.skipped     # surfaced in the capability answer
+    _skipped_skills = _catalog_load.skipped       # surfaced in the capability answer
+    _shadowed_skills = _catalog_load.shadowed     # name clashes across roots (later won)
     _enabled_flows = _persona_config.read_flows(workspace_dir)
     _menu_metas = (_flows.scope_catalog(_full_catalog, _enabled_flows)
                    if _enabled_flows else _full_catalog)
@@ -206,7 +208,8 @@ def main(argv: list[str] | None = None) -> int:
             make_chat_handler=lambda: ChatHandler(worker_model_id, catalog=router.catalog,
                                                   persona_block=persona_block + memory_block,
                                                   base_block=base_block,
-                                                  skipped=_skipped_skills),
+                                                  skipped=_skipped_skills,
+                                                  shadowed=_shadowed_skills),
             run_agent=run_agent, ask_user=input, echo=print,
             worker_model_id=worker_model_id,
             load_skills=lambda names: skills.compose(skills_roots, names))

@@ -150,3 +150,48 @@ The change is opt-in: a skill or persona gets the new behavior only by declaring
 - Dispatch wiring: `harness/run_traced.py`, `harness/acp_agent.py`, `harness/acp_main.py`
 - The spine: `harness/skills/*/SKILL.md`
 - Design + research: `docs/superpowers/specs/2026-06-28-router-flows-*.md`
+
+## Skill roots & the Agent Skills standard
+
+Done resolves skills from multiple roots, ordered **lowest precedence first (later
+root wins by name)** — aligned with the cross-tool [Agent Skills standard](https://agentskills.io):
+
+```
+bundled                       (shipped maturity spine)
+~/.claude/skills              (ecosystem USER skills — consumed for free)
+~/.config/harness/skills      (your Done USER skills — native, outranks compat)
+<cwd>/.claude/skills          (ecosystem PROJECT skills, when run in that repo)
+<cwd>/.agents/skills          (the cross-tool PROJECT standard — highest)
+```
+
+Plus any per-persona roots from `persona.toml` `skills = [...]`, which append on top.
+
+- **Native Done dirs outrank ecosystem-compat dirs** at the same scope (a deliberate
+  Done skill beats a borrowed one); **project outranks global**.
+- **`.agents/skills`** is the emerging standard every major harness (Codex, Cursor)
+  is converging on; **`.claude/skills`** is read for compatibility so Done consumes
+  the largest existing skill ecosystem with no porting.
+- A **name clash across roots** is surfaced (not silent): the capability answer
+  ("what skills do we have?") notes which copy is active. Malformed skills are
+  surfaced with their reason (see #87).
+
+### `flow:` is a Done extension
+
+Done's `flow:` frontmatter tag (and the invocation keys `disable-model-invocation`
+/ `user-invocable`) are layered **on top of** the standard. The standard ignores
+unknown frontmatter keys, so a Done skill stays portable to other tools — they just
+don't act on `flow:`. Done reads it for per-persona flow scoping (see above).
+
+### Release note
+
+Done now reads `.claude/skills` and `.agents/skills` (project and `~`). If you use
+Claude Code or another Agent-Skills tool, your existing `~/.claude/skills` are now
+available in Done automatically.
+
+### Security note
+
+A project skills dir (`<cwd>/.agents/skills`, `<cwd>/.claude/skills`) is trusted to
+the same degree as that repo's code: running Done inside an untrusted cloned repo
+means that repo's skill *instructions* can enter the prompt. Done never executes
+skill `scripts/` — it only injects SKILL.md text — so the blast radius is the same
+as the repo's own code and `AGENTS.md`, which Done already reads.
