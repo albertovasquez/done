@@ -111,9 +111,14 @@ no trust gap).
 - **display_name write failure** (read-only home / bad write) is NON-FATAL: the persona is
   still created + usable; `read_name` returns None on any read failure so the rail falls
   back to the id. A failed label never blocks creation.
-- **TOML-escaping** the display name: escape `\` then `"` before writing `name = "..."`, so
-  a name containing a quote can't corrupt the file. (`read_name` already tolerates a corrupt
-  file by returning None, but we write valid TOML.)
+- **TOML-escaping** the display name: escape `\` then `"`, and strip control chars
+  (newlines, etc.) before writing `name = "..."`, so a crafted name can't break the file or
+  inject a second key. (`read_name` already tolerates a corrupt file by returning None, but
+  we write valid TOML.)
+- **Accented/ligature chars are dropped, not transliterated** (`café` → `caf`, `ﬁle` →
+  `le`) — verified the slug invariant holds (every non-empty result satisfies `_VALID_ID`).
+  Full transliteration (`café`→`cafe`) would need a dependency; out of scope (YAGNI). The
+  typed name is preserved verbatim as the display label, so the lossy slug is internal-only.
 
 ## 6. Testing (TDD, per unit)
 
