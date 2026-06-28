@@ -48,6 +48,40 @@ def isolated_config(tmp_path, monkeypatch):
     return tmp_path
 
 
+def test_explain_turn_gets_answer_only_instance_template():
+    """A code_explain turn must run with the answer-only instance template, not
+    the engine's 'solve this issue / edit the source' default — otherwise the
+    every-turn framing overrides clarify-before-acting and the agent edits files
+    when the user only asked it to look. Pure-helper guard (the seam in
+    _run_agent_turn passes cls.task_type through to this)."""
+    from harness.acp_agent import _instance_template_for, ANSWER_ONLY_INSTANCE
+
+    default = "Please solve this issue: {{task}}\nEdit the source code to resolve it."
+    assert _instance_template_for("code_explain", default) is ANSWER_ONLY_INSTANCE
+
+
+def test_work_order_turn_keeps_engine_instance_template():
+    """A real work order (code_fix/feature/refactor/ops) keeps the engine default
+    template unchanged — the gate must not handicap turns the user DID ask to act
+    on."""
+    from harness.acp_agent import _instance_template_for
+
+    default = "Please solve this issue: {{task}}"
+    for tt in ("code_fix", "code_feature", "code_refactor", "ops_task"):
+        assert _instance_template_for(tt, default) == default
+
+
+def test_answer_only_template_keeps_task_placeholder_and_forbids_edits():
+    """The answer-only template must still surface {{task}} (so the agent knows
+    what was asked) and must explicitly forbid editing to answer."""
+    from harness.acp_agent import ANSWER_ONLY_INSTANCE
+
+    assert "{{task}}" in ANSWER_ONLY_INSTANCE
+    low = ANSWER_ONLY_INSTANCE.lower()
+    assert "do not" in low or "don't" in low
+    assert "edit" in low
+
+
 def test_set_model_persists_under_default_when_no_workspace():
     agent = _make_agent(backend="vibeproxy")          # workspace_dir=None -> "default"
     result = asyncio.run(agent.ext_method("harness/set_model", {"model": "claude-opus-4-8"}))
