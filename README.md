@@ -43,7 +43,7 @@ event tracer, a request router, a skills layer, and the ACP interface.
 
 ## Quick start
 
-DoneDone needs Python 3.11+. Install the `dn` command with
+DoneDone needs Python 3.10+. Install the `dn` command with
 [uv](https://github.com/astral-sh/uv):
 
 ```bash
@@ -77,14 +77,14 @@ Either install puts two commands on your `PATH`:
 Then run it:
 
 ```bash
-dn                       # zero-cost mock model; operates on the current directory
-dn --model vibeproxy     # a real LLM, via VibeProxy
+dn                       # a real LLM via VibeProxy (the default); operates on the current directory
+dn --model mock          # zero-cost mock model — no LLM, for trying the UI
 dn --cwd ~/myproject     # operate on a specific project instead of the cwd
 ```
 
 | Flag | Values | Default | Meaning |
 |---|---|---|---|
-| `--model` | `mock`, `vibeproxy` | `mock` | which LLM the agent uses |
+| `--model` | `mock`, `vibeproxy` | `vibeproxy` | which LLM the agent uses |
 | `--cwd` | a path | `.` | the working directory the agent operates in |
 | `--yolo` | flag | off | auto-allow every command — never prompt for permission |
 
