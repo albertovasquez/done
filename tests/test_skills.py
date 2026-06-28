@@ -154,12 +154,24 @@ def test_load_catalog_returns_skillmeta(tmp_path):
 
 # --- Layer B: lazy skill menu ------------------------------------------------
 
-def test_compose_menu_lists_names_not_bodies():
-    metas = [SkillMeta("a", "does A"), SkillMeta("b", "does B")]
+def test_compose_menu_groups_by_origin_with_category():
     from harness.skills import compose_menu
+    metas = [
+        SkillMeta("a", "does A", category="caveman", origin="bundled"),
+        SkillMeta("v", "does V", category="process", origin="project"),
+        SkillMeta("u", "does U", origin="unknown"),  # category defaults to "other"
+    ]
     out = compose_menu(metas)
-    assert "does A" in out and "**a**" in out and "load_skill" in out
-    assert "# Skills" in out
+    # preamble + load_skill instruction preserved
+    assert "# Skills" in out and "load_skill" in out
+    # origin headings present
+    assert "## bundled" in out and "## project" in out and "## unknown" in out
+    # bundled appears before project before unknown (fixed order)
+    assert out.index("## bundled") < out.index("## project") < out.index("## unknown")
+    # each line carries name, category tag, and description (no bodies)
+    assert "- **a** (caveman) — does A" in out
+    assert "- **v** (process) — does V" in out
+    assert "- **u** (other) — does U" in out
 
 
 def test_compose_menu_empty_is_blank():
