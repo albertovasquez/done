@@ -39,7 +39,7 @@ to sit immediately before/with the thing it describes.
 |---|---|
 | Where metadata lives | **Split**: the classification chip rides under the **prompt** (it describes how the prompt was routed); the `Build · model · time` line rides with the **response** (it describes the run). |
 | Response visual treatment | **Border on prompt only.** The prompt stays the single bordered anchor (accent left-border, already exists). The response is borderless markdown, separated by whitespace + a dimmed metadata caption above it. No second card. |
-| `Build · model · time` placement | **Header** — above the response (not a footer). Requires a placeholder-then-patch in the streaming path (see Implementation). |
+| `Build · model · time` placement | **Footer** — below the response. Elapsed time is only known at turn end, and the footer summarizes the run that produced the answer above it — OpenCode's actual metadata model. A plain append at turn end; the streaming path is untouched. *(Superseded the initial header choice — see Revision below.)* |
 | Turn separation | **Whitespace only** — a blank line + the prompt's accent border as the turn anchor. No horizontal-rule dividers. |
 | Spacing scale | **Tune inline values** in `app.tcss`. No new named-token abstraction; the existing `0/1/2` vocabulary is the de-facto scale. |
 
@@ -48,17 +48,36 @@ to sit immediately before/with the thing it describes.
 ```
 ▌ My prompt text                        ← .user-msg card (accent left-border) — EXISTS, unchanged
   classified: chat · skills · conf 0.96  ← .turn-meta caption (muted, indent 2) — hugs the prompt
-                                          ← blank line = the turn break (margin-top on the run caption)
-  ▣ Build bypass · opus · 4.3s           ← .turn-meta-run caption (muted, indent 2) — HEADS the response
-  Agent response markdown…                ← borderless, indent 2 to align under its caption
+                                          ← blank line = the turn break (margin-top on the response)
+  Agent response markdown…                ← borderless, indent 2
+  ▣ Build bypass · opus · 4.3s           ← .turn-meta-run footer (muted, indent 2) — hugs the response above; margin-bottom 1 before the next prompt
 ```
 
-Two caption classes, because the chip and the run line want different top
-spacing: `.turn-meta` (chip) hugs the prompt above it; `.turn-meta-run` (Build)
-carries the `margin-top: 1` turn break so it heads the response group below.
+Two caption classes: `.turn-meta` (chip) hugs the prompt above it (no margin);
+`.turn-meta-run` (Build footer) hugs the response above it (no top margin) and
+carries `margin-bottom: 1` as the gap before the next turn's prompt. The turn
+break between the prompt+chip group and the response is the response markdown's
+`margin-top: 1`.
 
-Next turn repeats the same shape. Separation between turns is the blank line
-above the next `▌` prompt plus the accent border itself.
+Next turn repeats the same shape.
+
+## Revision (post-merge): header → footer
+
+PR #97 first shipped the Build line as a **header** above the response, which
+required a placeholder-then-patch in the fragile streaming path (emit a `…`
+placeholder when the first answer block opens, patch the elapsed at turn end).
+Follow-up: the user noted the elapsed-time tension is better resolved by a
+**footer** — which is also what OpenCode actually does (metadata is the last line
+of the message block). The footer:
+
+- removes the placeholder machinery entirely (`_meta_widget`, `_meta_emitted`,
+  the `_meta_markup(None)` branch, the `_stream_message` emission) — a net
+  deletion;
+- leaves the streaming path byte-identical to pre-#97;
+- reads naturally: prompt → routing chip → response → "that run took N s."
+
+`_write_meta` reverts to a plain `_append_line(..., classes="turn-meta-run")` at
+turn end. This is the shipped design.
 
 ## Components touched
 
