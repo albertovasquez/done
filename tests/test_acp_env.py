@@ -15,15 +15,17 @@ def _env(tmp_path, **kw):
     return AcpEnvironment(cwd=str(tmp_path), **kw)
 
 
-def test_submitted_propagates_and_skips_done(tmp_path):
+def test_submitted_propagates_and_still_fires_done(tmp_path):
     # the submit command makes super().execute() raise Submitted; AcpEnvironment
-    # must NOT swallow it (the agent loop ends on it), and on_command("done")
-    # must be skipped for that command.
+    # must NOT swallow it (the agent loop ends on it) — but it MUST still fire
+    # on_command("done") so the start/done pair balances. Skipping done here was
+    # the bug: it left the TUI's "Running shell…" tool-call open forever (stuck
+    # spinner + locked composer) after the turn had already finished.
     calls = []
     env = _env(tmp_path, on_command=lambda phase, cmd, out: calls.append(phase))
     with pytest.raises(Submitted):
         env.execute({"command": "printf 'COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\\nresult'"})
-    assert "start" in calls and "done" not in calls
+    assert calls == ["start", "done"]   # balanced even though Submitted propagated
 
 
 def test_executes_and_returns_full_output(tmp_path):
@@ -116,16 +118,22 @@ def test_client_terminal_stub_is_used(tmp_path):
     assert any(phase == "start" for phase, _ in done_calls)
 
 
-def test_client_terminal_submit_raises(tmp_path):
-    """client_terminal path must still raise Submitted for the submit sentinel."""
+def test_client_terminal_submit_raises_and_fires_done(tmp_path):
+    """client_terminal path (the one used when the client has a terminal) must
+    still raise Submitted for the submit sentinel AND balance start/done — this
+    is the exact path that left the spinner stuck in the reported session."""
+    calls = []
     stub_out = {
         "output": "COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\nmy result",
         "returncode": 0,
         "exception_info": "",
     }
-    env = _env(tmp_path, on_command=lambda *a: None, client_terminal=lambda cmd: stub_out)
+    env = _env(tmp_path,
+               on_command=lambda phase, cmd, out: calls.append(phase),
+               client_terminal=lambda cmd: stub_out)
     with pytest.raises(Submitted):
         env.execute({"command": "anything"})
+    assert calls == ["start", "done"]
 
 
 # ---------------------------------------------------------------------------

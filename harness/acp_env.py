@@ -51,20 +51,32 @@ class AcpEnvironment(LocalEnvironment):
         if self._request_permission is not None and not self._request_permission(command):
             self._on_command("rejected", command, None)
             return {"output": "", "returncode": -1, "exception_info": "permission denied"}
-        if self._client_terminal is not None:
-            out = self._client_terminal(command)   # client runs it; returns {output, returncode, exception_info}
-            self._check_finished(out)              # raises Submitted if submit sentinel present
-        elif self._cancel_flag is not None:
-            # ESC mid-run: own the subprocess so a cancel set AFTER the command
-            # started kills it instead of blocking in communicate(). The no-flag
-            # branch keeps upstream's exact behavior (CLI/mock path).
-            out = self._run_cancellable(command, cwd, timeout)
-            if out.get("exception_info") == "cancelled":
-                return out                         # killed: skip done + Submitted check
-            self._check_finished(out)
-        else:
-            out = super().execute(action, cwd, timeout=timeout)   # REAL run; FULL output; may raise Submitted
-        self._on_command("done", command, out)
+        # The submit sentinel makes _check_finished raise Submitted. That raise sits
+        # BETWEEN start and done, so without the finally below the submit command's
+        # tool-call never closes — the TUI "Running shell…" spinner stays open
+        # forever (stuck spinner + locked composer) after the turn has finished.
+        # Wrap every branch so start/done ALWAYS balance, even as Submitted
+        # propagates. out is seeded so the finally is safe if super() raises before
+        # returning a value.
+        out: dict[str, Any] = {"output": "", "returncode": -1, "exception_info": ""}
+        try:
+            if self._client_terminal is not None:
+                out = self._client_terminal(command)   # client runs it; returns {output, returncode, exception_info}
+                self._check_finished(out)              # raises Submitted if submit sentinel present
+            elif self._cancel_flag is not None:
+                # ESC mid-run: own the subprocess so a cancel set AFTER the command
+                # started kills it instead of blocking in communicate(). The no-flag
+                # branch keeps upstream's exact behavior (CLI/mock path).
+                out = self._run_cancellable(command, cwd, timeout)
+                if out.get("exception_info") == "cancelled":
+                    return out                         # killed: skip done + Submitted check
+                self._check_finished(out)
+            else:
+                # super().execute() runs AND calls _check_finished internally, so it
+                # may raise Submitted before assigning out; the finally still fires.
+                out = super().execute(action, cwd, timeout=timeout)   # REAL run; FULL output
+        finally:
+            self._on_command("done", command, out)
         return out
 
     def _run_cancellable(self, command: str, cwd: str, timeout: int | None) -> dict[str, Any]:
