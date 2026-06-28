@@ -258,51 +258,91 @@ claim and only shows for genuinely-new personas (see §6.2).
 
 ## 6. Phase 2 — persistent on screen (needs engine support)
 
-### 6.1 Engine: return the seat's transcript on switch
+**Design decided (2026-06-28), grounded in the verified current-state seam map.** Two
+architecture decisions, both settled:
 
-Extend the `set_persona` result (or add a follow-up `get_session_history`) so switching to a
-persona yields that seat's prior messages.
+1. **Transport: stream via `session_update`.** The engine replays the seat's transcript by
+   emitting ACP session-update notifications — each historical message flows through the
+   **same** `on_session_update → render_update → _stream_message` path the TUI already uses
+   (app.py). The client writes **zero** render code; no second renderer. (This is option (a)
+   from the prior draft; (b) is dropped.)
+2. **Trigger: a separate explicit `harness/replay_session` ext-method**, called by the client
+   *after* it clears the transcript. `set_persona` stays as-is except it gains a
+   `has_history` (bool) / `message_count` field so the client knows whether to replay and can
+   scope the empty-room copy to genuinely-new personas. Switch = repoint; replay = explicit,
+   ordered after the clear. The two ext-methods each do one job and test independently.
 
-**Render-path conversion is required (verified, Codex review).** The stored
-`SessionState.transcript` is plain `{role, content, origin}` (acp_session.py) — this is
-**not** the TUI's render path, which consumes ACP `SessionUpdate` objects via
-`render_update()` (app.py:906-980). So Phase 2 is NOT "mirror the shape and reuse the
-renderer for free"; it must do **one** of:
-- (a) have the engine emit stored history **as ACP `SessionUpdate`s** (the `load_session`
-  `[resumed]` streaming at acp_agent.py:248-261 is the precedent to generalize), so the
-  client's existing `render_update()` consumes them unchanged; **or**
-- (b) add a small client **replay renderer** that maps `{role, content}` → transcript widgets.
+### 6.1 Engine: `harness/replay_session` streams the seat's transcript
 
-Prefer (a): it reuses the proven render path and matches the existing `load_session`
-precedent. (b) is a fallback if emitting updates on switch is awkward.
+**Data source (verified):** `SessionState.transcript` (acp_session.py:22) holds
+`list[{role, content, origin}]`, populated on **every** turn via `store.extend` (chat path
+acp_agent.py:377, agent path :446/:475). So a switched-back persona's transcript genuinely
+holds its prior user+assistant messages (true in mock mode too).
 
-### 6.2 UI: replay history on switch-back + resumed seam + upgraded copy
+**NOT `load_session`'s precedent verbatim:** `load_session` (acp_agent.py:248-261) loops over
+`state.history` (turn *summaries*, emitting `[resumed] {kind}: {prompt}`), which is the wrong
+data. Phase 2 loops over `state.transcript` (the actual messages).
 
-On switch, after clearing, **replay** the seat's returned messages into the transcript,
-then render a faint seam above the live composer:
+**New ext-method `harness/replay_session`** in `acp_agent.py`'s `ext_method` dispatch
+(alongside `set_persona`, ~L177):
+- Params `{id}` → resolve the persona's seat session_id (reuse the seat lookup;
+  `_persona_sessions.get_or_create` already ran during the just-completed `set_persona`, so
+  the seat exists — fetch its `session_id`).
+- `state = self._store.get(session_id)`.
+- For each `m` in `state.transcript`, emit a `session_update` whose ACP update type renders as
+  the right kind: assistant/agent messages → `update_agent_message_text(m["content"])`
+  (renders as `kind="message"`); user messages → the user-message update
+  (renders as `kind="user"`, the `▌` prefix). Map by `m["role"]`.
+- After the loop, emit ONE seam update: an `update_agent_message_text("")` carrying
+  `field_meta={"harness": {"resumed": True}}` (via `with_meta`, acp_emit.py:41) so the client
+  renders the `── resumed ──` divider as a distinct chip (not a message). The client folds
+  `harness.resumed` in `on_session_update` before `render_update`, the same way it already
+  folds `stream_reset` / `task_classified` / `persona` meta (app.py ~L1013-1044).
+- Return `{ok: True, count: <n>}`.
 
+**`set_persona` add `has_history`:** in `_activate_seat` (acp_agent.py:205-222), after
+resolving the seat, read `len(self._store.get(seat.session_id).transcript)` and add it to the
+return dict: `{..., "message_count": n}`. (Cheap — one dict lookup; does NOT send the
+transcript, so the `set_persona` payload stays small — that's why replay is a separate call.)
+
+### 6.2 UI: replay on switch-back + resumed seam + upgraded copy
+
+**Insertion point (verified):** `_apply_persona_switch` (app.py ~L1228), immediately after
+`self._clear_transcript()` and before the room-header block.
+
+**Async seam (Phase-1 constraint still binds):** `_apply_persona_switch` is **sync** (Phase 1
+I1 fix + create-modal depend on this — do NOT make it async). The replay is an `await
+ext_method(...)`. Resolve exactly as Phase 1's deferred switch did: schedule the replay as a
+worker — `self.run_worker(self._replay_session(resp["id"]), thread=False)` — where
+`_replay_session` is async and `await`s the ext-method. The streamed `session_update`s arrive
+and render through the normal path. Only replay when `resp.get("message_count", 0) > 0`.
+
+**Render flow:** each replayed `session_update` is filtered by `on_session_update`'s
+session-id/gen guards (app.py ~L995) — they pass because `_session_id` was just repointed to
+the new seat and gen is current — then `render_update` → `_stream_message`/user-line renders
+it into the freshly-cleared transcript. The `resumed` seam update is folded by a new
+`harness.resumed` meta branch into a themed `── resumed ──` divider line.
+
+**Resumed seam (rendered):**
 ```
    …earlier with Maya…
 ── resumed ────────────────────────────────────────────
    you: ▌
 ```
+The seam teaches persistence better than any tooltip — the user *sees* "this is where I left
+off," not "fresh start."
 
-This is the single cue that teaches persistence better than any tooltip: the user *sees*
-"this is where I left off," not "fresh start."
-
-**Copy upgrade (the promise §5.4 deferred).** Now that recall is visible, the room
-subline/empty-state may state persistence:
-- Room subline → `a separate conversation · remembers across switches`
-- Empty room (now shown **only** for genuinely-new personas) →
+**Copy upgrade (the promise §5.4 deferred to here):**
+- Room subline → `a separate conversation · remembers across switches` (now TRUE on screen).
+- Empty-room line shows **only** when `message_count == 0` (genuinely-new persona) →
   `This is {Name}'s conversation. It's separate from your others and remembers across
   switches. Say hello.`
+- A persona WITH history skips the empty-room line entirely (replay fills the room instead).
 
-Phase 2 can finally distinguish brand-new from has-history (the replay returns the message
-list / count), so the empty state is correctly scoped to truly-new personas.
-
-Acceptance: send a turn as Maya → switch to Alex → switch back to Maya → Maya's earlier
-turn(s) are visible above a `resumed` seam, and her resolved model/session are restored
-(already true in the engine).
+**Acceptance:** send a turn as Maya → switch to Alex → switch back to Maya → Maya's earlier
+user+assistant turn(s) render above a `── resumed ──` seam, her model/session restored
+(already true in the engine); switching to a brand-new persona shows the empty-room line and
+no seam.
 
 ### 6.3 Phase 2 non-goals
 
