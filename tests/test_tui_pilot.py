@@ -138,48 +138,72 @@ def _footer(app):
     return foots[-1] if foots else None
 
 
-def test_footer_carries_copy_affordance_and_response_text():
-    """The turn footer shows a ⧉ copy icon and stashes THIS turn's response text
-    so a click can copy it. The stashed text is the response prose only — no tool
-    calls, no chips, no footer markup."""
+def test_footer_carries_copy_affordance():
+    """The turn footer shows a clickable (copy) affordance (the response text is
+    resolved at click time, not stashed here)."""
     async def go():
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
         async with app.run_test() as pilot:
             await pilot.pause()
             await app._enter_conversation()
             app._session_id = "fake-session"
-            app._stream_message("Hello **world** done")   # the turn's response prose
+            app._stream_message("Hello **world** done")
             await pilot.pause()
-            app._write_meta(1.2)                           # footer is appended at turn end
+            app._write_meta(1.2)
             await pilot.pause()
             foot = _footer(app)
             assert foot is not None, "no turn-meta-run footer was appended"
-            assert "⧉" in str(foot.content), "footer is missing the copy icon"
-            assert getattr(foot, "_copy_text", None) == "Hello **world** done"
+            assert "(copy)" in str(foot.content), "footer is missing the copy affordance"
+            assert getattr(foot, "_copyable", False) is True
 
     asyncio.run(go())
 
 
 def test_footer_click_copies_response_to_clipboard():
-    """Clicking the footer copies the stashed response to the clipboard and flips
-    the icon to ✓ for feedback."""
+    """Clicking the footer copies THIS turn's response and flips to (copied).
+    Reproduces the real late-drain order: the footer is appended at turn end
+    (prompt() returns) and the response Markdown drains AFTER. The copy must
+    still resolve the response — it reads the Markdown live, not a build-time
+    buffer snapshot (regression guard for the empty-copy bug)."""
     async def go():
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
         copied = []
-        app.copy_to_clipboard = lambda text: copied.append(text)   # capture the copy
+        app.copy_to_clipboard = lambda text: copied.append(text)
         async with app.run_test() as pilot:
             await pilot.pause()
             await app._enter_conversation()
             app._session_id = "fake-session"
-            app._stream_message("the answer")
+            app._write_meta(0.5)                 # footer FIRST (turn end)…
             await pilot.pause()
-            app._write_meta(0.5)
+            app._stream_message("the answer")    # …response drains AFTER (late delivery)
             await pilot.pause()
             foot = _footer(app)
-            app.on_click(NS(widget=foot))                  # simulate a click on the footer
+            app.on_click(NS(widget=foot))        # simulate a click on the footer
             await pilot.pause()
             assert copied == ["the answer"], f"clipboard got {copied!r}"
-            assert "✓" in str(foot.content), "icon did not flip to the copied state"
+            assert "(copied)" in str(foot.content), "label did not flip to the copied state"
+
+    asyncio.run(go())
+
+
+def test_footer_copy_is_noop_when_no_response_rendered():
+    """A footer with no answer above it (e.g. a tool-only turn) copies nothing and
+    does not flip — no crash, no empty clipboard write."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        copied = []
+        app.copy_to_clipboard = lambda text: copied.append(text)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await app._enter_conversation()
+            app._session_id = "fake-session"
+            app._write_meta(0.3)                 # footer with no response Markdown anywhere
+            await pilot.pause()
+            foot = _footer(app)
+            app.on_click(NS(widget=foot))
+            await pilot.pause()
+            assert copied == [], f"copied despite no response: {copied!r}"
+            assert "(copy)" in str(foot.content) and "(copied)" not in str(foot.content)
 
     asyncio.run(go())
 
