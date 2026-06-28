@@ -48,12 +48,16 @@ def render_base_prompt(*, model_id: str, cwd: str, system_line: str,
                        cutoff: str = KNOWLEDGE_CUTOFF,
                        persona_id: str | None = None,
                        persona_dir: str | None = None,
-                       skills_menu: str | None = None) -> str:
+                       skills_menu: str | None = None,
+                       agents_block: str | None = None) -> str:
     """Return the base block: the static policy, a runtime # Environment section,
     a # Persona files section (when persona_id + persona_dir are given) naming the
-    editable persona trio + its absolute path, and a # Skills menu (when
-    skills_menu is given) the agent pulls bodies from via load_skill. Pure — no
-    I/O, no globals read; everything is resolved by the caller and passed in."""
+    editable persona trio + its absolute path, a # Skills menu (when skills_menu is
+    given) the agent pulls bodies from via load_skill, and the AGENTS.md
+    instruction block (when agents_block is given) — the three-tier standing policy.
+    Pure — no I/O, no globals read; everything is resolved by the caller and passed
+    in. Both the agent runner and ChatHandler consume this block, so AGENTS.md
+    reaches both paths."""
     env = (
         "\n\n# Environment\n"
         f"- Working directory: {cwd}\n"
@@ -74,4 +78,4 @@ def render_base_prompt(*, model_id: str, cwd: str, system_line: str,
             "how you behave, or what you know about them — Read and then Edit the "
             "relevant file in that directory.\n"
         )
-    return BASE_POLICY + env + persona + (skills_menu or "")
+    return BASE_POLICY + env + persona + (skills_menu or "") + (agents_block or "")
