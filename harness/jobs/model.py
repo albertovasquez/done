@@ -2,6 +2,7 @@
 from __future__ import annotations
 from dataclasses import dataclass, field, asdict
 from typing import Union
+from datetime import datetime
 
 # ---- Schedule union ----
 @dataclass(frozen=True)
@@ -101,3 +102,22 @@ def job_from_dict(d: dict) -> Job:
         payload=payload_from_dict(d["payload"]),
         grant=Grant(**d["grant"]), cost=CostGate(**d["cost"]), state=JobState(**d["state"]),
     )
+
+def next_run_at(schedule: "Schedule", now: float, state: "JobState") -> float | None:
+    if isinstance(schedule, At):
+        if state.last_run_at is not None:
+            return None
+        return datetime.fromisoformat(schedule.when_iso).timestamp()
+    if isinstance(schedule, Every):
+        if state.last_run_at is None:
+            base = schedule.anchor if schedule.anchor is not None else now
+            return base + schedule.seconds
+        return state.last_run_at + schedule.seconds
+    if isinstance(schedule, Cron):
+        from croniter import croniter
+        from datetime import timezone as _tz
+        from zoneinfo import ZoneInfo
+        tzinfo = ZoneInfo(schedule.tz) if schedule.tz else None
+        base = datetime.fromtimestamp(state.last_run_at or now, tz=tzinfo or _tz.utc)
+        return croniter(schedule.expr, base).get_next(float)
+    raise ValueError(f"unknown schedule {schedule!r}")
