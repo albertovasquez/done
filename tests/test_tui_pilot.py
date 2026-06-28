@@ -19,6 +19,11 @@ REPO = Path(__file__).resolve().parent.parent
 # REPO/.venv path which doesn't exist in a git worktree.
 FAKE_CMD = [sys.executable, str(REPO / "tests/fake_agent.py")]
 
+# The per-turn run-caption footer marker. The mode word was replaced by the
+# active persona's display name; in mock mode with no --persona that resolves to
+# the default persona, whose persona.toml has no `name` → falls back to "default".
+RUN_CAPTION = "▣ default"
+
 
 def _md_source(md: Markdown) -> str:
     """The accumulated markdown source of a streaming answer widget (the public
@@ -93,7 +98,7 @@ def test_pilot_renders_harness_chip_end_to_end():
         assert "classified: chat_question" in text, f"harness chip missing.\n{text}"
         assert "hello" in text, f"user message missing.\n{text}"      # rendered as '▌ hello'
         assert "done" in text, f"agent reply missing.\n{text}"
-        assert "▣ Build" in text, f"per-turn meta line missing.\n{text}"
+        assert RUN_CAPTION in text, f"per-turn meta line missing.\n{text}"
 
     asyncio.run(go())
 
@@ -1160,18 +1165,56 @@ def test_yolo_chip_click_toggles_state():
     asyncio.run(go())
 
 
-def test_compose_meta_is_mode_only():
-    """The compose-meta line under the input is just the mode word ('Build') —
-    model/provider moved up under the header rule, bypass shows in the footer
-    chip, so neither appears here regardless of the live gate."""
+def test_compose_meta_shows_persona_name():
+    """The compose-meta line under the input is the active persona's display name
+    (bare, no parens) — it replaced the old 'Build' mode word. model/provider
+    moved up under the header rule, bypass shows in the footer chip, so neither
+    appears here regardless of the live gate."""
     app = HarnessTui.__new__(HarnessTui)        # bypass Textual mount; pure method
     app.model = "mock"
+    app._mode_label = lambda: "bob"             # stub the persona-name lookup
     for yolo in (False, True):
         app._yolo = yolo
         markup = app._compose_meta_markup("mock model", "Mock")
-        assert "Build" in markup
+        assert "bob" in markup
+        assert "Build" not in markup
+        assert "(" not in markup and ")" not in markup   # bare, no parens
         assert "bypass" not in markup
         assert "mock model" not in markup and "Mock" not in markup
+
+
+def test_run_caption_shows_persona_name():
+    """The per-turn run caption footer ('▣ <persona> · model · Ns · (copy)') uses
+    the active persona name in place of 'Build', kept consistent with the
+    composer line."""
+    app = HarnessTui.__new__(HarnessTui)
+    app.model = "mock"
+    app._worker_model_id = None
+    app._yolo = False
+    app._mode_label = lambda: "josh"
+    markup = app._meta_markup(1.2)
+    assert "▣ josh" in markup
+    assert "Build" not in markup
+
+
+def test_landing_placeholder_persona_aware():
+    """default persona keeps the original placeholder (with the ›-prefix and the
+    example quote); a non-default persona swaps to 'Ask <name> anything…' (no
+    example). The › chevron prefixes both."""
+    app = HarnessTui.__new__(HarnessTui)
+    # default → unchanged text, chevron prefix, example quote retained.
+    app._current_persona = lambda: "default"
+    app._persona_display_name = lambda pid: pid
+    default_ph = app._landing_placeholder()
+    assert default_ph.startswith("› ")
+    assert "tech stack" in default_ph
+    assert "Ask anything" in default_ph
+    # non-default → personalized opener, no example quote.
+    app._current_persona = lambda: "bob"
+    bob_ph = app._landing_placeholder()
+    assert bob_ph.startswith("› ")
+    assert "Ask bob anything" in bob_ph
+    assert "tech stack" not in bob_ph
 
 
 def test_yolo_chip_is_leftmost_in_statusbar():
@@ -2296,7 +2339,7 @@ def test_turn_metadata_captions_carry_turn_meta_class_and_order():
         user_i = next(i for i, (k, c, t) in enumerate(kinds) if "▌" in t)
         chip_i = next(i for i, (k, c, t) in enumerate(kinds) if "classified" in t)
         md_i = next(i for i, (k, c, t) in enumerate(kinds) if k == "md")
-        build_i = next(i for i, (k, c, t) in enumerate(kinds) if "▣ Build" in t)
+        build_i = next(i for i, (k, c, t) in enumerate(kinds) if RUN_CAPTION in t)
 
         assert user_i < chip_i < md_i < build_i, (
             f"turn elements out of order (chip rides prompt, Build is a footer): "
@@ -2322,19 +2365,19 @@ def test_build_footer_shows_real_elapsed_appended_after_turn_end():
             app.on_session_update(SessionUpdate(update_agent_message_text("answer")))
             await pilot.pause()
             # mid-turn (before _write_meta): no Build footer yet
-            builds = [t for k, c, t in _transcript_kinds(app) if "▣ Build" in t]
+            builds = [t for k, c, t in _transcript_kinds(app) if RUN_CAPTION in t]
             assert builds == [], f"Build footer must not render before turn end: {builds}"
 
             app._write_meta(2.0)
             await pilot.pause()
             kinds = _transcript_kinds(app)
-            builds = [t for k, c, t in kinds if "▣ Build" in t]
+            builds = [t for k, c, t in kinds if RUN_CAPTION in t]
 
         assert len(builds) == 1, f"expected exactly one Build footer: {builds}"
         assert "2.0s" in builds[0], f"footer missing elapsed: {builds[0]}"
         # the footer sits AFTER the response markdown
         md_i = next(i for i, (k, c, t) in enumerate(kinds) if k == "md")
-        build_i = next(i for i, (k, c, t) in enumerate(kinds) if "▣ Build" in t)
+        build_i = next(i for i, (k, c, t) in enumerate(kinds) if RUN_CAPTION in t)
         assert md_i < build_i, f"Build footer must follow the response: {kinds}"
 
     asyncio.run(go())
@@ -2364,7 +2407,7 @@ def test_multistep_turn_emits_exactly_one_build_footer():
             app._write_meta(1.5)
             await pilot.pause()
 
-            builds = [t for k, c, t in _transcript_kinds(app) if "▣ Build" in t]
+            builds = [t for k, c, t in _transcript_kinds(app) if RUN_CAPTION in t]
             md_count = sum(1 for k, c, t in _transcript_kinds(app) if k == "md")
 
         assert len(builds) == 1, f"multi-step turn must emit exactly one Build footer: {builds}"
@@ -2393,7 +2436,7 @@ def test_tool_only_turn_still_renders_build_footer():
             app._write_meta(0.7)
             await pilot.pause()
 
-            builds = [t for k, c, t in _transcript_kinds(app) if "▣ Build" in t]
+            builds = [t for k, c, t in _transcript_kinds(app) if RUN_CAPTION in t]
 
         assert len(builds) == 1, f"tool-only turn must still render a Build footer: {builds}"
         assert "0.7s" in builds[0], f"footer missing elapsed: {builds[0]}"

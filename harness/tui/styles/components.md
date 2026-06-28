@@ -453,7 +453,7 @@ Columnar task row from the dashboard: `● TITLE` + `StatusChip` + description +
 
 ### `StatusBar`  *(exists today — kept)*   `◻ inlined`
 Bottom hairline bar; keybinding-hint segments
-(`tab switch · / prompt · ctrl+p commands · q quit`).
+(`tab switch · / prompt · q quit`).
 - **When to use:** persistent global controls/keys + cwd + mode. Drawn in `app.py`.
 
 ---

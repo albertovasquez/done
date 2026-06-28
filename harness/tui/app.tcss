@@ -61,7 +61,7 @@ Screen { layout: vertical; background: $background; layers: base overlay; }
 /* per-turn metadata captions, dimmed + indented so they read as metadata, not
    prose. Two variants:
    .turn-meta     — the classification chip; hugs the prompt above it (no gap).
-   .turn-meta-run — the '▣ Build · model · time' run caption; a FOOTER below the
+   .turn-meta-run — the '▣ <persona> · model · time' run caption; a FOOTER below the
                     response, summarizing the run that produced it. Hugs the
                     response above (no top margin); margin-bottom 1 is the gap
                     before the next turn's prompt. */

@@ -52,8 +52,6 @@ from harness.tui.widgets.status_chip import StatusChip
 from harness.tui.header import icon_markup, header_text_markup
 from harness import config as _config
 
-_MODE = "Build"                       # the single agent "mode" we expose for now
-
 
 def _c(name: str, text: str) -> str:
     """Wrap text in a hex color for RichLog markup (Rich, not Textual CSS)."""
@@ -155,23 +153,39 @@ class HarnessTui(App):
                 with Horizontal(id="landing-header"):
                     yield Static(self._header_markup(), id="header-text", markup=True)
                 with Vertical(id="landing-compose", classes="compose"):
-                    yield PromptArea(placeholder='Ask anything... "What is the tech stack of this project?"',
+                    yield PromptArea(placeholder=self._landing_placeholder(),
                                      id="landing-input")
                     yield Static(self._compose_meta_markup(model_label, provider),
                                  classes="compose-meta", markup=True)
-                yield Static("[b]tab[/b] agents   [b]ctrl+p[/b] commands", id="hint", markup=True)
+                yield Static("[b]tab[/b] agents", id="hint", markup=True)
         yield self._status_bar()
         from harness.tui.widgets.quick_keys import QuickKeysPanel
         drawer = Vertical(AgentRail(id="agent-rail"), QuickKeysPanel(), id="agent-drawer")
         drawer.display = False            # the whole drawer (rail + legend) toggles as one
         yield drawer
 
+    def _mode_label(self) -> str:
+        """The label that replaced the old 'Build' mode word: the active persona's
+        display name (bare, no parens). Shared by the compose-meta line and the
+        per-turn run caption so the two stay in sync on a persona switch."""
+        return self._persona_display_name(self._current_persona())
+
+    def _landing_placeholder(self) -> str:
+        """Empty-input placeholder for the landing compose box. On the default
+        persona it keeps the original prompt + example; a non-default persona
+        swaps to a personalized 'Ask <name> anything…' (no example). Both carry a
+        leading › chevron."""
+        pid = self._current_persona()
+        if pid == "default":
+            return '› Ask anything... "What is the tech stack of this project?"'
+        return f"› Ask {self._persona_display_name(pid)} anything…"
+
     def _compose_meta_markup(self, model_label: str, provider: str) -> str:
-        # Just the mode word now. The model·provider moved up under the header
-        # rule (see _header_markup); bypass posture shows in the footer chip.
-        # model_label/provider are accepted but unused — kept so the call site
-        # and tests stay stable while the line is mode-only.
-        return f"[$accent][b]{_MODE}[/b][/]"
+        # Just the persona name now (replaced the 'Build' mode word). The
+        # model·provider moved up under the header rule (see _header_markup);
+        # bypass posture shows in the footer chip. model_label/provider are
+        # accepted but unused — kept so the call site and tests stay stable.
+        return f"[$accent][b]{self._mode_label()}[/b][/]"
 
     def _model_line(self) -> str:
         """The 'gpt-5.4 Vibeproxy' line shown under the header rule. Mirrors the
@@ -322,9 +336,9 @@ class HarnessTui(App):
         return format_cwd(self.cwd, home=os.path.expanduser("~"))
 
     def _status_right(self) -> str:
-        right = f"ctrl+p commands"
-        if self._tokens:
-            right = f"{self._fmt_tokens(self._tokens)}  {right}"
+        # No command palette is bound, so the old 'ctrl+p commands' hint is gone;
+        # the right side now carries the token count (or the version pre-start).
+        right = self._fmt_tokens(self._tokens) if self._tokens else ""
         if not self._started:
             right = self._version
         return f"[$muted]{right}[/]"
@@ -949,12 +963,13 @@ class HarnessTui(App):
     _COPIED_LABEL = "(copied)"
 
     def _meta_markup(self, elapsed: float, *, copied: bool = False) -> str:
-        """The '▣ Build [bypass] · model · Ns · (copy)' run caption markup. The
-        trailing label is the copy affordance ('(copied)' once copied)."""
+        """The '▣ <persona> [bypass] · model · Ns · (copy)' run caption markup.
+        The leading label is the active persona name (was 'Build'); the trailing
+        label is the copy affordance ('(copied)' once copied)."""
         model_label = _model_label(self.model, self._worker_model_id)
         yolo = f" {_c('error', 'bypass on')}" if self._yolo else ""   # records mode at turn time
         label = self._COPIED_LABEL if copied else self._COPY_LABEL
-        return (f"{_c('accent', '▣ ' + _MODE)}{yolo} "
+        return (f"{_c('accent', '▣ ' + self._mode_label())}{yolo} "
                 f"{_c('muted', f'· {model_label} · {elapsed:.1f}s · ')}{_c('muted', label)}")
 
     def _apply_pending_persona(self) -> bool:
