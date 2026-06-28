@@ -71,11 +71,22 @@ def _parse_skill_md(path: Path) -> tuple[dict, str]:
     return data, body.lstrip("\n")
 
 
-def load_catalog(roots: list[Path]) -> list[SkillMeta]:
+@dataclass
+class CatalogLoad:
+    """The catalog plus what was DROPPED building it. skipped surfaces malformed
+    skills to the user (not just a log) — a 'the agent knows its skills' system
+    must not hide a skill with no explanation. (name = the skill DIR name, since a
+    skill that failed to parse may have no valid frontmatter name.)"""
+    skills: list[SkillMeta] = field(default_factory=list)
+    skipped: list[tuple[str, str]] = field(default_factory=list)  # (dir_name, reason)
+
+
+def load_catalog_with_skips(roots: list[Path]) -> CatalogLoad:
     """Scan each root's <name>/SKILL.md; later roots override earlier by name.
-    Invalid skill dirs are silently omitted (can't select what can't parse).
-    Returns structured SkillMeta (name, description, invocation model, flows)."""
+    Returns the valid SkillMeta list AND every dir dropped (with a human reason),
+    so callers can tell the user why a skill is unselectable. Never raises."""
     merged: dict[str, SkillMeta] = {}
+    skipped: list[tuple[str, str]] = []
     for root in roots:
         if not Path(root).is_dir():
             continue
@@ -88,16 +99,23 @@ def load_catalog(roots: list[Path]) -> list[SkillMeta]:
                 if not name or not desc:
                     raise ValueError("frontmatter missing name/description")
                 if name != child.name:
-                    raise ValueError("name mismatch")
+                    raise ValueError(f"name '{name}' does not match directory '{child.name}'")
             except (OSError, UnicodeDecodeError, yaml.YAMLError, ValueError) as e:
-                # A malformed skill silently vanishes from the catalog — the
-                # router can never select it and the user never learns why. Unlike
-                # compose(), load_catalog returns a flat list with no skipped slot,
-                # so a log is the only place this surfaces.
+                # Surface to the user (skipped), not just the log: a malformed skill
+                # vanishing with no clue why undercuts a skill-aware system.
                 logger.warning("skipping skill %s/SKILL.md: %s", child.name, e)
+                skipped.append((child.name, str(e)))
                 continue
             merged[name] = _meta_from_frontmatter(data, name)   # later root wins
-    return [merged[k] for k in sorted(merged)]
+    return CatalogLoad(skills=[merged[k] for k in sorted(merged)], skipped=skipped)
+
+
+def load_catalog(roots: list[Path]) -> list[SkillMeta]:
+    """Scan each root's <name>/SKILL.md; later roots override earlier by name.
+    Invalid skill dirs are omitted (can't select what can't parse). Returns the
+    flat SkillMeta list (the historical signature; use load_catalog_with_skips to
+    also learn what was dropped)."""
+    return load_catalog_with_skips(roots).skills
 
 
 def compose(roots: list[Path], names: list[str]) -> SkillLoad:

@@ -415,10 +415,14 @@ class HarnessAgent(acp.Agent):
 
         if cls.task_type == "chat_question":
             # hand the router's catalog so "what skills do we have?" is answered
-            # from data, not the model (see ChatHandler.is_capability_question)
+            # from data, not the model (see ChatHandler.is_capability_question).
+            # Also surface skills DROPPED at load (malformed/name-mismatch) so the
+            # user learns why a skill is unselectable rather than it vanishing.
+            _roots = self._skills_dir if isinstance(self._skills_dir, list) else [self._skills_dir]
+            _skipped = skills.load_catalog_with_skips(_roots).skipped
             handler = ChatHandler(model_id, catalog=self._router.catalog,
                                   persona_block=(state.persona_block or "") + (state.memory_block or ""),
-                                  base_block=base_block)
+                                  base_block=base_block, skipped=_skipped)
             pieces: list[str] = []
 
             def pump() -> None:

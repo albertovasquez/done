@@ -148,3 +148,45 @@ def test_compose_menu_lists_names_not_bodies():
 def test_compose_menu_empty_is_blank():
     from harness.skills import compose_menu
     assert compose_menu([]) == ""
+
+
+# --- #87: surface skipped/malformed skills -----------------------------------
+
+def test_load_catalog_with_skips_reports_reasons(tmp_path, caplog):
+    _write_skill(tmp_path, "good", "fine", "# body")
+    bad = tmp_path / "broken"; bad.mkdir()
+    (bad / "SKILL.md").write_text("not: [valid", encoding="utf-8")     # malformed yaml
+    nomatch = tmp_path / "wrong-dir"; nomatch.mkdir()
+    (nomatch / "SKILL.md").write_text("---\nname: other\ndescription: d\n---\nb", encoding="utf-8")
+    from harness.skills import load_catalog_with_skips, CatalogLoad
+    load = load_catalog_with_skips([tmp_path])
+    assert isinstance(load, CatalogLoad)
+    assert [m.name for m in load.skills] == ["good"]
+    skipped_names = {n for n, _ in load.skipped}
+    assert "broken" in skipped_names and "wrong-dir" in skipped_names
+    # each skip carries a human reason
+    assert all(reason for _, reason in load.skipped)
+
+
+def test_load_catalog_unchanged_signature(tmp_path):
+    # the original list-returning load_catalog is preserved (no caller breakage)
+    _write_skill(tmp_path, "good", "fine", "# body")
+    cat = load_catalog([tmp_path])
+    assert [m.name for m in cat] == ["good"]
+
+
+def test_format_catalog_surfaces_skipped(tmp_path):
+    from harness.chat_handler import _format_catalog
+    from harness.skills import SkillMeta
+    out = _format_catalog([SkillMeta("good", "fine")],
+                          skipped=[("broken", "frontmatter is not a mapping")])
+    assert "good" in out
+    assert "broken" in out and "frontmatter is not a mapping" in out
+    assert "skipped" in out.lower()
+
+
+def test_format_catalog_no_skips_unchanged(tmp_path):
+    from harness.chat_handler import _format_catalog
+    from harness.skills import SkillMeta
+    out = _format_catalog([SkillMeta("good", "fine")])
+    assert "skipped" not in out.lower() and "good" in out
