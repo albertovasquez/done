@@ -576,6 +576,117 @@ def test_clear_failure_keeps_app_alive_and_input_disabled():
     asyncio.run(go())
 
 
+# ---- mid-turn: input stays usable, Enter queues, queue drains on turn end ----
+
+class _GatedConn:
+    """A fake ACP connection whose prompt() blocks until `release` is set, so a
+    turn can be held 'in flight' while the test pokes the UI. Records each prompt."""
+    def __init__(self):
+        self.release = asyncio.Event()
+        self.prompts = []
+        self.cancels = 0
+
+    async def prompt(self, *, prompt, session_id, **kw):
+        self.prompts.append("".join(getattr(b, "text", "") for b in prompt))
+        await self.release.wait()
+        return NS(stop_reason="end_turn")
+
+    async def cancel(self, **kw):
+        self.cancels += 1
+
+
+async def _start_turn(pilot, app, text):
+    """Mount conversation, wire a gated conn, and start a turn that hangs."""
+    await app._enter_conversation()
+    await pilot.pause()                     # let #transcript/#composer mount
+    conn = _GatedConn()
+    app._conn = conn
+    app._session_id = "fake-session"
+    inp = app._active_input()
+    inp.value = text
+    await app.on_prompt_area_submitted(PromptArea.Submitted(inp, text))
+    await pilot.pause()
+    return conn
+
+
+async def _drain(pilot, app, conn):
+    """Release the gated turn and let all workers finish before teardown, so the
+    _send_prompt finally doesn't query a half-dismantled screen at exit."""
+    conn.release.set()
+    for _ in range(50):
+        await pilot.pause()
+        if not app._turn_active and not app._queued:
+            break
+
+
+def test_input_usable_while_turn_active():
+    """The composer must NOT be disabled during a turn — the user can click in and
+    type their next message while the agent works."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            conn = await _start_turn(pilot, app, "first")
+            try:
+                assert app._turn_active is True, "turn should be in flight"
+                assert app._active_input().disabled is False, \
+                    "input must stay enabled during a turn so the user can type"
+            finally:
+                await _drain(pilot, app, conn)   # never leave a hung worker for teardown
+    asyncio.run(go())
+
+
+def test_enter_during_turn_queues_and_does_not_start_second_turn():
+    """Pressing Enter mid-turn must enqueue the text (not start a 2nd concurrent
+    prompt). Only one prompt() call until the first turn ends."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            conn = await _start_turn(pilot, app, "first")
+            try:
+                assert conn.prompts == ["first"], "only the first prompt is in flight"
+
+                # type + submit a second message while the turn is active
+                inp = app._active_input()
+                inp.value = "second"
+                await app.on_prompt_area_submitted(PromptArea.Submitted(inp, "second"))
+                await pilot.pause()
+
+                assert "second" in app._queued, "mid-turn Enter must enqueue the message"
+                assert conn.prompts == ["first"], "a second turn must NOT start concurrently"
+                assert app._active_input().value == "", "the box is cleared after queueing"
+
+                await _drain(pilot, app, conn)     # let the first turn finish → drain queue
+                assert conn.prompts == ["first", "second"], \
+                    "the queued message must auto-send when the turn ends"
+                assert app._queued == [], "queue is drained"
+            finally:
+                await _drain(pilot, app, conn)
+    asyncio.run(go())
+
+
+def test_tab_opens_rail_during_turn():
+    """Tab must open the persona rail even while a turn is active (the input is no
+    longer disabled, so it keeps focus and Tab reveals the rail)."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            conn = await _start_turn(pilot, app, "first")
+            try:
+                app._active_input().focus()
+                await pilot.pause()
+                assert app.query_one("#agent-drawer").display is False
+                await pilot.press("tab")
+                await pilot.pause()
+                assert app.query_one("#agent-drawer").display is True, \
+                    "Tab must open the persona rail during a turn"
+            finally:
+                await _drain(pilot, app, conn)
+    asyncio.run(go())
+
+
 def test_reset_conversation_resets_snapshot():
     from harness.tui.state import AgentState
     async def go():
