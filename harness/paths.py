@@ -77,11 +77,17 @@ def origin_for_root(root: Path | str, project_cwd: str | Path | None = None) -> 
 
     origin is DERIVED from the load path, never from a skill's frontmatter, so a
     skill cannot misrepresent where it came from. 'persona' is reserved in the
-    value set but never returned (no persona skills root exists yet)."""
+    value set but never returned (no persona skills root exists yet).
+
+    'global' is the ecosystem-wide ~/.claude/skills root (shared with Claude Code
+    and other tools); 'user' is Done's own <config>/skills root. They split a
+    formerly-merged bucket so the user-facing answer can show both."""
     root = Path(root)
     if root == bundled_skills_dir():
         return "bundled"
-    if root in (Path.home() / ".claude" / "skills", config_dir() / "skills"):
+    if root == Path.home() / ".claude" / "skills":
+        return "global"
+    if root == config_dir() / "skills":
         return "user"
     if project_cwd is not None:
         cwd = Path(project_cwd)
