@@ -288,3 +288,42 @@ def test_seed_default_never_raises_on_oserror(isolated_config, monkeypatch):
                         lambda dest: (_ for _ in ()).throw(OSError("read-only")))
     # must NOT raise into the startup path
     persona.seed_default_workspace()
+
+
+# ---------------------------------------------------------------------------
+# display_name tests (Task 2)
+# ---------------------------------------------------------------------------
+
+from harness import persona_config
+
+
+def test_create_persona_writes_display_name(isolated_config):
+    ws = persona.create_persona("my-persona", display_name="My Persona")
+    assert persona_config.read_name(ws) == "My Persona"
+
+
+def test_create_persona_no_display_name_writes_no_name(isolated_config):
+    ws = persona.create_persona("plain")
+    assert persona_config.read_name(ws) is None      # no name key / no persona.toml
+
+
+def test_create_persona_display_name_escapes_quotes(isolated_config):
+    ws = persona.create_persona("quoted", display_name='He said "hi" \\ ok')
+    # must round-trip without corrupting the TOML
+    assert persona_config.read_name(ws) == 'He said "hi" \\ ok'
+
+
+def test_create_persona_display_name_strips_control_chars(isolated_config):
+    ws = persona.create_persona("ctrl", display_name="line1\nline2")
+    name = persona_config.read_name(ws)
+    assert name is not None and "\n" not in name      # control chars stripped, file valid
+
+
+def test_create_persona_display_name_write_failure_is_nonfatal(isolated_config, monkeypatch):
+    # the persona is still created even if the name write blows up
+    monkeypatch.setattr(persona, "_write_persona_name",
+                        lambda ws, dn: (_ for _ in ()).throw(OSError("read-only")))
+    ws = persona.create_persona("robust", display_name="Robust")
+    assert ws.is_dir()
+    for n in persona.PERSONA_FILES:
+        assert (ws / n).is_file()
