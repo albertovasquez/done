@@ -679,7 +679,14 @@ class HarnessTui(App):
     async def on_key(self, event) -> None:
         # while the slash menu is open, ↑/↓ move the selection; esc closes it
         if self._slash is None:
-            # menu closed: esc with text in the box clears it; empty box falls
+            # ESC precedence ladder (spec R5): slash already handled below
+            # (this branch is the slash-closed case). Turn active → cancel FIRST,
+            # before clear-text and rail-close, so a slow turn is always escapable.
+            if event.key == "escape" and self._turn_active:
+                event.stop()
+                await self.action_cancel()
+                return
+            # menu closed, no turn: esc with text clears it; empty box falls
             # through to action_cancel (the global "Cancel turn" binding).
             if event.key == "escape" and self._active_input().value:
                 self._active_input().value = ""
@@ -1199,6 +1206,8 @@ class HarnessTui(App):
             if self._tracer is not None:
                 self._tracer.emit("dn", "tx.cancel", sid=self._session_id)
             await self._conn.cancel(session_id=self._session_id)
+            if self._started:
+                self._append_line(_c("muted", "— canceling… —"))
 
     async def action_clear(self) -> None:
         if self._busy:
