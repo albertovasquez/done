@@ -36,26 +36,41 @@ def is_capability_question(prompt: str) -> bool:
     return bool(_ABILITY_Q.search(prompt) or _SKILL_WORD.search(prompt))
 
 
-def _format_catalog(catalog: "list[skills.SkillMeta]") -> str:
-    """A markdown answer listing every skill (name + description)."""
+def _format_catalog(catalog: "list[skills.SkillMeta]",
+                    skipped: "list[tuple[str, str]] | None" = None) -> str:
+    """A markdown answer listing every skill (name + description). When skills were
+    dropped during catalog load (malformed frontmatter, name mismatch, unreadable),
+    list them with their reason so the user learns WHY a skill is unselectable
+    rather than it silently vanishing."""
+    skipped = skipped or []
     if not catalog:
-        return ("I currently have **no skills** loaded — none are bundled or "
+        head = ("I currently have **no skills** loaded — none are bundled or "
                 "configured in your skills directories.")
-    n = len(catalog)
-    lines = [f"I have **{n} skill{'s' if n != 1 else ''}** available:", ""]
-    lines += [f"- **{m.name}** — {m.description}" for m in catalog]
+        lines = [head]
+    else:
+        n = len(catalog)
+        lines = [f"I have **{n} skill{'s' if n != 1 else ''}** available:", ""]
+        lines += [f"- **{m.name}** — {m.description}" for m in catalog]
+    if skipped:
+        k = len(skipped)
+        lines += ["", f"⚠️ **{k} skill{'s' if k != 1 else ''} skipped** (won't load):"]
+        lines += [f"- `{name}` — {reason}" for name, reason in skipped]
     return "\n".join(lines)
 
 
 class ChatHandler:
     def __init__(self, worker_model_id: str | None,
                  catalog: list[tuple[str, str]] | None = None,
-                 persona_block: str = "", base_block: str = ""):
+                 persona_block: str = "", base_block: str = "",
+                 skipped: "list[tuple[str, str]] | None" = None):
         # None => mock mode (no chat-capable model available)
         self._model_id = worker_model_id
         # The skill catalog (name, description) — used to answer capability
         # questions from data instead of the model. Empty/None => not available.
         self._catalog = catalog or []
+        # Skills dropped during catalog load (dir_name, reason) — surfaced in the
+        # capability answer so the user learns why a skill is unselectable. [] => none.
+        self._skipped = skipped or []
         # Persona context (identity trio). Prepended as a system message on every
         # turn when non-empty; "" => no system message (byte-identical to before).
         self._persona_block = persona_block
@@ -71,7 +86,7 @@ class ChatHandler:
         A capability question is answered from the catalog (one piece, no model);
         mock mode otherwise yields one honest piece."""
         if is_capability_question(prompt):
-            yield _format_catalog(self._catalog)
+            yield _format_catalog(self._catalog, self._skipped)
             return
         if self._model_id is None:
             yield ("[mock mode] classified as chat_question; chat answers require "

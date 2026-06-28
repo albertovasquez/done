@@ -164,7 +164,9 @@ def main(argv: list[str] | None = None) -> int:
     # and pulls bodies on demand via load_skill. No flows on the persona => full
     # catalog, no gating (no-op vs. before).
     skills_roots = _paths.skills_dirs()
-    _full_catalog = skills.load_catalog(skills_roots)
+    _catalog_load = skills.load_catalog_with_skips(skills_roots)
+    _full_catalog = _catalog_load.skills
+    _skipped_skills = _catalog_load.skipped     # surfaced in the capability answer
     _enabled_flows = _persona_config.read_flows(workspace_dir)
     _menu_metas = (_flows.scope_catalog(_full_catalog, _enabled_flows)
                    if _enabled_flows else _full_catalog)
@@ -203,7 +205,8 @@ def main(argv: list[str] | None = None) -> int:
             args.task, router=router, emitter=emitter,
             make_chat_handler=lambda: ChatHandler(worker_model_id, catalog=router.catalog,
                                                   persona_block=persona_block + memory_block,
-                                                  base_block=base_block),
+                                                  base_block=base_block,
+                                                  skipped=_skipped_skills),
             run_agent=run_agent, ask_user=input, echo=print,
             worker_model_id=worker_model_id,
             load_skills=lambda names: skills.compose(skills_roots, names))
