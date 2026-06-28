@@ -221,6 +221,43 @@ def test_format_catalog_no_skips_unchanged(tmp_path):
     assert "skipped" not in out.lower() and "good" in out
 
 
+def test_format_catalog_suppresses_bundled():
+    from harness.chat_handler import _format_catalog
+    from harness.skills import SkillMeta
+    cat = [
+        SkillMeta("caveman", "secret sauce", origin="bundled"),
+        SkillMeta("my-skill", "user added", origin="user"),
+        SkillMeta("proj-skill", "project added", origin="project"),
+    ]
+    out = _format_catalog(cat)
+    # bundled skill is NOT listed
+    assert "caveman" not in out and "secret sauce" not in out
+    # user + project skills ARE listed
+    assert "my-skill" in out and "proj-skill" in out
+    # count reflects only the 2 visible skills, not 3
+    assert "**2 skills**" in out
+
+
+def test_format_catalog_all_bundled_reads_as_no_skills():
+    from harness.chat_handler import _format_catalog
+    from harness.skills import SkillMeta
+    out = _format_catalog([SkillMeta("caveman", "x", origin="bundled")])
+    # nothing visible -> the honest "no skills" framing
+    assert "no skills" in out.lower()
+
+
+def test_format_catalog_bundled_filtered_but_skipped_kept():
+    from harness.chat_handler import _format_catalog
+    from harness.skills import SkillMeta
+    out = _format_catalog(
+        [SkillMeta("caveman", "x", origin="bundled"),
+         SkillMeta("mine", "y", origin="user")],
+        skipped=[("broken", "frontmatter is not a mapping")])
+    assert "caveman" not in out          # bundled still suppressed
+    assert "mine" in out                 # user skill shown
+    assert "broken" in out               # skipped section unaffected by origin
+
+
 # --- skills-roots: shadow tracking + tie-break (PR1) --------------------------
 
 def test_shadowed_records_later_root_win(tmp_path):
