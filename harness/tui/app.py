@@ -1024,9 +1024,11 @@ class HarnessTui(App):
             return
         self._apply_persona_switch(resp)
 
-    def _apply_persona_switch(self, resp: dict) -> None:
+    def _apply_persona_switch(self, resp: dict, note: str | None = None) -> None:
         """Apply a successful set_persona/create_persona result: repoint the session,
-        update the indicator + footer, close the rail, refocus. Shared by switch + create."""
+        update the indicator + footer, close the rail, refocus, and write a visible
+        confirmation line. Shared by switch + create. `note` overrides the default
+        "now talking to" confirmation (create passes "created persona …")."""
         self._session_id = resp["session_id"]
         self._persona_seen = True
         self._apply(PersonaResolved(resp["id"]))   # updates snapshot + ActivityRegion
@@ -1035,6 +1037,10 @@ class HarnessTui(App):
         if model:
             self._worker_model_id = model
             self._refresh_meta_line()
+        # Visible confirmation FIRST: the status-bar chip is easy to miss, so echo
+        # the switch in the transcript (the user reported "I don't see anything").
+        # Done before the focus call below so a focus hiccup can't swallow it.
+        self._notify_line(note or f"now talking to persona: {resp['id']}")
         # close the rail + refocus the prompt
         try:
             rail = self.query_one("#agent-rail", AgentRail)
@@ -1053,7 +1059,8 @@ class HarnessTui(App):
 
         def _done(resp):
             if resp:                        # resp is the {ok:true,...} dict on success
-                self._apply_persona_switch(resp)
+                self._apply_persona_switch(
+                    resp, note=f"created persona: {resp['id']} — now talking to it")
 
         self.push_screen(NewPersonaModal(on_create=self._do_create_persona), _done)
 

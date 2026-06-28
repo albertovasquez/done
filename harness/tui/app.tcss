@@ -112,6 +112,15 @@ SelectModal #select-list ListItem { background: $surface; padding: 0 1; }
 SelectModal #select-list ListItem.--highlight { background: $accent 30%; }
 SelectModal #select-footer { padding-top: 1; color: $muted; }
 
+/* ---- NewPersonaModal (name a new persona) — same centered box as SelectModal ---- */
+NewPersonaModal { align: center middle; }
+NewPersonaModal #new-persona-box { width: 72; height: auto;
+    border: round $accent; background: $surface; padding: 1 2; }
+NewPersonaModal #new-persona-title { padding-bottom: 1; text-style: bold; color: $accent; }
+NewPersonaModal #new-persona-name { background: $surface; border: none; height: 1;
+    color: $foreground; margin-bottom: 1; }
+NewPersonaModal #new-persona-status { color: $muted; }
+
 /* Permission prompt: few options, no search → hug content (no tall empty box).
    ListView defaults to 1fr inside the column, which stretches the box; pin the
    box and the list to their content height. Extra top padding pushes the

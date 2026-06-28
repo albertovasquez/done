@@ -1632,3 +1632,56 @@ def test_modal_error_keeps_modal_open():
             )
 
     asyncio.run(go())
+
+
+def test_apply_persona_switch_writes_visible_confirmation():
+    """After a switch/create, a confirmation line is written via _notify_line —
+    the status-bar chip alone is too easy to miss ("I don't see anything")."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            notes = []
+            app._notify_line = lambda msg: notes.append(str(msg))
+            app._active_input = lambda: type("X", (), {"focus": lambda self: None})()
+
+            app._apply_persona_switch(
+                {"ok": True, "id": "fred", "session_id": "s", "model": "m"},
+                note="created persona: fred — now talking to it")
+            assert any("created persona: fred" in n for n in notes), (
+                f"create must write a visible confirmation, got {notes!r}"
+            )
+
+            notes.clear()
+            app._apply_persona_switch(
+                {"ok": True, "id": "ana", "session_id": "s2", "model": "m"})
+            assert any("now talking to persona: ana" in n for n in notes), (
+                f"plain switch must write a visible confirmation, got {notes!r}"
+            )
+
+    asyncio.run(go())
+
+
+def test_new_persona_modal_is_a_centered_box_not_fullscreen():
+    """NewPersonaModal must render as a sized centered box (like SelectModal), not
+    fill the whole screen — the app.tcss NewPersonaModal #new-persona-box rule
+    gives it a fixed width. Regression for the "modal takes the entire screen" bug."""
+    async def go():
+        from harness.tui.widgets.new_persona_modal import NewPersonaModal
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.push_screen(NewPersonaModal())
+            await pilot.pause()
+            box = app.screen.query_one("#new-persona-box")
+            # the CSS pins the box to width: 72 (same as SelectModal's #select-box),
+            # so it renders as a centered box, NOT full-screen. outer_size is the full
+            # 72 incl. border+padding (content is 66). Without the rule it would fill.
+            assert box.outer_size.width == 72, (
+                f"#new-persona-box must be the fixed 72-wide centered box (like the "
+                f"model picker), got outer width {box.outer_size.width}"
+            )
+            assert box.outer_size.width < app.size.width, "box must not fill the screen"
+            assert box.styles.border.top[0] == "round", "box must have the round $accent border"
+
+    asyncio.run(go())
