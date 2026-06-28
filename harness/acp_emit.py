@@ -13,6 +13,7 @@ from acp import (
     tool_content,
     text_block,
     update_agent_message_text,
+    update_user_message_text,
     update_plan,
     plan_entry,
 )
@@ -36,6 +37,10 @@ def tool_call_done(tool_call_id: str, output: dict):
 
 def message_chunk(text: str):
     return update_agent_message_text(text)
+
+
+def user_message_chunk(text: str):
+    return update_user_message_text(text)
 
 
 def with_meta(update, harness_meta: dict[str, Any]):
