@@ -29,3 +29,17 @@ def test_render_map_groups_and_marks_user_only():
     out = render_map([A, B, D], ["seo"])
     assert "seo" in out and "**b**" in out and "**a**" in out
     assert "/ask-done" in out          # disable-model-invocation marked with /name
+
+
+def test_bundled_spine_is_global_and_present():
+    # The maturity spine ships as GLOBAL skills (no flow tag) so it is always
+    # available regardless of which flow a persona enables.
+    from harness import paths, skills
+    cat = {m.name: m for m in skills.load_catalog(paths.skills_dirs())}
+    for n in ["clarify-before-acting", "planning-before-coding",
+              "systematic-debugging", "test-driven-development", "ask-done"]:
+        assert n in cat, n
+        assert cat[n].flows == (), f"{n} should be global (no flow tag)"
+    # global skills survive scoping to an unrelated flow
+    scoped = scope_catalog(list(cat.values()), ["marketing"])
+    assert "clarify-before-acting" in {m.name for m in scoped}
