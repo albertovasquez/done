@@ -65,7 +65,7 @@ def render_base_prompt(*, model_id: str, cwd: str, system_line: str,
             "\n\n# Persona files\n"
             f'You are running as the persona "{persona_id}". Its files live in '
             f"{persona_dir} :\n"
-            "- SOUL.md — your tone, behavior, and bounds\n"
+            "- SOUL.md — your tone, behavior, and boundaries\n"
             "- IDENTITY.md — your name, vibe, and emoji\n"
             "- USER.md — who the user is and how they want to be addressed\n"
             "When the user asks you to update your persona — your soul, identity, "

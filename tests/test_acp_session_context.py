@@ -586,4 +586,4 @@ def test_base_prompt_receives_active_persona_path(monkeypatch, tmp_path):
     _prompt(agent, sid, "what is X")
 
     assert captured.get("persona_id") == "fred"
-    assert captured.get("persona_dir") == str(ws)
+    assert captured.get("persona_dir") == str(ws.resolve())   # call site passes an absolute path
