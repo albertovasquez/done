@@ -436,7 +436,7 @@ class HarnessAgent(acp.Agent):
         from harness import persona_config as _persona_config
         from harness import paths as _paths
         _skill_roots = _paths.skills_dirs(project_cwd=state.cwd)
-        _catalog_load = skills.load_catalog_with_skips(_skill_roots)
+        _catalog_load = skills.load_catalog_with_skips(_skill_roots, project_cwd=state.cwd)
         _enabled_flows = _persona_config.read_flows(ws)
         _menu_metas = (_flows.scope_catalog(_catalog_load.skills, _enabled_flows)
                        if _enabled_flows else _catalog_load.skills)
