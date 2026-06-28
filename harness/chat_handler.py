@@ -36,14 +36,27 @@ def is_capability_question(prompt: str) -> bool:
     return bool(_ABILITY_Q.search(prompt) or _SKILL_WORD.search(prompt))
 
 
+# User-facing header + path hint per origin (bundled is hidden, so it has none).
+# 'unknown' has no path hint (it's a root we couldn't classify).
+_ORIGIN_HEADERS = {
+    "global": ("Global skills", "~/.claude"),
+    "user": ("User skills", "~/.config/harness"),
+    "project": ("Project skills", "this repo"),
+    "unknown": ("Other skills", ""),
+}
+
+
 def _format_catalog(catalog: "list[skills.SkillMeta]",
                     skipped: "list[tuple[str, str]] | None" = None,
                     shadowed: "list[tuple[str, str]] | None" = None) -> str:
-    """A markdown answer listing the user's skills (name + description). Skills
+    """A markdown answer listing the user's skills, GROUPED BY ORIGIN
+    (global/user/project) so the user sees where each skill comes from. Skills
     whose origin is 'bundled' (the harness's curated spine) are NOT enumerated —
-    they are used silently. Dropped skills (skipped) and overridden skills
-    (shadowed) are listed regardless of origin, so the user still learns why a
-    skill they added is unselectable or which copy is active."""
+    they are used silently. Empty origin groups are omitted. Dropped skills
+    (skipped) and overridden skills (shadowed) are listed regardless of origin,
+    so the user still learns why a skill they added is unselectable or which copy
+    is active."""
+    from harness import skills as _skills
     skipped = skipped or []
     shadowed = shadowed or []
     visible = [m for m in catalog if getattr(m, "origin", "unknown") != "bundled"]
@@ -53,8 +66,12 @@ def _format_catalog(catalog: "list[skills.SkillMeta]",
         lines = [head]
     else:
         n = len(visible)
-        lines = [f"I have **{n} skill{'s' if n != 1 else ''}** available:", ""]
-        lines += [f"- **{m.name}** — {m.description}" for m in visible]
+        lines = [f"I have **{n} skill{'s' if n != 1 else ''}** available:"]
+        for origin, group in _skills.group_by_origin(visible):
+            title, hint = _ORIGIN_HEADERS.get(origin, (origin.title() + " skills", ""))
+            header = f"### {title}  ({hint})" if hint else f"### {title}"
+            lines += ["", header]
+            lines += [f"- **{m.name}** — {m.description}" for m in group]
     if skipped:
         k = len(skipped)
         lines += ["", f"⚠️ **{k} skill{'s' if k != 1 else ''} skipped** (won't load):"]

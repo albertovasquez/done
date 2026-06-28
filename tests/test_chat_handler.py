@@ -125,6 +125,27 @@ def test_capability_question_with_empty_catalog_says_none():
     assert "no skills" in out.lower()
 
 
+def test_catalog_answer_groups_by_origin_hides_bundled_and_skips_empty():
+    # The user-facing answer groups visible skills by origin (global/user/project),
+    # hides bundled (the curated spine), and omits empty groups.
+    cat = [
+        SkillMeta("hidden-spine", "internal", origin="bundled"),
+        SkillMeta("caveman", "compress speech", origin="global"),
+        SkillMeta("repo-skill", "project-local", origin="project"),
+    ]
+    out = "".join(ChatHandler(None, catalog=cat).answer_stream(
+        "list skills by origin, global or user or project"))
+    # grouped headers for the non-empty origins, in fixed order (global before project)
+    assert "### Global skills" in out and "### Project skills" in out
+    assert out.index("### Global skills") < out.index("### Project skills")
+    # the empty 'user' group is omitted
+    assert "### User skills" not in out
+    # bundled is hidden: neither its header nor its skill name appears
+    assert "hidden-spine" not in out
+    # visible skills render under their group
+    assert "caveman" in out and "repo-skill" in out
+
+
 def test_ordinary_chat_still_streams_from_model_when_catalog_present(monkeypatch):
     captured = {}
 

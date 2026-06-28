@@ -9,8 +9,14 @@ def test_bundled_root_is_bundled():
     assert origin_for_root(bundled_skills_dir()) == "bundled"
 
 
-def test_user_roots_are_user():
-    assert origin_for_root(Path.home() / ".claude" / "skills") == "user"
+def test_claude_root_is_global():
+    # ~/.claude/skills is the ecosystem-wide (machine-global) root, shared with
+    # other tools — distinct from Done's own user dir.
+    assert origin_for_root(Path.home() / ".claude" / "skills") == "global"
+
+
+def test_config_root_is_user():
+    # <config>/skills is Done's own user dir.
     assert origin_for_root(config_dir() / "skills") == "user"
 
 
@@ -29,4 +35,5 @@ def test_unmatched_root_is_unknown():
 def test_every_skills_dir_classifies_without_unknown():
     cwd = Path("/proj")
     for root in skills_dirs(project_cwd=cwd):
-        assert origin_for_root(root, project_cwd=cwd) in {"bundled", "user", "project"}
+        assert origin_for_root(root, project_cwd=cwd) in {
+            "bundled", "global", "user", "project"}

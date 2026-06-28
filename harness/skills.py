@@ -162,8 +162,22 @@ def compose(roots: list[Path], names: list[str]) -> SkillLoad:
 
 
 # Fixed render order for origin groups; keeps the menu stable turn-to-turn and
-# puts the curated spine first. Origins with no skills are skipped.
-_ORIGIN_ORDER = ("bundled", "user", "project", "persona", "unknown")
+# puts the curated spine first. Origins with no skills are skipped. 'global'
+# (~/.claude) precedes 'user' (<config>) — the more widely-shared root first.
+_ORIGIN_ORDER = ("bundled", "global", "user", "project", "persona", "unknown")
+
+
+def group_by_origin(metas: list[SkillMeta]) -> list[tuple[str, list[SkillMeta]]]:
+    """Group metas by origin and return (origin, metas) pairs in _ORIGIN_ORDER,
+    with any unexpected origin appended alphabetically. Empty origins are omitted.
+    Single source of truth so the model menu and the user-facing answer can't
+    drift on origin order."""
+    by_origin: dict[str, list[SkillMeta]] = {}
+    for m in metas:
+        by_origin.setdefault(m.origin, []).append(m)
+    ordered = [o for o in _ORIGIN_ORDER if o in by_origin]
+    ordered += sorted(o for o in by_origin if o not in _ORIGIN_ORDER)
+    return [(o, by_origin[o]) for o in ordered]
 
 
 def compose_menu(metas: list[SkillMeta]) -> str:
@@ -174,16 +188,10 @@ def compose_menu(metas: list[SkillMeta]) -> str:
     there are no skills."""
     if not metas:
         return ""
-    by_origin: dict[str, list[SkillMeta]] = {}
-    for m in metas:
-        by_origin.setdefault(m.origin, []).append(m)
-    # known origins in fixed order, then any unexpected origin value, alphabetical
-    ordered = [o for o in _ORIGIN_ORDER if o in by_origin]
-    ordered += sorted(o for o in by_origin if o not in _ORIGIN_ORDER)
     sections = []
-    for origin in ordered:
+    for origin, group in group_by_origin(metas):
         lines = "\n".join(
-            f"- **{m.name}** ({m.category}) — {m.description}" for m in by_origin[origin])
+            f"- **{m.name}** ({m.category}) — {m.description}" for m in group)
         sections.append(f"## {origin}\n{lines}")
     return ("\n\n# Skills\n\n"
             "These skills are available. Their full instructions are NOT loaded "
