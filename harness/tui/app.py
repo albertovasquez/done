@@ -959,6 +959,8 @@ class HarnessTui(App):
             self._append_line(_c("error", f"agent disconnected — restart to continue ({e})"))
         finally:
             self._turn_active = False
+            if not self._running:                 # app shut down mid-turn: skip DOM ops
+                return
             if gen == self._gen:                  # only the CURRENT generation touches the UI
                 self._hide_working()
                 self._active_input().disabled = False

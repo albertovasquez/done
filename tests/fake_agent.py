@@ -98,12 +98,19 @@ class FakeAgent(acp.Agent):
                 session_id, update_agent_message_text("late answer"))
             return acp.PromptResponse(stop_reason="end_turn")
 
-        # MANYCHUNKS: emit many small deltas with NO awaits between them, to
-        # stress the client's per-chunk render path (coalescing test C2).
+        # MANYCHUNKS: emit many small deltas spread across real wall-clock time
+        # so that the invariant test (test_tui_always_interactive.py Phase C)
+        # can observe the mid-burst window (turn_active AND streaming_md set).
+        # Without real sleeps the TUI processes all 60 chunks before
+        # pilot.pause()'s wait_for_idle(0) returns, collapsing the window.
+        # Inter-chunk sleep of 30ms spreads 60 chunks over ~1.8s; the 12Hz
+        # coalescing timer fires ~21 times in that window, so render count
+        # stays well below 60 (coalescing guarantee intact, threshold raised).
         if "MANYCHUNKS" in text:
             for i in range(60):
                 await self._conn.session_update(
                     session_id, update_agent_message_text(f"word{i} "))
+                await asyncio.sleep(0.03)   # 30ms: ~21 timer fires for 60 chunks
             return acp.PromptResponse(stop_reason="end_turn")
 
         # 3) optionally stream several message deltas for ONE turn (so the client
