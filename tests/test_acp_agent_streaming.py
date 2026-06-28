@@ -145,6 +145,45 @@ def _prompt(agent, sid, text):
 # Tests
 # --------------------------------------------------------------------------
 
+class _ChatRouter:
+    """Routes every prompt to the CHAT path (chat_question), so the turn goes
+    through ChatHandler.answer_stream + the pump, not the engine. This is the
+    path that hung in the reported session (--debug trace 20260628-124707)."""
+
+    catalog = []
+
+    def classify(self, text, history=None):
+        return Classification(task_type="chat_question", skills=[], confidence=0.95)
+
+
+def _prompt_with_timeout(agent, sid, text, timeout=10.0):
+    async def go():
+        return await asyncio.wait_for(
+            agent.prompt([acp.text_block(text)], sid), timeout=timeout)
+    return asyncio.run(go())
+
+
+def test_chat_path_prompt_returns(tmp_path):
+    """A chat_question turn must RETURN a PromptResponse — if prompt() never
+    resolves, the TUI's await blocks forever and 'Responding…' sticks with a
+    locked composer (the reported bug). model_id=None → ChatHandler yields one
+    honest message without a network call; the turn must still complete."""
+    conn = RecordingConn()
+    agent = build_harness_agent(
+        model_factory=lambda *a, **k: None,
+        agent_cfg=_agent_cfg(),
+        skills_dir=__import__("pathlib").Path("skills"),
+        router=_ChatRouter(),
+        worker_model_id=None,                       # mock → ChatHandler honest-message path
+    )
+    agent._conn = conn
+    agent._client_caps = None
+    sid = agent._store.new(cwd=str(tmp_path))
+
+    resp = _prompt_with_timeout(agent, sid, "what can you do?")
+    assert resp.stop_reason == "end_turn", f"chat prompt() did not end cleanly: {resp}"
+
+
 def test_agent_path_streams_deltas_as_message_chunks(tmp_path):
     """The agent-path turn must marshal each prose delta to the connection as a
     message_chunk, in order, preceded by exactly one step-boundary signal."""
