@@ -285,6 +285,13 @@ def test_build_compaction_default_ctx_window():
     assert p["ctx_window"] == DEFAULT_CONTEXT_WINDOW
 
 
+def test_build_compaction_enabled_field_is_true():
+    comp = build_compaction({"enabled": True}, model=_FakeModel(),
+                            fixed_overhead_tokens=0, add_cost=lambda c: None)
+    assert comp is not None
+    assert comp.enabled is True
+
+
 def test_compaction_integrates_with_compress():
     """End-to-end: build_compaction wired into compress() produces a summary.
 

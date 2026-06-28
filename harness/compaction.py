@@ -60,6 +60,7 @@ class Compaction:
     target_ratio: float = 0.2
     protect_head_n: int = 0
     protect_last_n: int = 20
+    enabled: bool = True
 
     def params(self) -> dict:
         """Return kwargs for compress() (everything except ``prior``)."""
@@ -113,6 +114,7 @@ def build_compaction(cfg, *, model, fixed_overhead_tokens: int,
         target_ratio=target_ratio,
         protect_head_n=protect_head_n,
         protect_last_n=protect_last_n,
+        enabled=True,
     )
 
 
