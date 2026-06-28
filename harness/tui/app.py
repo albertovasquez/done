@@ -130,6 +130,7 @@ class HarnessTui(App):
         self._persona_seen = False            # True after the first real PersonaResolved lands
         self._turn_active = False             # True while a prompt turn is in flight (used by Esc-rail guard)
         self._queued: list[str] = []          # prompts typed mid-turn; drained FIFO when the turn ends
+        self._pending_persona: str | None = None   # a switch requested mid-turn; applied on turn-end
         self._snapshot = initial_snapshot()   # the presentation model (pure, immutable)
         self._commands = build_registry()     # slash-command registry
         self._slash = None                    # the SlashMenu widget while open, else None
@@ -761,16 +762,23 @@ class HarnessTui(App):
         self._refresh_status()
         self.query_one("#conversation-input", PromptArea).focus()
 
-    async def _reset_conversation(self) -> None:
-        """Empty the transcript and reset per-conversation state WITHOUT leaving
-        the conversation view (flipping _started=False would query the removed
-        #landing-input/#header-text and crash). No-op before the first prompt."""
+    def _clear_transcript(self) -> None:
+        """Sync visual reset: empty the transcript and reset stream-accumulation
+        state so no late delta bleeds into a fresh view. Does NOT touch _snapshot
+        (its owner re-applies it) or _tokens. Safe to call from sync paths (e.g.
+        the persona switch) — unlike async _reset_conversation."""
         if self._started:
-            await self._transcript.remove_children()
+            self._transcript.remove_children()
         self._streaming_md = None
         self._stream_buf = ""
         self._stream_closed = True
         self._boundary_after = False
+
+    async def _reset_conversation(self) -> None:
+        """Empty the transcript and reset per-conversation state WITHOUT leaving
+        the conversation view (flipping _started=False would query the removed
+        #landing-input/#header-text and crash). No-op before the first prompt."""
+        self._clear_transcript()
         self._tokens = 0
         self._snapshot = initial_snapshot()
         self._refresh_status()
@@ -868,7 +876,9 @@ class HarnessTui(App):
                 self._hide_working()
                 self._active_input().disabled = False
                 self._active_input().focus()
-                self._drain_queue()               # auto-send the next queued message, if any
+                switched = self._apply_pending_persona()  # honor a mid-turn switch request first…
+                if not switched:                          # …drain immediately only when no switch
+                    self._drain_queue()                   # (switch worker drains after it resolves)
 
     def _drain_queue(self) -> None:
         """Start the next message the user queued mid-turn. FIFO, one per turn —
@@ -882,6 +892,37 @@ class HarnessTui(App):
         model_label = _model_label(self.model, self._worker_model_id)
         yolo = f" {_c('error', 'bypass on')}" if self._yolo else ""   # records mode at turn time
         return f"{_c('accent', '▣ ' + _MODE)}{yolo} {_c('muted', f'· {model_label} · {elapsed:.1f}s')}"
+
+    def _apply_pending_persona(self) -> bool:
+        """If a persona switch was requested mid-turn, apply it now (turn-end),
+        BEFORE draining queued prompts — so a prompt typed during the old turn
+        runs in the NEW persona's room, not the old one.
+
+        Returns True when a switch worker was scheduled (caller must NOT drain
+        immediately; _switch_persona will drain after _apply_persona_switch
+        repoints _session_id). Returns False when no switch was needed."""
+        pid = self._pending_persona
+        if pid is None or self._conn is None or pid == self._current_persona():
+            self._pending_persona = None
+            return False
+        self._pending_persona = None
+        self.run_worker(self._switch_persona(pid), thread=False)
+        return True
+
+    async def _switch_persona(self, pid: str) -> None:
+        """The async half of a deferred switch: call set_persona, then apply.
+        After applying (which repoints _session_id), drain any queued prompt so
+        it runs in the NEW persona's room — not the old one (I1 fix)."""
+        try:
+            resp = await self._conn.ext_method("harness/set_persona", {"id": pid})
+        except Exception as e:
+            self._notify_line(f"could not switch persona: {e}")
+            return
+        if not resp.get("ok"):
+            self._notify_line(f"persona: {resp.get('error', 'switch failed')}")
+            return
+        self._apply_persona_switch(resp)
+        self._drain_queue()               # _session_id is now the NEW room
 
     def _write_meta(self, elapsed: float) -> None:
         """Append the turn's run caption as a FOOTER below the response, once the
@@ -1094,16 +1135,20 @@ class HarnessTui(App):
         if isinstance(self.screen, PermissionModal):
             self.pop_screen()
 
+    def _persona_display_name(self, pid: str) -> str:
+        """The persona's display name from its persona.toml `name`, falling back
+        to the id. One lookup shared by the rail rows and the room header."""
+        from harness import persona_config, paths
+        ws = paths.default_workspace_dir() if pid == "default" \
+            else paths.config_dir() / "agents" / pid
+        return persona_config.read_name(ws) or pid
+
     def _persona_rows(self):
-        from harness import persona_select, persona_config, paths
+        from harness import persona_select
         from harness.tui.roster import persona_rows
-        def name_of(pid):
-            ws = paths.default_workspace_dir() if pid == "default" \
-                else paths.config_dir() / "agents" / pid
-            return persona_config.read_name(ws)
         active = self._snapshot.active
         return persona_rows(persona_select.list_personas(), self._current_persona(),
-                            name_of,
+                            self._persona_display_name,
                             active_status=(active.state if active else AgentState.IDLE))
 
     def _persona_subline(self, row):
@@ -1140,7 +1185,12 @@ class HarnessTui(App):
 
     async def on_persona_selected(self, event: PersonaSelected) -> None:
         event.stop()
-        if self._turn_active:                 # inert mid-turn — full prompt/stream lifecycle
+        if self._turn_active:                 # don't switch under a live turn — queue it
+            if event.id != self._current_persona():
+                self._pending_persona = event.id          # last-wins
+                name = self._persona_display_name(self._current_persona())
+                self._notify_line(f"{name} is still working — switching when this turn finishes.")
+            self._show_drawer(False)
             return
         if self._conn is None:
             return
@@ -1161,9 +1211,10 @@ class HarnessTui(App):
 
     def _apply_persona_switch(self, resp: dict, note: str | None = None) -> None:
         """Apply a successful set_persona/create_persona result: repoint the session,
-        update the indicator + footer, close the rail, refocus, and write a visible
-        confirmation line. Shared by switch + create. `note` overrides the default
-        "now talking to" confirmation (create passes "created persona …")."""
+        update the indicator + footer, CLEAR the prior persona's transcript (each
+        persona is a separate conversation — Phase 1 shows a fresh room, replay is
+        Phase 2), write the room header, close the rail, refocus. `note` overrides
+        the default room header (create passes its own)."""
         self._session_id = resp["session_id"]
         self._persona_seen = True
         self._apply(PersonaResolved(resp["id"]))   # updates snapshot + ActivityRegion
@@ -1172,10 +1223,18 @@ class HarnessTui(App):
         if model:
             self._worker_model_id = model
             self._refresh_meta_line()
-        # Visible confirmation FIRST: the status-bar chip is easy to miss, so echo
-        # the switch in the transcript (the user reported "I don't see anything").
-        # Done before the focus call below so a focus hiccup can't swallow it.
-        self._notify_line(note or f"now talking to persona: {resp['id']}")
+        # Each persona is its own conversation: clear the previous room so its
+        # messages don't bleed into this one, then show whose room this is.
+        self._clear_transcript()
+        if self._started:
+            name = self._persona_display_name(resp["id"])
+            if note:
+                self._append_line(_c("muted", note))
+            else:
+                self._append_line(_c("accent", f"now in {name}'s conversation"))
+                self._append_line(_c("muted", "a separate conversation"))
+                self._append_line(
+                    _c("muted", f"This is {name}'s conversation — separate from your others. Say hello."))
         # close the drawer + refocus the prompt
         self._show_drawer(False)
         self._active_input().focus()

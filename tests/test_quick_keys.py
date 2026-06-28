@@ -1,4 +1,4 @@
-from harness.tui.widgets.quick_keys import QUICK_KEYS, quick_keys_markup  # noqa: E402
+from harness.tui.widgets.quick_keys import QUICK_KEYS, _PERSONA_HINT, quick_keys_markup  # noqa: E402
 
 
 def test_quick_keys_lists_working_keys():
@@ -8,6 +8,12 @@ def test_quick_keys_lists_working_keys():
     assert "QUICK KEYS" in md
     for _, label in QUICK_KEYS:
         assert label in md
+
+
+def test_quick_keys_persona_hint():
+    md = quick_keys_markup()
+    assert "keeps its own conversation" in md
+    assert _PERSONA_HINT in md
 
 
 def test_quick_keys_does_not_list_unbound_keys():

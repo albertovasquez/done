@@ -14,11 +14,15 @@ QUICK_KEYS: list[tuple[str, str]] = [
 ]
 
 
+_PERSONA_HINT = "Each persona keeps its own conversation. ↑↓ to choose · enter to switch"
+
+
 def quick_keys_markup() -> str:
     head = "[$muted][b]≡ QUICK KEYS[/b][/]"
     rows = "\n".join(f"[$muted on $surface] {k} [/]  [$muted]{label}[/]"
                      for k, label in QUICK_KEYS)
-    return head + "\n" + rows
+    hint = f"\n[$muted]{_PERSONA_HINT}[/]"
+    return head + "\n" + rows + hint
 
 
 class QuickKeysPanel(Static):
