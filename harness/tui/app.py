@@ -1037,6 +1037,10 @@ class HarnessTui(App):
         if model:
             self._worker_model_id = model
             self._refresh_meta_line()
+        # Visible confirmation FIRST: the status-bar chip is easy to miss, so echo
+        # the switch in the transcript (the user reported "I don't see anything").
+        # Done before the focus call below so a focus hiccup can't swallow it.
+        self._notify_line(note or f"now talking to persona: {resp['id']}")
         # close the rail + refocus the prompt
         try:
             rail = self.query_one("#agent-rail", AgentRail)
@@ -1044,9 +1048,6 @@ class HarnessTui(App):
         except Exception:
             pass
         self._active_input().focus()
-        # Visible confirmation: the status-bar chip is easy to miss, so echo the
-        # switch in the transcript (the user reported "I don't see anything").
-        self._notify_line(note or f"now talking to persona: {resp['id']}")
 
     def on_new_persona_requested(self, event) -> None:
         event.stop()
