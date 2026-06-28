@@ -28,14 +28,15 @@ memory/<slug>.md           typed facts — listed in the index, pulled on demand
   yesterday's are injected automatically; older days are still reachable with
   `load_memory`.
 - **`memory/<slug>.md`** are typed facts (see below). They are **not** injected in
-  full — they appear in the index by name + description, and the agent pulls the
+  full — Done auto-generates a one-line menu of them (name · type · description)
+  and appends it to the startup block, so the agent knows they exist and pulls a
   body with `load_memory` when relevant.
 
 ## The two recall modes
 
 | Mode | What | When |
 |---|---|---|
-| **Startup inject** | `MEMORY.md` + today's + yesterday's notes go into context at the start of every turn (content-gated, trimmed). | Always — the agent reads it without doing anything. |
+| **Startup inject** | `MEMORY.md` + today's + yesterday's notes + an auto-generated menu of typed facts go into context at the start of every turn (content-gated, trimmed). | Always — the agent reads it without doing anything. |
 | **Load on demand** | `load_memory(memory_name)` returns one fact's full text as a tool observation. | When the index references a fact the agent didn't get in full. |
 
 This is the same progressive-disclosure shape as skills (a cheap menu + a
@@ -73,20 +74,21 @@ files behaves exactly as it always has (injected at startup). The typed-manifest
 convention is **additive** — adopt it only when the always-injected block starts
 getting large.
 
-## Keeping the index as a manifest
+## The auto-generated menu
 
-When a persona accumulates facts, write `MEMORY.md` as a manifest of pointers so
-the always-loaded block stays cheap:
+You don't have to maintain a manifest by hand: Done builds the menu from the
+typed facts under `memory/` automatically and appends it to the startup block:
 
-```markdown
-# Memory
-
-- [user-terse](memory/user-terse.md) — type:feedback — no trailing summaries
-- [pr-workflow](memory/pr-workflow.md) — type:project — ship via PR, never main
+```
+## Available memory (load by name with `load_memory`)
+- `user-terse` (feedback) — no trailing summaries
+- `pr-workflow` (project) — ship via PR, never main
 ```
 
-The manifest *is* the menu the agent sees. It pulls any entry with
-`load_memory("pr-workflow")`.
+The agent pulls any entry with `load_memory("pr-workflow")`. Keep `MEMORY.md` for
+the always-loaded durable facts; move anything bulky into a typed fact file and
+let the menu surface it — that keeps the always-injected block cheap no matter how
+much the persona remembers.
 
 ## Writing memory
 

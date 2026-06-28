@@ -79,11 +79,21 @@ def test_registry_no_memory_tool_without_root():
     assert "load_memory" not in [t.name for t in build_registry()]
 
 
-def test_registry_appends_load_memory_with_root(tmp_path):
+def test_registry_appends_load_memory_with_populated_root(tmp_path):
+    _fact(tmp_path, "x")                      # workspace HAS memory content
     names = [t.name for t in build_registry(memory_root=tmp_path)]
     assert "load_memory" in names
 
 
+def test_registry_no_memory_tool_for_empty_workspace(tmp_path):
+    # Codex finding #1: an empty/absent-memory workspace must NOT add a dead
+    # load_memory tool (byte-identical no-op when there's nothing to recall).
+    (tmp_path).mkdir(exist_ok=True)
+    names = [t.name for t in build_registry(memory_root=tmp_path)]
+    assert "load_memory" not in names
+
+
 def test_registry_both_skill_and_memory(tmp_path):
+    _fact(tmp_path, "x")                      # memory needs content to register
     names = [t.name for t in build_registry(skill_roots=[tmp_path], memory_root=tmp_path)]
     assert "load_skill" in names and "load_memory" in names

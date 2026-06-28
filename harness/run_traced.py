@@ -152,7 +152,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.model == "mock":
         model = build_mock_model()
     else:
-        model = _build_vibeproxy_model(project_cwd=args.cwd)
+        # memory_root=workspace_dir so the standalone CLI also advertises the
+        # load_memory tool for the resolved persona (parity with the ACP path).
+        model = _build_vibeproxy_model(project_cwd=args.cwd, memory_root=workspace_dir)
     env = LocalEnvironment(cwd=args.cwd)
     agent_cfg = _load_agent_config()
     agent_cfg["output_path"] = str(run_dir / "traj.json")

@@ -47,10 +47,16 @@ class MemoryMeta:
 
 
 def _meta_from_frontmatter(data: dict, fallback_name: str) -> MemoryMeta:
-    """Build a MemoryMeta from a parsed frontmatter dict. Pure; never raises —
-    an absent/non-string type defaults to 'reference'."""
-    name = data.get("name") or fallback_name
-    desc = data.get("description") or ""
+    """Build a MemoryMeta from a parsed frontmatter dict. Pure; never raises.
+    name/description/type are COERCED to str — YAML happily parses `name: 123` as
+    an int, and a non-str name would later crash `", ".join(m.name ...)`. A
+    non-string/empty name falls back to the filename stem; type defaults to
+    'reference' (the least-privileged category)."""
+    raw_name = data.get("name")
+    name = raw_name if isinstance(raw_name, str) and raw_name else fallback_name
+    raw_desc = data.get("description")
+    desc = raw_desc if isinstance(raw_desc, str) else (
+        "" if raw_desc is None else str(raw_desc))
     raw_type = data.get("type")
     mtype = raw_type if isinstance(raw_type, str) and raw_type else "reference"
     return MemoryMeta(name=name, description=desc, type=mtype)
@@ -94,6 +100,43 @@ def load_manifest(workspace_dir: Path | None) -> list[MemoryMeta]:
             data = {}
         metas.append(_meta_from_frontmatter(data, path.stem))
     return metas
+
+
+def compose_menu(metas: list[MemoryMeta]) -> str:
+    """Render typed facts as a one-line-each menu the agent sees at startup (so it
+    knows what to pull with load_memory). Mirrors skills.compose_menu. Empty list
+    => "" (content-gated). The bodies are NOT included — only name/desc/type."""
+    if not metas:
+        return ""
+    lines = [f"- `{m.name}` ({m.type}) — {m.description}" for m in metas]
+    return ("## Available memory (load by name with `load_memory`)\n"
+            + "\n".join(lines))
+
+
+def has_memory(workspace_dir: Path | None) -> bool:
+    """True iff the workspace has ANY recall content — a meaningful MEMORY.md, a
+    daily note, or a typed fact. Used to gate the load_memory tool so an empty
+    workspace registers no dead tool (byte-identical no-op)."""
+    if workspace_dir is None:
+        return False
+    workspace = Path(workspace_dir)
+    if not workspace.is_dir():
+        return False
+    root = workspace / MEMORY_FILE
+    try:
+        if root.is_file() and _meaningful(root.read_text(encoding="utf-8")):
+            return True
+    except (OSError, UnicodeDecodeError):
+        pass
+    mem_dir = workspace / MEMORY_DIR
+    if mem_dir.is_dir():
+        for path in mem_dir.glob("*.md"):
+            try:
+                if _meaningful(path.read_text(encoding="utf-8")):
+                    return True
+            except (OSError, UnicodeDecodeError):
+                continue
+    return False
 
 
 def _resolve_fact(workspace: Path, name: str) -> Path | None:
@@ -206,6 +249,13 @@ def resolve_memory(workspace_dir: Path | None, *, today: date) -> MemoryLoad:
         section = _read_section(workspace, rel, label, load)
         if section is not None:
             sections.append(section)
+    # The typed-fact MENU makes per-fact files DISCOVERABLE — without it the agent
+    # never knows a fact exists, so it never calls load_memory (the recall loop is
+    # dead). Built from the manifest; content-gated like the sections.
+    menu = compose_menu(load_manifest(workspace))
+    if menu:
+        sections.append(menu)
+        load.injected.append("(manifest)")
     if load.injected:                       # CONTENT-GATED: only when something was read
         load.block = ("\n\n# Memory\n\n" + _protocol(workspace) + "\n\n"
                       + "\n\n".join(sections))

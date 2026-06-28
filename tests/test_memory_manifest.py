@@ -5,12 +5,19 @@ layer that mirrors skills.load_catalog / skills.compose."""
 
 from pathlib import Path
 
+from datetime import date
+
 from harness.memory import (
     MemoryMeta,
     load_manifest,
     compose_memory,
+    compose_menu,
+    has_memory,
+    resolve_memory,
     MAX_MEMORY_CHARS,
 )
+
+TODAY = date(2026, 6, 26)
 
 
 def _fact(ws: Path, name: str, body: str, *, type_: str | None = "reference",
@@ -79,6 +86,86 @@ def test_manifest_never_raises_on_bad_file(tmp_path):
     # must not raise; the good fact still loads
     names = [m.name for m in load_manifest(tmp_path)]
     assert "ok" in names
+
+
+def test_manifest_nonstring_name_coerced_to_str(tmp_path):
+    # YAML parses `name: 123` as an int. Codex finding #4: the unknown-memory path
+    # does ", ".join(m.name ...) -> TypeError. name/description MUST be coerced to
+    # str (or the file skipped) so a turn never crashes.
+    (tmp_path / "memory").mkdir(parents=True)
+    (tmp_path / "memory" / "weird.md").write_text(
+        "---\nname: 123\ndescription: 456\n---\nbody\n", encoding="utf-8")
+    metas = load_manifest(tmp_path)
+    for m in metas:
+        assert isinstance(m.name, str) and isinstance(m.description, str)
+    # the join (the crash site) must not raise
+    ", ".join(m.name for m in metas)
+
+
+# ------------------------------------------------------------------ compose_menu
+
+def test_compose_menu_empty_for_no_facts():
+    assert compose_menu([]) == ""
+
+
+def test_compose_menu_lists_name_desc_type(tmp_path):
+    metas = [MemoryMeta("user-terse", "no trailing summaries", "feedback")]
+    menu = compose_menu(metas)
+    assert "user-terse" in menu and "no trailing summaries" in menu
+    assert "feedback" in menu
+    # it must teach the agent the recall verb so the manifest is actionable
+    assert "load_memory" in menu
+
+
+# --------------------------------------------------------------------- has_memory
+
+def test_has_memory_false_for_empty(tmp_path):
+    assert has_memory(tmp_path) is False
+    assert has_memory(tmp_path / "nope") is False
+    assert has_memory(None) is False
+
+
+def test_has_memory_true_for_memory_md(tmp_path):
+    (tmp_path / "MEMORY.md").write_text("durable fact", encoding="utf-8")
+    assert has_memory(tmp_path) is True
+
+
+def test_has_memory_true_for_typed_fact(tmp_path):
+    _fact(tmp_path, "pref", "a pref")
+    assert has_memory(tmp_path) is True
+
+
+def test_has_memory_false_for_comment_only(tmp_path):
+    (tmp_path / "MEMORY.md").write_text("<!-- nothing -->", encoding="utf-8")
+    assert has_memory(tmp_path) is False
+
+
+# ----------------------------------------- resolve_memory injects the manifest menu
+
+def test_resolve_memory_appends_typed_fact_menu(tmp_path):
+    # Codex finding #2: typed facts must be DISCOVERABLE in the prompt, else the
+    # agent never knows to call load_memory for them. resolve_memory's block must
+    # carry a menu of typed facts even when MEMORY.md/daily notes are absent.
+    _fact(tmp_path, "pr-workflow", "ship via PR", description="never main")
+    load = resolve_memory(tmp_path, today=TODAY)
+    assert "pr-workflow" in load.block
+    assert "never main" in load.block
+    assert "load_memory" in load.block
+
+
+def test_resolve_memory_menu_plus_durable(tmp_path):
+    (tmp_path / "MEMORY.md").write_text("Prefers terse.", encoding="utf-8")
+    _fact(tmp_path, "pr-workflow", "ship via PR", description="never main")
+    load = resolve_memory(tmp_path, today=TODAY)
+    assert "Prefers terse." in load.block          # durable still injected
+    assert "pr-workflow" in load.block             # menu still present
+
+
+def test_resolve_memory_still_noop_when_truly_empty(tmp_path):
+    # no MEMORY.md, no daily notes, no typed facts -> byte-identical empty block
+    tmp_path.mkdir(exist_ok=True)
+    load = resolve_memory(tmp_path, today=TODAY)
+    assert load.block == "" and load.injected == []
 
 
 # --------------------------------------------------------------- compose_memory

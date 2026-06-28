@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from harness import memory as memory_mod
 from harness.tools.base import Tool
 from harness.tools.bash import BashTool
 from harness.tools.edit import EditTool
@@ -26,6 +27,8 @@ def build_registry(skill_roots: list[Path] | None = None,
     tools: list[Tool] = [BashTool(), ReadTool(), WriteTool(), EditTool()]
     if skill_roots:
         tools.append(LoadSkillTool(skill_roots))
-    if memory_root:
+    # Gate load_memory on the workspace actually HAVING recall content — an empty
+    # workspace must not advertise a dead tool (byte-identical no-op).
+    if memory_root and memory_mod.has_memory(memory_root):
         tools.append(LoadMemoryTool(memory_root))
     return tools
