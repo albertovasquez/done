@@ -12,6 +12,9 @@ dist/
 .worktrees/
 vendor/
 .venv/
+# stray submit-sentinel artifact (echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT
+# accidentally redirected to a file instead of stdout)
+.task_complete
 
 # The ROOT AGENTS.md is a SHARED, committed operating standard for this repo. The
 # user's global gitignore (~/.config/git/ignore) ignores AGENTS.md everywhere;

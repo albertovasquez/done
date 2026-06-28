@@ -2123,9 +2123,9 @@ def _transcript_kinds(app):
 
 
 def test_turn_metadata_captions_carry_turn_meta_class_and_order():
-    """The classification chip and the '▣ Build' run caption are dimmed metadata
-    captions (.turn-meta), and the Build caption is a HEADER mounted ABOVE the
-    response markdown — order: user ▌ / chip / Build / response."""
+    """The classification chip rides under the prompt (.turn-meta); the '▣ Build'
+    run caption is a FOOTER (.turn-meta-run) below the response — order:
+    user ▌ / chip / response / Build."""
     async def go():
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
         async with app.run_test() as pilot:
@@ -2146,12 +2146,12 @@ def test_turn_metadata_captions_carry_turn_meta_class_and_order():
         # locate the four turn elements in order
         user_i = next(i for i, (k, c, t) in enumerate(kinds) if "▌" in t)
         chip_i = next(i for i, (k, c, t) in enumerate(kinds) if "classified" in t)
-        build_i = next(i for i, (k, c, t) in enumerate(kinds) if "▣ Build" in t)
         md_i = next(i for i, (k, c, t) in enumerate(kinds) if k == "md")
+        build_i = next(i for i, (k, c, t) in enumerate(kinds) if "▣ Build" in t)
 
-        assert user_i < chip_i < build_i < md_i, (
-            f"turn elements out of order: user={user_i} chip={chip_i} "
-            f"build={build_i} md={md_i}\n{kinds}")
+        assert user_i < chip_i < md_i < build_i, (
+            f"turn elements out of order (chip rides prompt, Build is a footer): "
+            f"user={user_i} chip={chip_i} md={md_i} build={build_i}\n{kinds}")
         assert "turn-meta" in kinds[chip_i][1], f"chip lacks .turn-meta: {kinds[chip_i]}"
         assert "turn-meta-run" in kinds[build_i][1], (
             f"Build run caption lacks .turn-meta-run: {kinds[build_i]}")
@@ -2159,9 +2159,9 @@ def test_turn_metadata_captions_carry_turn_meta_class_and_order():
     asyncio.run(go())
 
 
-def test_build_caption_shows_real_elapsed_after_turn_end():
-    """The Build caption is a live placeholder ('…') while streaming, then patched
-    with the real elapsed time at turn end — NOT a stale duplicate line."""
+def test_build_footer_shows_real_elapsed_appended_after_turn_end():
+    """The Build run caption is appended as a footer at turn end with the real
+    elapsed time — exactly one line, no placeholder, no duplicate."""
     async def go():
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
         async with app.run_test() as pilot:
@@ -2172,25 +2172,28 @@ def test_build_caption_shows_real_elapsed_after_turn_end():
             app._add_user_message("hi")
             app.on_session_update(SessionUpdate(update_agent_message_text("answer")))
             await pilot.pause()
-            # before turn end: exactly one Build caption, showing the '…' placeholder
+            # mid-turn (before _write_meta): no Build footer yet
             builds = [t for k, c, t in _transcript_kinds(app) if "▣ Build" in t]
-            assert len(builds) == 1, f"expected one placeholder Build caption: {builds}"
-            assert "…" in builds[0], f"placeholder should show '…': {builds[0]}"
+            assert builds == [], f"Build footer must not render before turn end: {builds}"
 
             app._write_meta(2.0)
             await pilot.pause()
-            builds = [t for k, c, t in _transcript_kinds(app) if "▣ Build" in t]
+            kinds = _transcript_kinds(app)
+            builds = [t for k, c, t in kinds if "▣ Build" in t]
 
-        assert len(builds) == 1, f"Build caption duplicated instead of patched: {builds}"
-        assert "2.0s" in builds[0], f"elapsed not patched into caption: {builds[0]}"
-        assert "…" not in builds[0], f"placeholder '…' not replaced: {builds[0]}"
+        assert len(builds) == 1, f"expected exactly one Build footer: {builds}"
+        assert "2.0s" in builds[0], f"footer missing elapsed: {builds[0]}"
+        # the footer sits AFTER the response markdown
+        md_i = next(i for i, (k, c, t) in enumerate(kinds) if k == "md")
+        build_i = next(i for i, (k, c, t) in enumerate(kinds) if "▣ Build" in t)
+        assert md_i < build_i, f"Build footer must follow the response: {kinds}"
 
     asyncio.run(go())
 
 
-def test_multistep_turn_emits_exactly_one_build_caption():
-    """A turn with a tool call between two answer blocks emits ONE Build caption
-    (it belongs to the run, not to each answer block)."""
+def test_multistep_turn_emits_exactly_one_build_footer():
+    """A turn with a tool call between two answer blocks emits ONE Build footer
+    (one _write_meta call at turn end), after the last answer block."""
     from acp import start_tool_call
 
     async def go():
@@ -2215,15 +2218,16 @@ def test_multistep_turn_emits_exactly_one_build_caption():
             builds = [t for k, c, t in _transcript_kinds(app) if "▣ Build" in t]
             md_count = sum(1 for k, c, t in _transcript_kinds(app) if k == "md")
 
-        assert len(builds) == 1, f"multi-step turn must emit exactly one Build caption: {builds}"
+        assert len(builds) == 1, f"multi-step turn must emit exactly one Build footer: {builds}"
         assert md_count == 2, f"expected two answer blocks across the tool boundary: {md_count}"
 
     asyncio.run(go())
 
 
-def test_tool_only_turn_appends_build_caption_as_fallback():
-    """A turn that produces a tool item but NO message has no placeholder to patch,
-    so the Build caption is appended at turn end — metadata is never lost."""
+def test_tool_only_turn_still_renders_build_footer():
+    """A turn that produces a tool item but NO message still renders the Build
+    footer at turn end — metadata is never lost. (With the footer model this is
+    just the normal append path; no special placeholder handling.)"""
     from acp import start_tool_call
 
     async def go():
@@ -2237,22 +2241,22 @@ def test_tool_only_turn_appends_build_caption_as_fallback():
             app.on_session_update(SessionUpdate(
                 start_tool_call(tool_call_id="t1", title="bash", kind="execute")))
             await pilot.pause()
-            assert app._meta_widget is None, "no answer block opened ⇒ no placeholder"
             app._write_meta(0.7)
             await pilot.pause()
 
             builds = [t for k, c, t in _transcript_kinds(app) if "▣ Build" in t]
 
-        assert len(builds) == 1, f"tool-only turn must still render a Build caption: {builds}"
-        assert "0.7s" in builds[0], f"appended caption missing elapsed: {builds[0]}"
+        assert len(builds) == 1, f"tool-only turn must still render a Build footer: {builds}"
+        assert "0.7s" in builds[0], f"footer missing elapsed: {builds[0]}"
 
     asyncio.run(go())
 
 
-def test_run_caption_heads_response_with_turn_break_above():
-    """The turn break (blank line) sits ABOVE the run caption so the caption heads
-    the response: the Build caption (.turn-meta-run) carries margin-top 1, and both
-    it and the response markdown are left-indented (2) so they align as one group."""
+def test_run_footer_hugs_response_with_turn_break_below():
+    """The turn break sits ABOVE the response (margin-top 1 on the markdown) and
+    BELOW the footer (margin-bottom 1 on .turn-meta-run), so prompt+chip / response
+    / footer read as one group and the next prompt is separated. Both the response
+    and the footer are left-indented (2)."""
     async def go():
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
         async with app.run_test() as pilot:
@@ -2262,14 +2266,20 @@ def test_run_caption_heads_response_with_turn_break_above():
             app._add_user_message("hi")
             app.on_session_update(SessionUpdate(update_agent_message_text("answer")))
             await pilot.pause()
+            app._write_meta(1.0)
+            await pilot.pause()
             scroll = app.query_one("#transcript", VerticalScroll)
             md = scroll.query_one(Markdown)
             run = next(w for w in scroll.children
                        if isinstance(w, Static) and "turn-meta-run" in w.classes)
             md_margin, run_margin = md.styles.margin, run.styles.margin
-        assert run_margin.top == 1, f"run caption needs the turn-break top margin: {run_margin}"
-        assert run_margin.left == 2, f"run caption should be indented: {run_margin}"
-        assert md_margin.top == 0, f"break is above the caption, not the response: {md_margin}"
-        assert md_margin.left == 2, f"response should align under its caption: {md_margin}"
+        # response: top break, no bottom (footer hugs it), indent 2
+        assert md_margin.top == 1, f"response needs the turn-break top margin: {md_margin}"
+        assert md_margin.bottom == 0, f"footer should hug the response (no md bottom): {md_margin}"
+        assert md_margin.left == 2, f"response should be indented: {md_margin}"
+        # footer: hugs response (no top), bottom break before next prompt, indent 2
+        assert run_margin.top == 0, f"footer should hug the response above it: {run_margin}"
+        assert run_margin.bottom == 1, f"footer needs the turn-break bottom margin: {run_margin}"
+        assert run_margin.left == 2, f"footer should be indented: {run_margin}"
 
     asyncio.run(go())

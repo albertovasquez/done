@@ -52,20 +52,21 @@ Screen { layout: vertical; background: $background; layers: base overlay; }
 /* streamed agent answer: a live Markdown widget. Sit flush in the transcript
    (Textual's Markdown adds its own block margins; trim the outer ones so it
    reads as one answer block rather than a boxed document). */
-/* the response prose. Left-indented (2) to align under the run caption that heads
-   it; the turn-break blank line lives ABOVE the run caption, not here, so the
-   caption + response read as one group. */
-#transcript Markdown { height: auto; margin: 0 0 1 2; padding: 0; background: $background; }
+/* the response prose. Left-indented (2); margin-top 1 is the turn break that
+   separates it from the prompt+chip group above. No bottom margin so the run
+   caption footer hugs it below. */
+#transcript Markdown { height: auto; margin: 1 0 0 2; padding: 0; background: $background; }
 #transcript Markdown .code_inline { color: $code; background: $background; }
 
 /* per-turn metadata captions, dimmed + indented so they read as metadata, not
    prose. Two variants:
    .turn-meta     — the classification chip; hugs the prompt above it (no gap).
-   .turn-meta-run — the '▣ Build · model · time' run caption; a HEADER for the
-                    response, so the blank-line turn break sits ABOVE it (margin-top
-                    1) and it hugs the response below. */
+   .turn-meta-run — the '▣ Build · model · time' run caption; a FOOTER below the
+                    response, summarizing the run that produced it. Hugs the
+                    response above (no top margin); margin-bottom 1 is the gap
+                    before the next turn's prompt. */
 .turn-meta { height: auto; color: $muted; margin: 0 0 0 2; }
-.turn-meta-run { height: auto; color: $muted; margin: 1 0 0 2; }
+.turn-meta-run { height: auto; color: $muted; margin: 0 0 1 2; }
 
 /* "model is working" indicator — compact, themed, left-aligned */
 #working { height: 1; color: $accent; content-align: left middle; padding: 0; }
