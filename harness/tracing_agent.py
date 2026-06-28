@@ -29,6 +29,7 @@ from minisweagent.agents.default import DefaultAgent
 from minisweagent.exceptions import (FormatError, InterruptAgentFlow,
                                       LimitsExceeded, Submitted, TimeExceeded)
 
+from harness import compaction as _compaction
 from harness.events import Emitter
 
 
@@ -37,6 +38,13 @@ class TracingAgent(DefaultAgent):
                  persona_block: str = "", memory_block: str = "",
                  base_block: str = "", registry=None,
                  cancel_flag: threading.Event | None = None, **kwargs):
+        # C1: AgentConfig (Pydantic) silently drops unknown keys via extra="ignore",
+        # so a "compaction" key passed in kwargs would be swallowed and lost.
+        # Pop it BEFORE super().__init__ so we own it.
+        self._compaction_cfg = kwargs.pop("compaction", None)
+        # C2: adapter is NOT built here — building it calls _render_template which
+        # renders {{task}} (mini.yaml:5), only set in run(). Built in Task 5 instead.
+        self._compaction: _compaction.Compaction | None = None
         super().__init__(model, env, **kwargs)
         # ESC sets this flag (from the async loop thread); the step loop checks it
         # between steps to end the turn promptly. None => never cancelled (CLI/mock).

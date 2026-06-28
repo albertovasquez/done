@@ -17,6 +17,15 @@ from typing import Callable
 log = logging.getLogger(__name__)
 
 MIN_BUDGET_FLOOR = 1000  # tokens; keeps the tail target from going negative
+DEFAULT_CONTEXT_WINDOW = 32000
+
+COMPRESS_SYSTEM = (
+    "You are a context compaction assistant. You will be given a section of a "
+    "conversation transcript that needs to be summarized to save context space. "
+    "Produce a concise summary that preserves key facts, decisions, code changes, "
+    "and tool outputs. The summary will be inserted back into the conversation so "
+    "the agent can continue without losing important context. Be factual and brief."
+)
 
 
 @dataclass
@@ -28,6 +37,83 @@ class CompactResult:
     after_tokens: int
     before_msgs: int
     after_msgs: int
+
+
+def estimate_tokens(text: str) -> int:
+    """Cheap token estimator: 4 chars ≈ 1 token. Always ≥ 1."""
+    return max(1, len(text) // 4)
+
+
+@dataclass
+class Compaction:
+    """Bound configuration + callables for one compress() invocation.
+
+    ``summarize`` is the LLM closure built by ``build_compaction``.
+    ``params()`` returns all keyword arguments for ``compress()`` except ``prior``
+    (which is supplied per-turn by the caller).
+    """
+    summarize: Callable[[list[dict]], str]
+    count_tokens: Callable[[str], int]
+    fixed_overhead_tokens: int
+    ctx_window: int
+    threshold: float = 0.5
+    target_ratio: float = 0.2
+    protect_head_n: int = 0
+    protect_last_n: int = 20
+
+    def params(self) -> dict:
+        """Return kwargs for compress() (everything except ``prior``)."""
+        return {
+            "summarize": self.summarize,
+            "count_tokens": self.count_tokens,
+            "fixed_overhead_tokens": self.fixed_overhead_tokens,
+            "ctx_window": self.ctx_window,
+            "threshold": self.threshold,
+            "target_ratio": self.target_ratio,
+            "protect_head_n": self.protect_head_n,
+            "protect_last_n": self.protect_last_n,
+        }
+
+
+def build_compaction(cfg, *, model, fixed_overhead_tokens: int,
+                     add_cost: Callable[[float], None]) -> "Compaction | None":
+    """Build a ``Compaction`` adapter from a config dict and live model/cost hooks.
+
+    Returns ``None`` when compaction is disabled or ``cfg`` is falsy.
+
+    ``model`` must implement ``query(messages: list[dict]) -> dict`` where the
+    returned dict has ``"content"`` (str) and ``"extra": {"cost": float}``.
+    ``add_cost`` is called with each summarize call's cost so the session can
+    track it alongside normal turn costs.
+    """
+    if not cfg or not cfg.get("enabled"):
+        return None
+
+    ctx_window: int = int(cfg.get("ctx_window", DEFAULT_CONTEXT_WINDOW))
+    threshold: float = float(cfg.get("threshold", 0.5))
+    target_ratio: float = float(cfg.get("target_ratio", 0.2))
+    protect_head_n: int = int(cfg.get("protect_head_n", 0))
+    protect_last_n: int = int(cfg.get("protect_last_n", 20))
+
+    def summarize(middle: list[dict]) -> str:
+        user_content = render(middle)
+        msg = model.query([
+            {"role": "system", "content": COMPRESS_SYSTEM},
+            {"role": "user", "content": user_content},
+        ])
+        add_cost(msg.get("extra", {}).get("cost", 0.0))
+        return msg.get("content") or ""
+
+    return Compaction(
+        summarize=summarize,
+        count_tokens=estimate_tokens,
+        fixed_overhead_tokens=fixed_overhead_tokens,
+        ctx_window=ctx_window,
+        threshold=threshold,
+        target_ratio=target_ratio,
+        protect_head_n=protect_head_n,
+        protect_last_n=protect_last_n,
+    )
 
 
 def render(messages: list[dict]) -> str:

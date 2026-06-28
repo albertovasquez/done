@@ -1,5 +1,6 @@
 # tests/test_compaction.py
 from harness.compaction import compress, render, CompactResult
+from harness.compaction import estimate_tokens, build_compaction, Compaction
 
 def _msgs(n, role="user", text="x"):
     return [{"role": role, "content": f"{text}{i}"} for i in range(n)]
@@ -193,3 +194,114 @@ def test_recompress_is_bounded_and_valid_not_equal():
     markers = [m for m in twice.messages
                if str(m.get("content", "")).startswith("[Earlier conversation summarized")]
     assert len(markers) <= 1
+
+
+# ---------------------------------------------------------------------------
+# estimate_tokens
+# ---------------------------------------------------------------------------
+
+def test_estimate_tokens_basic():
+    # estimate_tokens = max(1, len//4)
+    assert estimate_tokens("abcd") == 1        # 4 chars -> 4//4 = 1
+    assert estimate_tokens("a" * 100) == 25    # 100 chars -> 25
+    assert estimate_tokens("") == 1            # empty -> max(1, 0) = 1
+
+
+def test_estimate_tokens_is_positive():
+    assert estimate_tokens("x") >= 1
+
+
+# ---------------------------------------------------------------------------
+# build_compaction
+# ---------------------------------------------------------------------------
+
+class _FakeModel:
+    """Minimal model stub: query() returns content + extra.cost."""
+    def __init__(self, response="SUMMARY TEXT"):
+        self._response = response
+        self.costs = []
+
+    def query(self, messages):
+        return {"content": self._response, "extra": {"cost": 0.5}}
+
+
+def test_build_compaction_returns_none_when_no_cfg():
+    result = build_compaction(None, model=_FakeModel(), fixed_overhead_tokens=0,
+                              add_cost=lambda c: None)
+    assert result is None
+
+
+def test_build_compaction_returns_none_when_disabled():
+    result = build_compaction({"enabled": False}, model=_FakeModel(),
+                              fixed_overhead_tokens=0, add_cost=lambda c: None)
+    assert result is None
+
+
+def test_build_compaction_returns_compaction_when_enabled():
+    comp = build_compaction({"enabled": True}, model=_FakeModel(),
+                            fixed_overhead_tokens=100, add_cost=lambda c: None)
+    assert comp is not None
+    assert isinstance(comp, Compaction)
+
+
+def test_build_compaction_summarize_calls_model_and_returns_content():
+    model = _FakeModel(response="my summary")
+    comp = build_compaction({"enabled": True}, model=model,
+                            fixed_overhead_tokens=0, add_cost=lambda c: None)
+    result = comp.summarize([{"role": "user", "content": "hi"}])
+    assert result == "my summary"
+
+
+def test_build_compaction_summarize_forwards_cost():
+    costs = []
+    model = _FakeModel(response="S")
+    comp = build_compaction({"enabled": True}, model=model,
+                            fixed_overhead_tokens=0, add_cost=costs.append)
+    comp.summarize([{"role": "user", "content": "hi"}])
+    assert costs == [0.5]
+
+
+def test_build_compaction_params_has_compress_kwargs():
+    comp = build_compaction({"enabled": True, "ctx_window": 16000},
+                            model=_FakeModel(), fixed_overhead_tokens=200,
+                            add_cost=lambda c: None)
+    p = comp.params()
+    # Must have the keys compress() needs (minus 'prior' which is per-turn)
+    assert "count_tokens" in p
+    assert "fixed_overhead_tokens" in p
+    assert "ctx_window" in p
+    assert p["fixed_overhead_tokens"] == 200
+    assert p["ctx_window"] == 16000
+    # Must NOT have 'summarize' key — that's a separate attr on Compaction
+    # (actually summarize IS in params; check it's callable)
+    assert callable(p["summarize"])
+
+
+def test_build_compaction_default_ctx_window():
+    from harness.compaction import DEFAULT_CONTEXT_WINDOW
+    comp = build_compaction({"enabled": True}, model=_FakeModel(),
+                            fixed_overhead_tokens=0, add_cost=lambda c: None)
+    p = comp.params()
+    assert p["ctx_window"] == DEFAULT_CONTEXT_WINDOW
+
+
+def test_compaction_integrates_with_compress():
+    """End-to-end: build_compaction wired into compress() produces a summary.
+
+    estimate_tokens = len//4. We need before_tokens > MIN_BUDGET_FLOOR (1000).
+    render(msgs) for 40 msgs of 100 chars each:
+      each line: "user: " + "a"*100 = 106 chars; 40 lines -> ~4240 chars -> 1060 tokens.
+    budget = max(int(0.5*32000) - 0, 1000) = 16000. before=1060 < 16000 -> no fire!
+    So use ctx_window small enough that budget < 1060: ctx_window=2000 ->
+    budget = max(1000-0, 1000) = 1000. Still 1060 > 1000 -> fires!
+    """
+    model = _FakeModel(response="COMPACTED")
+    # 40 msgs, each 100 chars; rendered ~4240 chars -> ~1060 tokens (via estimate_tokens)
+    prior = [{"role": "user", "content": "a" * 100} for _ in range(40)]
+    comp = build_compaction(
+        {"enabled": True, "ctx_window": 2000, "protect_head_n": 2, "protect_last_n": 5},
+        model=model, fixed_overhead_tokens=0, add_cost=lambda c: None,
+    )
+    r = compress(prior, **comp.params())
+    assert r.method == "summary"
+    assert any("COMPACTED" in str(m.get("content")) for m in r.messages)
