@@ -16,4 +16,4 @@ def test_at_future_then_exhausted():
 def test_cron_returns_future():
     s = m.Cron(expr="* * * * *")  # every minute
     nxt = m.next_run_at(s, now=1000.0, state=m.JobState())
-    assert nxt is not None and nxt > 1000.0
+    assert nxt is not None and 1000.0 < nxt <= 1060.0
