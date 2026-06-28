@@ -1489,8 +1489,9 @@ def test_persona_selected_switches_when_idle():
 
 
 def test_persona_selected_inert_mid_turn():
-    """Selecting a persona while a turn is active must be a no-op:
-    ext_method must NOT be called and _session_id must remain unchanged."""
+    """Selecting a persona while a turn is active must queue the switch (not apply it):
+    ext_method must NOT be called immediately, _session_id must remain unchanged,
+    but _pending_persona must be set so the switch fires on turn-end."""
     async def go():
         from harness.tui.widgets.agent_rail import PersonaSelected as _PersonaSelected
 
@@ -1518,6 +1519,9 @@ def test_persona_selected_inert_mid_turn():
             )
             assert app._session_id == "original-session", (
                 "_session_id must remain unchanged while turn is active"
+            )
+            assert app._pending_persona == "ana", (
+                "_pending_persona must be set so the switch fires on turn-end"
             )
 
     asyncio.run(go())

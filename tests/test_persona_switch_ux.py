@@ -82,6 +82,61 @@ def test_switch_clears_old_persona_messages_and_shows_room_header():
     asyncio.run(go())
 
 
+def test_mid_turn_switch_is_queued_not_immediate():
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._conn = _FakeConn()
+            app._turn_active = True               # simulate a running turn
+            before = app._current_persona()
+            await app.on_persona_selected(PersonaSelected("maya"))
+            await pilot.pause()
+            assert app._pending_persona == "maya", "switch should be queued"
+            assert app._current_persona() == before, "must NOT switch mid-turn"
+            assert ("harness/set_persona", {"id": "maya"}) not in app._conn.ext_calls
+
+    asyncio.run(go())
+
+
+def test_mid_turn_switch_last_wins():
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._conn = _FakeConn()
+            app._turn_active = True
+            await app.on_persona_selected(PersonaSelected("maya"))
+            await app.on_persona_selected(PersonaSelected("alex"))
+            await pilot.pause()
+            assert app._pending_persona == "alex", "later selection overwrites earlier"
+
+    asyncio.run(go())
+
+
+def test_pending_switch_applies_on_turn_end_before_drain():
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            # reach conversation state so a transcript exists
+            await _send_first_prompt(pilot, app, "hello")
+            for _ in range(60):
+                await pilot.pause()
+                if app._started and app.query("#transcript"):
+                    break
+            app._conn = _FakeConn()
+            app._pending_persona = "maya"
+            app._turn_active = False
+            app._apply_pending_persona()          # simulate the turn-end call
+            for _ in range(20):
+                await pilot.pause()
+            assert app._current_persona() == "maya", "pending switch did not apply"
+            assert app._pending_persona is None, "pending must be cleared"
+
+    asyncio.run(go())
+
+
 def test_clear_transcript_empties_children_and_resets_stream_state():
     async def go():
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")

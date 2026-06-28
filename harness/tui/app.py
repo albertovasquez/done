@@ -130,6 +130,7 @@ class HarnessTui(App):
         self._persona_seen = False            # True after the first real PersonaResolved lands
         self._turn_active = False             # True while a prompt turn is in flight (used by Esc-rail guard)
         self._queued: list[str] = []          # prompts typed mid-turn; drained FIFO when the turn ends
+        self._pending_persona: str | None = None   # a switch requested mid-turn; applied on turn-end
         self._snapshot = initial_snapshot()   # the presentation model (pure, immutable)
         self._commands = build_registry()     # slash-command registry
         self._slash = None                    # the SlashMenu widget while open, else None
@@ -875,7 +876,8 @@ class HarnessTui(App):
                 self._hide_working()
                 self._active_input().disabled = False
                 self._active_input().focus()
-                self._drain_queue()               # auto-send the next queued message, if any
+                self._apply_pending_persona()     # honor a mid-turn switch request first…
+                self._drain_queue()               # …then any queued prompt runs in the NEW room
 
     def _drain_queue(self) -> None:
         """Start the next message the user queued mid-turn. FIFO, one per turn —
@@ -889,6 +891,29 @@ class HarnessTui(App):
         model_label = _model_label(self.model, self._worker_model_id)
         yolo = f" {_c('error', 'bypass on')}" if self._yolo else ""   # records mode at turn time
         return f"{_c('accent', '▣ ' + _MODE)}{yolo} {_c('muted', f'· {model_label} · {elapsed:.1f}s')}"
+
+    def _apply_pending_persona(self) -> None:
+        """If a persona switch was requested mid-turn, apply it now (turn-end),
+        BEFORE draining queued prompts — so a prompt typed during the old turn
+        runs in the NEW persona's room, not the old one."""
+        pid = self._pending_persona
+        if pid is None or self._conn is None or pid == self._current_persona():
+            self._pending_persona = None
+            return
+        self._pending_persona = None
+        self.run_worker(self._switch_persona(pid), thread=False)
+
+    async def _switch_persona(self, pid: str) -> None:
+        """The async half of a deferred switch: call set_persona, then apply."""
+        try:
+            resp = await self._conn.ext_method("harness/set_persona", {"id": pid})
+        except Exception as e:
+            self._notify_line(f"could not switch persona: {e}")
+            return
+        if not resp.get("ok"):
+            self._notify_line(f"persona: {resp.get('error', 'switch failed')}")
+            return
+        self._apply_persona_switch(resp)
 
     def _write_meta(self, elapsed: float) -> None:
         """Append the turn's run caption as a FOOTER below the response, once the
@@ -1151,7 +1176,12 @@ class HarnessTui(App):
 
     async def on_persona_selected(self, event: PersonaSelected) -> None:
         event.stop()
-        if self._turn_active:                 # inert mid-turn — full prompt/stream lifecycle
+        if self._turn_active:                 # don't switch under a live turn — queue it
+            if event.id != self._current_persona():
+                self._pending_persona = event.id          # last-wins
+                name = self._persona_display_name(self._current_persona())
+                self._notify_line(f"{name} is still working — switching when this turn finishes.")
+            self._show_drawer(False)
             return
         if self._conn is None:
             return
