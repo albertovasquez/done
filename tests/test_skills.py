@@ -122,6 +122,27 @@ def test_meta_flow_scalar_and_list_and_garbage():
     assert _meta_from_frontmatter({"name": "x", "description": "d", "flows": ["a", 3, "b"]}, "x").flows == ("a", "b")
 
 
+def test_meta_category_present_absent_and_garbage():
+    # present -> that value
+    assert _meta_from_frontmatter(
+        {"name": "x", "description": "d", "category": "caveman"}, "x").category == "caveman"
+    # absent -> "other"
+    assert _meta_from_frontmatter({"name": "x", "description": "d"}, "x").category == "other"
+    # non-string -> "other" (never raises)
+    assert _meta_from_frontmatter(
+        {"name": "x", "description": "d", "category": ["a", "b"]}, "x").category == "other"
+    assert _meta_from_frontmatter(
+        {"name": "x", "description": "d", "category": 7}, "x").category == "other"
+
+
+def test_meta_origin_defaults_unknown_and_ignores_frontmatter():
+    # _meta_from_frontmatter never reads origin: it stays the default "unknown"
+    # even if a skill tries to set it (origin is derived, not authored).
+    m = _meta_from_frontmatter(
+        {"name": "x", "description": "d", "origin": "bundled"}, "x")
+    assert m.origin == "unknown"
+
+
 def test_load_catalog_returns_skillmeta(tmp_path):
     d = tmp_path / "alpha"; d.mkdir()
     (d / "SKILL.md").write_text(

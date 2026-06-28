@@ -37,6 +37,8 @@ class SkillMeta:
     model_invocable: bool = True      # False == disable-model-invocation (user/explicit only)
     user_invocable: bool = True       # False == not exposed as /name
     flows: tuple[str, ...] = ()       # () == global (always available); else flow families
+    category: str = "other"           # authored: frontmatter `category:`; "other" when absent
+    origin: str = "unknown"           # DERIVED from the load root (Task 3); never from frontmatter
 
 
 def _meta_from_frontmatter(data: dict, fallback_name: str) -> SkillMeta:
@@ -54,8 +56,10 @@ def _meta_from_frontmatter(data: dict, fallback_name: str) -> SkillMeta:
         flows = tuple(f for f in raw_flow if isinstance(f, str))
     else:
         flows = ()
+    raw_cat = data.get("category")
+    category = raw_cat if isinstance(raw_cat, str) and raw_cat else "other"
     return SkillMeta(name=name, description=desc, model_invocable=model_inv,
-                     user_invocable=user_inv, flows=flows)
+                     user_invocable=user_inv, flows=flows, category=category)
 
 
 def _parse_skill_md(path: Path) -> tuple[dict, str]:
