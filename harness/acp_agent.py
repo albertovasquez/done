@@ -30,6 +30,7 @@ from harness.acp_session import SessionStore
 from harness.router import Router, Classification
 from harness.chat_handler import ChatHandler
 from harness.transcript import flatten_agent_messages
+from minisweagent.exceptions import UserInterruption
 
 logger = logging.getLogger("harness.acp_agent")
 
@@ -444,6 +445,14 @@ class HarnessAgent(acp.Agent):
                 self._conn.session_update(session_id, upd), loop).result()
 
         def emit_delta(piece: str) -> None:
+            # ESC mid-stream: raising here aborts the model's `for chunk in stream`
+            # loop (streaming_model.py) on the next prose token. UserInterruption is
+            # an InterruptAgentFlow → the engine loop's handler ends the turn with a
+            # cancelled exit (same path as the between-steps checkpoint).
+            if state.cancel_flag.is_set():
+                raise UserInterruption({
+                    "role": "exit", "content": "Cancelled by user.",
+                    "extra": {"exit_status": "cancelled", "submission": ""}})
             # first delta of a NEW step (new n_calls) → boundary first. n_calls is
             # incremented in TracingAgent.query() BEFORE model.query() fires
             # on_delta, so the first delta of each step sees a fresh n_calls value
@@ -578,6 +587,8 @@ class HarnessAgent(acp.Agent):
                                      base_block=base_block,
                                      # share the model's registry; None (mock) => agent default.
                                      registry=getattr(model_obj, "registry", None),
+                                     # ESC checkpoint: the loop ends between steps when set.
+                                     cancel_flag=state.cancel_flag,
                                      **cfg)
                 agent_ref["agent"] = agent
                 model = agent.model

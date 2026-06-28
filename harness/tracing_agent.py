@@ -22,6 +22,7 @@ The duplicated lines are pinned to upstream v2.4.2 — verify against upstream's
 
 from __future__ import annotations
 
+import threading
 import time
 
 from minisweagent.agents.default import DefaultAgent
@@ -34,8 +35,12 @@ from harness.events import Emitter
 class TracingAgent(DefaultAgent):
     def __init__(self, model, env, *, emitter: Emitter, skill_block: str = "",
                  persona_block: str = "", memory_block: str = "",
-                 base_block: str = "", registry=None, **kwargs):
+                 base_block: str = "", registry=None,
+                 cancel_flag: threading.Event | None = None, **kwargs):
         super().__init__(model, env, **kwargs)
+        # ESC sets this flag (from the async loop thread); the step loop checks it
+        # between steps to end the turn promptly. None => never cancelled (CLI/mock).
+        self._cancel_flag = cancel_flag
         self._emitter = emitter
         self._skill_block = skill_block
         self._persona_block = persona_block
@@ -87,6 +92,16 @@ class TracingAgent(DefaultAgent):
             self.add_messages(self.model.format_message(
                 role="user", content=self._render_template(self.config.instance_template)))
             while True:
+                # ESC checkpoint: end the turn between steps so a cancel set during
+                # the previous LLM call / tool run stops us before the next step.
+                # Append the exit message and break directly (not via raise) — this
+                # check sits OUTSIDE the inner try, so an InterruptAgentFlow here
+                # would escape the loop's own handler.
+                if self._cancel_flag is not None and self._cancel_flag.is_set():
+                    self.add_messages({
+                        "role": "exit", "content": "Cancelled by user.",
+                        "extra": {"exit_status": "cancelled", "submission": ""}})
+                    break
                 try:
                     self.step()
                     self.n_consecutive_format_errors = 0  # reset on any clean step

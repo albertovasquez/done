@@ -3,6 +3,7 @@ sys.path.insert(0, "upstream/src")
 sys.path.insert(0, ".")
 
 import threading
+import time
 
 import pytest
 from minisweagent.exceptions import Submitted
@@ -44,6 +45,35 @@ def test_cancel_flag_skips_execution(tmp_path):
     assert result["returncode"] == -1
     assert "cancel" in result["exception_info"].lower()
     assert ran == []                                    # nothing fired; command never ran
+
+
+def test_cancel_flag_kills_running_command(tmp_path):
+    # The flag flips AFTER the command has started: a long-running subprocess must
+    # be killed and execute() must return promptly with a cancelled result, NOT
+    # block for the full sleep. (Before the fix, super().execute() blocks in
+    # communicate() and ignores the flag once the process is running.)
+    flag = threading.Event()
+    env = _env(tmp_path, on_command=lambda *a: None, cancel_flag=flag)
+
+    # flip the flag shortly after execute() starts the subprocess
+    threading.Timer(0.3, flag.set).start()
+    start = time.monotonic()
+    result = env.execute({"command": "sleep 30"})
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 5, f"execute() blocked {elapsed:.1f}s — the running command was not killed"
+    assert result["returncode"] == -1
+    assert "cancel" in result["exception_info"].lower()
+
+
+def test_cancel_flag_unset_runs_to_completion(tmp_path):
+    # Regression guard: with the flag never set, a normal command still runs
+    # fully and returns its real output (the poll loop must not truncate it).
+    flag = threading.Event()
+    env = _env(tmp_path, on_command=lambda *a: None, cancel_flag=flag)
+    result = env.execute({"command": "printf 'done'; exit 7"})
+    assert result["output"] == "done"
+    assert result["returncode"] == 7
 
 
 def test_permission_reject_skips_execution(tmp_path):
