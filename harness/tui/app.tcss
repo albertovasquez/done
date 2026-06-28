@@ -152,9 +152,13 @@ PermissionModal #select-list { height: 2; margin-top: 1; }
 #ar-tasks { height: auto; color: $foreground; }
 #ar-tools { height: auto; color: $foreground; }
 
-/* ---- design-system decision prompt ---- */
-#decision-prompt { padding: 1 2; border-left: thick $accent; background: $surface; }
-#decision-question { text-style: bold; padding-bottom: 1; }
+/* ---- clarification decision modal — same centered box as SelectModal ---- */
+DecisionModal { align: center middle; }
+DecisionModal #decision-box { width: 72; height: auto; max-height: 80%;
+    border: round $accent; background: $surface; padding: 1 2; }
+DecisionModal #decision-title { padding-bottom: 1; text-style: bold; color: $accent; }
+DecisionModal #decision-options { height: auto; max-height: 16; background: $surface; }
+DecisionModal #decision-footer { padding-top: 1; color: $muted; }
 
 /* ---- prominent agents drawer (persona switcher) ---- */
 #agent-drawer {

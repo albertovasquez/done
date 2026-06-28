@@ -150,17 +150,17 @@ def test_tool_call_row_collapsed_line_unchanged():
 
 
 from harness.tui.state import DecisionView
-from harness.tui.widgets.decision_prompt import (
-    DecisionPrompt, TYPE_SOMETHING, CHAT_ABOUT_IT,
+from harness.tui.widgets.decision_modal import (
+    DecisionModal, TYPE_SOMETHING, CHAT_ABOUT_IT,
 )
 
 
-def test_decision_prompt_option_lines():
+def test_decision_modal_option_lines():
     dv = DecisionView(question="Where should the seam live?",
                       options=(("Wrapper", "isolated, recommended"),
                                ("Patch upstream", "violates zero-edits")))
-    dp = DecisionPrompt(dv)
-    lines = dp.option_lines()
+    dm = DecisionModal(dv)
+    lines = dm.option_lines()
     # numbered options + 2 fallbacks
     assert any("1." in ln and "Wrapper" in ln for ln in lines)
     assert any("isolated" in ln for ln in lines)
@@ -168,85 +168,102 @@ def test_decision_prompt_option_lines():
     assert any("Chat about this" in ln for ln in lines)
 
 
-# --- Finding (1): DecisionPrompt cursor + option_lines ---
+def test_decision_modal_marks_first_option_recommended():
+    dv = DecisionView(question="Q?",
+                      options=(("Best", "do this"), ("Other", "maybe")))
+    dm = DecisionModal(dv)
+    lines = dm.option_lines()
+    # option 1 carries a (recommended) marker; option 2 does not
+    assert any("Best" in ln and "(recommended)" in ln for ln in lines)
+    assert not any("Other" in ln and "(recommended)" in ln for ln in lines)
 
-def _make_dp(n: int = 2) -> DecisionPrompt:
+
+# --- DecisionModal cursor + option_lines ---
+
+def _make_dm(n: int = 2) -> DecisionModal:
     options = tuple((f"Opt{i}", f"rationale {i}") for i in range(n))
     dv = DecisionView(question="Q?", options=options)
-    return DecisionPrompt(dv)
+    return DecisionModal(dv)
 
 
-def test_decision_prompt_cursor_marker_at_start():
-    dp = _make_dp(2)
+def test_decision_modal_cursor_marker_at_start():
+    dm = _make_dm(2)
     # cursor starts at 0; first option line should have the › prefix
-    lines = dp.option_lines()
+    lines = dm.option_lines()
     assert any("› " in ln and "Opt0" in ln for ln in lines)
     # other rows should not have › prefix on their title lines
     assert not any("› " in ln and "Opt1" in ln for ln in lines)
 
 
-def test_decision_prompt_move_updates_cursor():
-    dp = _make_dp(2)
-    dp.move(1)
-    assert dp._cursor == 1
-    lines = dp.option_lines()
+def test_decision_modal_move_updates_cursor():
+    dm = _make_dm(2)
+    dm.move(1)
+    assert dm._cursor == 1
+    lines = dm.option_lines()
     assert any("› " in ln and "Opt1" in ln for ln in lines)
     assert not any("› " in ln and "Opt0" in ln for ln in lines)
 
 
-def test_decision_prompt_move_clamps_at_bottom():
-    dp = _make_dp(2)
+def test_decision_modal_move_clamps_at_bottom():
+    dm = _make_dm(2)
     # n=2, total=4; clamp at 3
-    dp.move(100)
-    assert dp._cursor == 3
+    dm.move(100)
+    assert dm._cursor == 3
 
 
-def test_decision_prompt_move_clamps_at_top():
-    dp = _make_dp(2)
-    dp.move(-100)
-    assert dp._cursor == 0
+def test_decision_modal_move_clamps_at_top():
+    dm = _make_dm(2)
+    dm.move(-100)
+    assert dm._cursor == 0
 
 
-def test_decision_prompt_select_cursor_0():
-    """cursor at 0 → Selected(0)"""
-    dp = _make_dp(2)
-    dp._cursor = 0
-    messages: list = []
-    dp.post_message = lambda m: messages.append(m)
-    dp.select()
-    assert len(messages) == 1
-    assert messages[0].index == 0
+def test_decision_modal_select_cursor_0_dismisses_with_index():
+    """cursor at 0 → dismiss(0)"""
+    dm = _make_dm(2)
+    dm._cursor = 0
+    dismissed: list = []
+    dm.dismiss = lambda v=None: dismissed.append(v)
+    dm.select()
+    assert dismissed == [0]
 
 
-def test_decision_prompt_select_cursor_at_n():
-    """cursor at n (first fallback) → Selected(TYPE_SOMETHING)"""
-    dp = _make_dp(2)
-    dp._cursor = dp._n  # == 2
-    messages: list = []
-    dp.post_message = lambda m: messages.append(m)
-    dp.select()
-    assert messages[0].index == TYPE_SOMETHING
+def test_decision_modal_select_cursor_at_n_dismisses_type_something():
+    """cursor at n (first fallback) → dismiss(TYPE_SOMETHING)"""
+    dm = _make_dm(2)
+    dm._cursor = dm._n  # == 2
+    dismissed: list = []
+    dm.dismiss = lambda v=None: dismissed.append(v)
+    dm.select()
+    assert dismissed == [TYPE_SOMETHING]
 
 
-def test_decision_prompt_select_cursor_at_n_plus_1():
-    """cursor at n+1 (second fallback) → Selected(CHAT_ABOUT_IT)"""
-    dp = _make_dp(2)
-    dp._cursor = dp._n + 1  # == 3
-    messages: list = []
-    dp.post_message = lambda m: messages.append(m)
-    dp.select()
-    assert messages[0].index == CHAT_ABOUT_IT
+def test_decision_modal_select_cursor_at_n_plus_1_dismisses_chat():
+    """cursor at n+1 (second fallback) → dismiss(CHAT_ABOUT_IT)"""
+    dm = _make_dm(2)
+    dm._cursor = dm._n + 1  # == 3
+    dismissed: list = []
+    dm.dismiss = lambda v=None: dismissed.append(v)
+    dm.select()
+    assert dismissed == [CHAT_ABOUT_IT]
 
 
-def test_decision_prompt_fallback_cursor_markers():
-    dp = _make_dp(2)
+def test_decision_modal_cancel_dismisses_with_none():
+    dm = _make_dm(2)
+    dismissed: list = []
+    dm.dismiss = lambda v=None: dismissed.append(v)
+    dm.action_cancel()
+    assert dismissed == [None]
+
+
+def test_decision_modal_fallback_cursor_markers():
+    dm = _make_dm(2)
     # Move to Type something (index n=2)
-    dp.move(dp._n)
-    lines = dp.option_lines()
+    dm.move(dm._n)
+    lines = dm.option_lines()
     assert any("› " in ln and "Type something" in ln for ln in lines)
     # Move to Chat about this
-    dp.move(1)
-    lines = dp.option_lines()
+    dm.move(1)
+    lines = dm.option_lines()
     assert any("› " in ln and "Chat about this" in ln for ln in lines)
 
 

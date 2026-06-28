@@ -1948,8 +1948,9 @@ def _started_app(pilot, app):
     return _wait()
 
 
-def test_decision_meta_mounts_prompt():
+def test_decision_meta_pushes_modal():
     from harness.tui.messages import SessionUpdate
+    from harness.tui.widgets.decision_modal import DecisionModal
     from acp import update_agent_message_text
 
     async def go():
@@ -1961,14 +1962,41 @@ def test_decision_meta_mounts_prompt():
             upd.field_meta = _decision_meta("Which did you mean?", [("Explain", "r1"), ("Fix", "r2")])
             app.on_session_update(SessionUpdate(upd))
             await pilot.pause()
-            assert app.query("#decision-prompt"), "DecisionPrompt must mount on a decision meta"
+            assert any(isinstance(s, DecisionModal) for s in app.screen_stack), \
+                "DecisionModal must be pushed on a decision meta"
 
     asyncio.run(go())
 
 
+def test_decision_meta_suppresses_question_prose():
+    """The question prose rides the same chunk as the decision meta; with the
+    modal owning the question it must NOT also render inline in the transcript."""
+    from harness.tui.messages import SessionUpdate
+    from acp import update_agent_message_text
+
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await _send_first_prompt(pilot, app, "hi")
+            await _started_app(pilot, app)
+            q = "Which did you mean exactly?"
+            upd = update_agent_message_text(q)
+            upd.field_meta = _decision_meta(q, [("Explain", "r1"), ("Fix", "r2")])
+            app.on_session_update(SessionUpdate(upd))
+            await pilot.pause()
+            assert q not in _transcript_text(app), \
+                "question prose must not render inline when a modal owns it"
+
+    asyncio.run(go())
+
+
+def _active_modal(app, cls):
+    return next((s for s in app.screen_stack if isinstance(s, cls)), None)
+
+
 def test_selecting_option_submits_its_title():
     from harness.tui.messages import SessionUpdate
-    from harness.tui.widgets.decision_prompt import DecisionPrompt
+    from harness.tui.widgets.decision_modal import DecisionModal
     from acp import update_agent_message_text
 
     async def go():
@@ -1986,17 +2014,54 @@ def test_selecting_option_submits_its_title():
             upd.field_meta = _decision_meta("Which?", [("Explain it", "r1"), ("Fix it", "r2")])
             app.on_session_update(SessionUpdate(upd))
             await pilot.pause()
-            app.on_decision_prompt_selected(DecisionPrompt.Selected(1))   # pick "Fix it"
+            modal = _active_modal(app, DecisionModal)
+            modal._cursor = 1          # "Fix it"
+            modal.select()             # real dismiss → pops screen, fires _on_decision
             await pilot.pause()
             assert submitted == ["Fix it"]
-            assert not app.query("#decision-prompt"), "prompt must unmount after selection"
+            assert not any(isinstance(s, DecisionModal) for s in app.screen_stack), \
+                "modal must be dismissed after selection"
+
+    asyncio.run(go())
+
+
+def test_esc_dismisses_modal_without_cancelling_turn():
+    """esc on the modal must hit the SCREEN's binding (dismiss), not the app's
+    'Cancel turn' binding — and must reset the double-push guard so future
+    decisions still open."""
+    from harness.tui.messages import SessionUpdate
+    from harness.tui.widgets.decision_modal import DecisionModal
+    from acp import update_agent_message_text
+
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        cancelled = []
+        async with app.run_test() as pilot:
+            await _send_first_prompt(pilot, app, "hi")
+            await _started_app(pilot, app)
+
+            async def fake_turn_cancel():
+                cancelled.append(True)
+            app.action_cancel = fake_turn_cancel   # observe the app-level binding
+
+            upd = update_agent_message_text("Which?")
+            upd.field_meta = _decision_meta("Which?", [("A", "r1"), ("B", "r2")])
+            app.on_session_update(SessionUpdate(upd))
+            await pilot.pause()
+            assert _active_modal(app, DecisionModal) is not None
+            await pilot.press("escape")
+            await pilot.pause()
+            assert not any(isinstance(s, DecisionModal) for s in app.screen_stack), \
+                "esc must dismiss the modal"
+            assert cancelled == [], "esc must NOT cancel the turn while the modal owns it"
+            assert app._decision_open is False, "guard must reset so future decisions open"
 
     asyncio.run(go())
 
 
 def test_type_something_focuses_without_submit():
     from harness.tui.messages import SessionUpdate
-    from harness.tui.widgets.decision_prompt import DecisionPrompt, TYPE_SOMETHING
+    from harness.tui.widgets.decision_modal import DecisionModal
     from acp import update_agent_message_text
 
     async def go():
@@ -2014,10 +2079,12 @@ def test_type_something_focuses_without_submit():
             upd.field_meta = _decision_meta("Which?", [("A", "r1")])
             app.on_session_update(SessionUpdate(upd))
             await pilot.pause()
-            app.on_decision_prompt_selected(DecisionPrompt.Selected(TYPE_SOMETHING))
+            modal = _active_modal(app, DecisionModal)
+            modal._cursor = modal._n   # "Type something" fallback
+            modal.select()
             await pilot.pause()
             assert submitted == []                       # no turn submitted
-            assert not app.query("#decision-prompt")     # still dismissed
+            assert not any(isinstance(s, DecisionModal) for s in app.screen_stack)
 
     asyncio.run(go())
 

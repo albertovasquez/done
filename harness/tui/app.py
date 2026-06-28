@@ -47,7 +47,7 @@ from harness.tui.widgets.select_modal import SelectModal, SelectOption
 from harness.tui.widgets.agent_rail import AgentRail, PersonaSelected
 from harness.tui.widgets.slash_menu import SlashMenu
 from harness.tui.widgets.prompt_area import PromptArea
-from harness.tui.widgets.decision_prompt import DecisionPrompt, TYPE_SOMETHING, CHAT_ABOUT_IT
+from harness.tui.widgets.decision_modal import DecisionModal, TYPE_SOMETHING, CHAT_ABOUT_IT
 from harness.tui.widgets.status_chip import StatusChip
 from harness.tui.header import icon_markup, header_text_markup
 from harness import config as _config
@@ -128,6 +128,7 @@ class HarnessTui(App):
         self._boundary_after = False          # True => an in-turn boundary (tool/thought/stream_reset) closed the block; next prose opens a FRESH widget (vs. a late delta of the prior answer, which extends in place)
         self._tokens = 0                      # last-known token count from usage updates
         self._persona_seen = False            # True after the first real PersonaResolved lands
+        self._decision_open = False            # True while a DecisionModal is on the screen stack (guards double-push)
         self._turn_active = False             # True while a prompt turn is in flight (used by Esc-rail guard)
         self._queued: list[str] = []          # prompts typed mid-turn; drained FIFO when the turn ends
         self._pending_persona: str | None = None   # a switch requested mid-turn; applied on turn-end
@@ -538,27 +539,26 @@ class HarnessTui(App):
 
     # ---- structured clarification ----
 
-    def on_decision_prompt_selected(self, msg: "DecisionPrompt.Selected") -> None:
-        """A clarification option was chosen: option -> submit its title as the next
-        prompt; fallbacks focus/prefill the composer. Then dismiss the prompt."""
+    def _on_decision(self, index: "int | None") -> None:
+        """DecisionModal dismiss callback. `index` is an option index (0..n-1),
+        TYPE_SOMETHING / CHAT_ABOUT_IT for the fallbacks, or None on esc/cancel.
+        Real option -> submit its title as the next prompt; fallbacks focus/prefill
+        the composer; esc just closes. The modal already dismissed itself."""
+        self._decision_open = False
         active = self._snapshot.active
         view = active.decision if active else None
-        if msg.index == TYPE_SOMETHING:
+        if index is None:
+            pass                                  # esc/cancel: just close
+        elif index == TYPE_SOMETHING:
             self._active_input().focus()
-        elif msg.index == CHAT_ABOUT_IT:
+        elif index == CHAT_ABOUT_IT:
             inp = self._active_input()
             inp.value = "Let's discuss: "
             inp.focus()
-        elif view is not None and 0 <= msg.index < len(view.options):
-            self.run_worker(self._submit_text(view.options[msg.index][0]), thread=False)
-        self._dismiss_decision()
-
-    def _dismiss_decision(self) -> None:
-        for w in self.query("#decision-prompt"):
-            w.remove()
-        active = self._snapshot.active
+        elif view is not None and 0 <= index < len(view.options):
+            self.run_worker(self._submit_text(view.options[index][0]), thread=False)
         if active and active.decision is not None:
-            self._apply(DecisionOpened(None))   # clear state.decision
+            self._apply(DecisionOpened(None))     # clear state.decision
 
     # ---- slash menu ----
 
@@ -1028,12 +1028,16 @@ class HarnessTui(App):
         # boundary won't fire and the misroute returns.
         if isinstance(meta, dict) and (meta.get("harness") or {}).get("task_classified"):
             self._end_stream(boundary=True)
-        # fold a decision view if present
+        # fold a decision view if present → push a modal (not inline). The
+        # question prose rides this SAME chunk (acp_agent emits one message_chunk
+        # carrying both), so the modal owns the question and the message branch
+        # below suppresses the duplicate inline prose.
         dv = decision_from_meta(getattr(msg.update, "field_meta", None))
         if dv is not None:
             self._apply(DecisionOpened(dv))
-            if not self.query("#decision-prompt"):
-                self._append(DecisionPrompt(dv))
+            if not self._decision_open:
+                self._decision_open = True
+                self.push_screen(DecisionModal(dv), self._on_decision)
         # fold a persona resolution if present (structured path — NOT harness_chips)
         pid = persona_from_meta(getattr(msg.update, "field_meta", None))
         if pid:
@@ -1048,7 +1052,9 @@ class HarnessTui(App):
         # fold item into the presentation model
         self._apply(ItemReceived(item))
         if item.kind == "message":
-            if item.text:
+            # Suppress the question prose when this chunk also carried a decision:
+            # the modal owns the question, so rendering it inline would duplicate it.
+            if item.text and dv is None:
                 self._stream_message(item.text)
         elif item.kind == "thought":
             if item.text:
