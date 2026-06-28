@@ -1,8 +1,3 @@
-import sys
-
-sys.path.insert(0, "upstream/src")
-sys.path.insert(0, ".")
-
 import json  # noqa: E402
 import types  # noqa: E402
 

@@ -1,7 +1,3 @@
-import sys
-sys.path.insert(0, "upstream/src")
-sys.path.insert(0, ".")
-
 from harness.acp_emit import parse_plan_command, plan_update
 
 

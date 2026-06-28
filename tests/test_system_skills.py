@@ -1,7 +1,3 @@
-import sys
-sys.path.insert(0, "upstream/src")
-sys.path.insert(0, ".")
-
 from pathlib import Path
 from harness.skills import load_catalog, compose, _parse_skill_md
 from harness import paths

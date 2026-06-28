@@ -1,8 +1,3 @@
-import sys
-
-sys.path.insert(0, "upstream/src")
-sys.path.insert(0, ".")
-
 from minisweagent.environments.local import LocalEnvironment  # noqa: E402
 
 from harness.tools.edit import EditTool  # noqa: E402

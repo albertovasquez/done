@@ -5,9 +5,6 @@ allow WITHOUT a client round-trip (no modal). We test the small pure predicate
 the closure consults, so we don't have to drive a full prompt turn.
 """
 
-import sys
-sys.path.insert(0, "upstream/src")
-sys.path.insert(0, ".")
 
 from harness.acp_agent import HarnessAgent
 

@@ -1,7 +1,3 @@
-import sys
-sys.path.insert(0, "upstream/src")
-sys.path.insert(0, ".")
-
 from harness.acp_emit import tool_call_start, tool_call_done, message_chunk, with_meta
 
 

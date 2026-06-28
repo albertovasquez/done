@@ -1,8 +1,3 @@
-import sys
-
-sys.path.insert(0, "upstream/src")
-sys.path.insert(0, ".")
-
 from pathlib import Path  # noqa: E402
 
 import yaml  # noqa: E402

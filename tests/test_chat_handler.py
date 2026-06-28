@@ -5,10 +5,7 @@ stream=True to litellm and yields the non-empty content deltas in order. No live
 proxy: litellm.completion is monkeypatched.
 """
 
-import sys
 
-sys.path.insert(0, "upstream/src")
-sys.path.insert(0, ".")
 
 from harness.chat_handler import ChatHandler
 

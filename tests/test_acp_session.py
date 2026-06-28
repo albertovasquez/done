@@ -1,7 +1,3 @@
-import sys
-sys.path.insert(0, "upstream/src")
-sys.path.insert(0, ".")
-
 import pytest
 from harness.acp_session import SessionStore, SessionState
 

@@ -1,11 +1,8 @@
 import ast
 import inspect
 import json
-import sys
 from pathlib import Path
 
-sys.path.insert(0, "upstream/src")
-sys.path.insert(0, ".")
 
 import harness.run_traced as rt
 

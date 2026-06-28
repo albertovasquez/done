@@ -1,7 +1,4 @@
 # tests/test_streaming_model.py
-import sys
-sys.path.insert(0, "upstream/src")
-sys.path.insert(0, ".")
 
 import types
 import pytest

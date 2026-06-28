@@ -1,7 +1,3 @@
-import sys
-sys.path.insert(0, "upstream/src")
-sys.path.insert(0, ".")
-
 from harness.tui.state import AgentSnapshot, AgentState, TaskItem
 from harness.tui.widgets.activity_region import ActivityRegion
 

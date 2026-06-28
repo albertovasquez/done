@@ -1,8 +1,3 @@
-import sys
-
-sys.path.insert(0, "upstream/src")
-sys.path.insert(0, ".")
-
 from harness.acp_emit import message_chunk, with_meta  # noqa: E402
 from harness.tui.state import decision_from_meta  # noqa: E402
 

@@ -1,7 +1,3 @@
-import sys
-sys.path.insert(0, "upstream/src")
-sys.path.insert(0, ".")
-
 from pathlib import Path
 
 from harness.agents import resolve_agents, AgentsLoad, MAX_AGENTS_CHARS

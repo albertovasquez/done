@@ -17,10 +17,7 @@ test_acp_agent_streaming.py.
 """
 
 import asyncio
-import sys
 
-sys.path.insert(0, "upstream/src")
-sys.path.insert(0, ".")
 
 import acp
 from acp.schema import AllowedOutcome

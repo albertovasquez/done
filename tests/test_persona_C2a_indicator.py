@@ -2,9 +2,6 @@
 through the parser + reducer to FleetSnapshot.active, and persona emit is wire-only.
 """
 
-import sys
-sys.path.insert(0, "upstream/src")
-sys.path.insert(0, ".")
 
 from harness.tui.state import persona_from_meta, PersonaResolved, reduce, initial_snapshot
 

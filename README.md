@@ -298,6 +298,18 @@ Copy `.env.example` to `.env`, make sure VibeProxy is running on `:8317`, then:
 .venv/bin/python -m pytest tests/ -v
 ```
 
+You only ever create **one** `.venv`, at the repo root. Development happens in git
+worktrees (see *AGENTS.md* #1), and `tests/conftest.py` makes `pytest` always import
+the source of **whichever worktree the tests live in** — no per-worktree venv, and no
+need to `cd` anywhere first. So this works from any directory:
+
+```bash
+.venv/bin/python -m pytest path/to/worktree/tests/ -v   # tests that worktree's code
+```
+
+(The root editable install pins an absolute import path; conftest shadows it so a
+worktree's tests never silently run the root checkout's code.)
+
 ## License
 
 See [`LICENSE`](LICENSE). DoneDone bundles

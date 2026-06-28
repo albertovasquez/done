@@ -3,8 +3,6 @@ over a real subprocess, send a prompt, and assert the unified trace.jsonl
 contains BOTH a dn-side event and a relayed agent-side event. Proves the relay
 round-trips across the process boundary (the unit tests cover each half)."""
 import sys
-sys.path.insert(0, "upstream/src")
-sys.path.insert(0, ".")
 
 import asyncio
 import json

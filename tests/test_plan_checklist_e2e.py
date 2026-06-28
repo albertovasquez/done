@@ -2,9 +2,6 @@
 agent's intercepted `plan ...` sentinel command through render → reduce → the
 widget's show decision. Spans modules, so it lives on its own."""
 
-import sys
-sys.path.insert(0, "upstream/src")
-sys.path.insert(0, ".")
 
 from harness.acp_emit import parse_plan_command, plan_update
 from harness.tui.render import render_update
