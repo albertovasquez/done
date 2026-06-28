@@ -169,7 +169,7 @@ def main(argv: list[str] | None = None) -> int:
     # and pulls bodies on demand via load_skill. No flows on the persona => full
     # catalog, no gating (no-op vs. before).
     skills_roots = _paths.skills_dirs(project_cwd=args.cwd)   # project .agents/.claude skills too
-    _catalog_load = skills.load_catalog_with_skips(skills_roots)
+    _catalog_load = skills.load_catalog_with_skips(skills_roots, project_cwd=args.cwd)
     _full_catalog = _catalog_load.skills
     _skipped_skills = _catalog_load.skipped       # surfaced in the capability answer
     _shadowed_skills = _catalog_load.shadowed     # name clashes across roots (later won)

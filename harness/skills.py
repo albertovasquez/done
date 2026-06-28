@@ -12,10 +12,12 @@ frontmatter missing name/description is recorded as 'skipped' with a reason.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import yaml
+
+from harness.paths import origin_for_root
 
 logger = logging.getLogger("harness.skills")
 
@@ -37,6 +39,8 @@ class SkillMeta:
     model_invocable: bool = True      # False == disable-model-invocation (user/explicit only)
     user_invocable: bool = True       # False == not exposed as /name
     flows: tuple[str, ...] = ()       # () == global (always available); else flow families
+    category: str = "other"           # authored: frontmatter `category:`; "other" when absent
+    origin: str = "unknown"           # DERIVED from the load root (Task 3); never from frontmatter
 
 
 def _meta_from_frontmatter(data: dict, fallback_name: str) -> SkillMeta:
@@ -54,8 +58,10 @@ def _meta_from_frontmatter(data: dict, fallback_name: str) -> SkillMeta:
         flows = tuple(f for f in raw_flow if isinstance(f, str))
     else:
         flows = ()
+    raw_cat = data.get("category")
+    category = raw_cat if isinstance(raw_cat, str) and raw_cat else "other"
     return SkillMeta(name=name, description=desc, model_invocable=model_inv,
-                     user_invocable=user_inv, flows=flows)
+                     user_invocable=user_inv, flows=flows, category=category)
 
 
 def _parse_skill_md(path: Path) -> tuple[dict, str]:
@@ -82,15 +88,18 @@ class CatalogLoad:
     shadowed: list[tuple[str, str]] = field(default_factory=list)  # (name, winning_root) — overridden across roots
 
 
-def load_catalog_with_skips(roots: list[Path]) -> CatalogLoad:
+def load_catalog_with_skips(roots: list[Path], project_cwd=None) -> CatalogLoad:
     """Scan each root's <name>/SKILL.md; later roots override earlier by name.
-    Returns the valid SkillMeta list, every dir DROPPED (with a human reason), and
-    every skill SHADOWED across roots (a later root won) so a name clash is visible
-    rather than silent. Never raises."""
+    Returns the valid SkillMeta list (each stamped with the origin of its WINNING
+    root), every dir DROPPED (with a human reason), and every skill SHADOWED across
+    roots (a later root won) so a name clash is visible rather than silent. Never
+    raises. project_cwd lets origin_for_root classify the two project roots; pass
+    the same cwd skills_dirs() was built with."""
     merged: dict[str, SkillMeta] = {}
     skipped: list[tuple[str, str]] = []
     shadowed: list[tuple[str, str]] = []
     for root in roots:
+        origin = origin_for_root(root, project_cwd)
         if not Path(root).is_dir():
             continue
         for child in sorted(Path(root).iterdir(), key=lambda p: p.name):
@@ -104,24 +113,22 @@ def load_catalog_with_skips(roots: list[Path]) -> CatalogLoad:
                 if name != child.name:
                     raise ValueError(f"name '{name}' does not match directory '{child.name}'")
             except (OSError, UnicodeDecodeError, yaml.YAMLError, ValueError) as e:
-                # Surface to the user (skipped), not just the log: a malformed skill
-                # vanishing with no clue why undercuts a skill-aware system.
                 logger.warning("skipping skill %s/SKILL.md: %s", child.name, e)
                 skipped.append((child.name, str(e)))
                 continue
             if name in merged:                       # an earlier root had this name
                 shadowed.append((name, str(root)))
-            merged[name] = _meta_from_frontmatter(data, name)   # later root wins
+            merged[name] = replace(_meta_from_frontmatter(data, name), origin=origin)
     return CatalogLoad(skills=[merged[k] for k in sorted(merged)],
                        skipped=skipped, shadowed=shadowed)
 
 
-def load_catalog(roots: list[Path]) -> list[SkillMeta]:
+def load_catalog(roots: list[Path], project_cwd=None) -> list[SkillMeta]:
     """Scan each root's <name>/SKILL.md; later roots override earlier by name.
     Invalid skill dirs are omitted (can't select what can't parse). Returns the
     flat SkillMeta list (the historical signature; use load_catalog_with_skips to
     also learn what was dropped)."""
-    return load_catalog_with_skips(roots).skills
+    return load_catalog_with_skips(roots, project_cwd).skills
 
 
 def compose(roots: list[Path], names: list[str]) -> SkillLoad:
@@ -154,16 +161,32 @@ def compose(roots: list[Path], names: list[str]) -> SkillLoad:
     return load
 
 
+# Fixed render order for origin groups; keeps the menu stable turn-to-turn and
+# puts the curated spine first. Origins with no skills are skipped.
+_ORIGIN_ORDER = ("bundled", "user", "project", "persona", "unknown")
+
+
 def compose_menu(metas: list[SkillMeta]) -> str:
     """A lightweight skill MENU (names + one-line descriptions, NO bodies) for the
-    agent prompt. The agent pulls a body with the load_skill tool only when it
-    needs it — progressive disclosure, so a large skill set costs ~one line each,
-    not a wall of bodies. Empty when there are no skills."""
+    agent prompt, GROUPED BY ORIGIN with the category inline. The agent pulls a
+    body with the load_skill tool only when it needs it — progressive disclosure,
+    so a large skill set costs ~one line each, not a wall of bodies. Empty when
+    there are no skills."""
     if not metas:
         return ""
-    lines = "\n".join(f"- **{m.name}** — {m.description}" for m in metas)
+    by_origin: dict[str, list[SkillMeta]] = {}
+    for m in metas:
+        by_origin.setdefault(m.origin, []).append(m)
+    # known origins in fixed order, then any unexpected origin value, alphabetical
+    ordered = [o for o in _ORIGIN_ORDER if o in by_origin]
+    ordered += sorted(o for o in by_origin if o not in _ORIGIN_ORDER)
+    sections = []
+    for origin in ordered:
+        lines = "\n".join(
+            f"- **{m.name}** ({m.category}) — {m.description}" for m in by_origin[origin])
+        sections.append(f"## {origin}\n{lines}")
     return ("\n\n# Skills\n\n"
             "These skills are available. Their full instructions are NOT loaded "
             "yet. Before doing work a skill governs, call the `load_skill` tool "
             "with its name to read its instructions. Don't load skills you won't "
-            "use.\n\n" + lines)
+            "use.\n\n" + "\n\n".join(sections))

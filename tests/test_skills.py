@@ -122,6 +122,27 @@ def test_meta_flow_scalar_and_list_and_garbage():
     assert _meta_from_frontmatter({"name": "x", "description": "d", "flows": ["a", 3, "b"]}, "x").flows == ("a", "b")
 
 
+def test_meta_category_present_absent_and_garbage():
+    # present -> that value
+    assert _meta_from_frontmatter(
+        {"name": "x", "description": "d", "category": "caveman"}, "x").category == "caveman"
+    # absent -> "other"
+    assert _meta_from_frontmatter({"name": "x", "description": "d"}, "x").category == "other"
+    # non-string -> "other" (never raises)
+    assert _meta_from_frontmatter(
+        {"name": "x", "description": "d", "category": ["a", "b"]}, "x").category == "other"
+    assert _meta_from_frontmatter(
+        {"name": "x", "description": "d", "category": 7}, "x").category == "other"
+
+
+def test_meta_origin_defaults_unknown_and_ignores_frontmatter():
+    # _meta_from_frontmatter never reads origin: it stays the default "unknown"
+    # even if a skill tries to set it (origin is derived, not authored).
+    m = _meta_from_frontmatter(
+        {"name": "x", "description": "d", "origin": "bundled"}, "x")
+    assert m.origin == "unknown"
+
+
 def test_load_catalog_returns_skillmeta(tmp_path):
     d = tmp_path / "alpha"; d.mkdir()
     (d / "SKILL.md").write_text(
@@ -133,12 +154,24 @@ def test_load_catalog_returns_skillmeta(tmp_path):
 
 # --- Layer B: lazy skill menu ------------------------------------------------
 
-def test_compose_menu_lists_names_not_bodies():
-    metas = [SkillMeta("a", "does A"), SkillMeta("b", "does B")]
+def test_compose_menu_groups_by_origin_with_category():
     from harness.skills import compose_menu
+    metas = [
+        SkillMeta("a", "does A", category="caveman", origin="bundled"),
+        SkillMeta("v", "does V", category="process", origin="project"),
+        SkillMeta("u", "does U", origin="unknown"),  # category defaults to "other"
+    ]
     out = compose_menu(metas)
-    assert "does A" in out and "**a**" in out and "load_skill" in out
-    assert "# Skills" in out
+    # preamble + load_skill instruction preserved
+    assert "# Skills" in out and "load_skill" in out
+    # origin headings present
+    assert "## bundled" in out and "## project" in out and "## unknown" in out
+    # bundled appears before project before unknown (fixed order)
+    assert out.index("## bundled") < out.index("## project") < out.index("## unknown")
+    # each line carries name, category tag, and description (no bodies)
+    assert "- **a** (caveman) — does A" in out
+    assert "- **v** (process) — does V" in out
+    assert "- **u** (other) — does U" in out
 
 
 def test_compose_menu_empty_is_blank():
@@ -188,6 +221,43 @@ def test_format_catalog_no_skips_unchanged(tmp_path):
     assert "skipped" not in out.lower() and "good" in out
 
 
+def test_format_catalog_suppresses_bundled():
+    from harness.chat_handler import _format_catalog
+    from harness.skills import SkillMeta
+    cat = [
+        SkillMeta("caveman", "secret sauce", origin="bundled"),
+        SkillMeta("my-skill", "user added", origin="user"),
+        SkillMeta("proj-skill", "project added", origin="project"),
+    ]
+    out = _format_catalog(cat)
+    # bundled skill is NOT listed
+    assert "caveman" not in out and "secret sauce" not in out
+    # user + project skills ARE listed
+    assert "my-skill" in out and "proj-skill" in out
+    # count reflects only the 2 visible skills, not 3
+    assert "**2 skills**" in out
+
+
+def test_format_catalog_all_bundled_reads_as_no_skills():
+    from harness.chat_handler import _format_catalog
+    from harness.skills import SkillMeta
+    out = _format_catalog([SkillMeta("caveman", "x", origin="bundled")])
+    # nothing visible -> the honest "no skills" framing
+    assert "no skills" in out.lower()
+
+
+def test_format_catalog_bundled_filtered_but_skipped_kept():
+    from harness.chat_handler import _format_catalog
+    from harness.skills import SkillMeta
+    out = _format_catalog(
+        [SkillMeta("caveman", "x", origin="bundled"),
+         SkillMeta("mine", "y", origin="user")],
+        skipped=[("broken", "frontmatter is not a mapping")])
+    assert "caveman" not in out          # bundled still suppressed
+    assert "mine" in out                 # user skill shown
+    assert "broken" in out               # skipped section unaffected by origin
+
+
 # --- skills-roots: shadow tracking + tie-break (PR1) --------------------------
 
 def test_shadowed_records_later_root_win(tmp_path):
@@ -213,3 +283,40 @@ def test_native_outranks_compat_tie_break(tmp_path):
     # order mirrors skills_dirs: compat BEFORE native => native wins
     load = load_catalog_with_skips([compat, native])
     assert {m.name: m.description for m in load.skills}["tool"] == "deliberate copy"
+
+
+def test_origin_stamped_from_winning_root(tmp_path, monkeypatch):
+    # Point the bundled root at a temp dir we control, then verify a skill loaded
+    # from it gets origin="bundled" and one from a project root gets "project".
+    import harness.paths as paths
+    bundled = tmp_path / "bundled"; (bundled / "a").mkdir(parents=True)
+    (bundled / "a" / "SKILL.md").write_text(
+        "---\nname: a\ndescription: bundled A\n---\nbody\n")
+    proj = tmp_path / "proj" / ".agents" / "skills"; (proj / "b").mkdir(parents=True)
+    (proj / "b" / "SKILL.md").write_text(
+        "---\nname: b\ndescription: project B\n---\nbody\n")
+    monkeypatch.setattr(paths, "bundled_skills_dir", lambda: bundled)
+
+    from harness.skills import load_catalog_with_skips
+    cwd = tmp_path / "proj"
+    load = load_catalog_with_skips([bundled, proj], project_cwd=cwd)
+    by = {m.name: m.origin for m in load.skills}
+    assert by == {"a": "bundled", "b": "project"}
+
+
+def test_origin_uses_winning_root_when_shadowed(tmp_path, monkeypatch):
+    # A bundled skill overridden by a project copy reports origin="project".
+    import harness.paths as paths
+    bundled = tmp_path / "bundled"; (bundled / "a").mkdir(parents=True)
+    (bundled / "a" / "SKILL.md").write_text(
+        "---\nname: a\ndescription: bundled A\n---\nb\n")
+    proj = tmp_path / "proj" / ".agents" / "skills"; (proj / "a").mkdir(parents=True)
+    (proj / "a" / "SKILL.md").write_text(
+        "---\nname: a\ndescription: project A wins\n---\nb\n")
+    monkeypatch.setattr(paths, "bundled_skills_dir", lambda: bundled)
+
+    from harness.skills import load_catalog_with_skips
+    cwd = tmp_path / "proj"
+    load = load_catalog_with_skips([bundled, proj], project_cwd=cwd)
+    [m] = load.skills
+    assert m.origin == "project" and m.description == "project A wins"

@@ -71,6 +71,25 @@ def skills_dirs(project_cwd: str | Path | None = None) -> list[Path]:
     return roots
 
 
+def origin_for_root(root: Path | str, project_cwd: str | Path | None = None) -> str:
+    """Classify a skills ROOT into an origin bucket by matching it against the
+    same paths skills_dirs() builds. Pure; never raises. Unmatched -> 'unknown'.
+
+    origin is DERIVED from the load path, never from a skill's frontmatter, so a
+    skill cannot misrepresent where it came from. 'persona' is reserved in the
+    value set but never returned (no persona skills root exists yet)."""
+    root = Path(root)
+    if root == bundled_skills_dir():
+        return "bundled"
+    if root in (Path.home() / ".claude" / "skills", config_dir() / "skills"):
+        return "user"
+    if project_cwd is not None:
+        cwd = Path(project_cwd)
+        if root in (cwd / ".claude" / "skills", cwd / ".agents" / "skills"):
+            return "project"
+    return "unknown"
+
+
 def default_workspace_dir() -> Path:
     """The built-in 'default' persona workspace at config_dir()/agents/default/.
     Does NOT create the directory; an absent dir is a valid empty persona."""

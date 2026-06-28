@@ -39,21 +39,22 @@ def is_capability_question(prompt: str) -> bool:
 def _format_catalog(catalog: "list[skills.SkillMeta]",
                     skipped: "list[tuple[str, str]] | None" = None,
                     shadowed: "list[tuple[str, str]] | None" = None) -> str:
-    """A markdown answer listing every skill (name + description). Dropped skills
-    (skipped: malformed/name-mismatch/unreadable) and overridden skills (shadowed:
-    a same-named skill in a higher-precedence root won) are listed too, so the user
-    learns why a skill is unselectable or which copy is active rather than it being
-    silent."""
+    """A markdown answer listing the user's skills (name + description). Skills
+    whose origin is 'bundled' (the harness's curated spine) are NOT enumerated —
+    they are used silently. Dropped skills (skipped) and overridden skills
+    (shadowed) are listed regardless of origin, so the user still learns why a
+    skill they added is unselectable or which copy is active."""
     skipped = skipped or []
     shadowed = shadowed or []
-    if not catalog:
-        head = ("I currently have **no skills** loaded — none are bundled or "
-                "configured in your skills directories.")
+    visible = [m for m in catalog if getattr(m, "origin", "unknown") != "bundled"]
+    if not visible:
+        head = ("I currently have **no skills** loaded — none are configured "
+                "in your skills directories.")
         lines = [head]
     else:
-        n = len(catalog)
+        n = len(visible)
         lines = [f"I have **{n} skill{'s' if n != 1 else ''}** available:", ""]
-        lines += [f"- **{m.name}** — {m.description}" for m in catalog]
+        lines += [f"- **{m.name}** — {m.description}" for m in visible]
     if skipped:
         k = len(skipped)
         lines += ["", f"⚠️ **{k} skill{'s' if k != 1 else ''} skipped** (won't load):"]
