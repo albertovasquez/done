@@ -69,6 +69,23 @@ class FakeAgent(acp.Agent):
                 # the client shows "$ <cmd>" not the opaque tool_call_id.
                 tool_call=ToolCallUpdate(tool_call_id="tc1", title="$ echo hello"))
 
+        # 2c) BURST: faithfully replay the real "Responding…"-stuck turn shape —
+        # a chat_question whose tiny answer + chat.done relay + response frame all
+        # land in one ~8ms burst (real trace 20260628-131123). Several small
+        # AgentMessageChunks, an agent-relayed chat.done trace, then return — NO
+        # awaits between them, so the whole sequence delivers in a single tick.
+        # Used by the stress Pilot loop to hunt the TurnEnded-never-fires race.
+        if "BURST" in text:
+            for piece in ("I have ", "**7 skills** available:\n", "- ask-done\n",
+                          "- clarify-before-acting\n", "- planning-before-coding\n"):
+                await self._conn.session_update(
+                    session_id, update_agent_message_text(piece))
+            tupd = update_agent_message_text("")
+            tupd.field_meta = {"harness": {"trace": {
+                "type": "chat.done", "data": {"sid": session_id}}}}
+            await self._conn.session_update(session_id, tupd)
+            return acp.PromptResponse(stop_reason="end_turn")
+
         # 3) optionally stream several message deltas for ONE turn (so the client
         # can be tested accumulating them into a single live Markdown widget).
         if "STREAM" in text:
