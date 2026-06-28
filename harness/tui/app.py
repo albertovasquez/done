@@ -1172,9 +1172,10 @@ class HarnessTui(App):
 
     def _apply_persona_switch(self, resp: dict, note: str | None = None) -> None:
         """Apply a successful set_persona/create_persona result: repoint the session,
-        update the indicator + footer, close the rail, refocus, and write a visible
-        confirmation line. Shared by switch + create. `note` overrides the default
-        "now talking to" confirmation (create passes "created persona …")."""
+        update the indicator + footer, CLEAR the prior persona's transcript (each
+        persona is a separate conversation — Phase 1 shows a fresh room, replay is
+        Phase 2), write the room header, close the rail, refocus. `note` overrides
+        the default room header (create passes its own)."""
         self._session_id = resp["session_id"]
         self._persona_seen = True
         self._apply(PersonaResolved(resp["id"]))   # updates snapshot + ActivityRegion
@@ -1183,10 +1184,18 @@ class HarnessTui(App):
         if model:
             self._worker_model_id = model
             self._refresh_meta_line()
-        # Visible confirmation FIRST: the status-bar chip is easy to miss, so echo
-        # the switch in the transcript (the user reported "I don't see anything").
-        # Done before the focus call below so a focus hiccup can't swallow it.
-        self._notify_line(note or f"now talking to persona: {resp['id']}")
+        # Each persona is its own conversation: clear the previous room so its
+        # messages don't bleed into this one, then show whose room this is.
+        self._clear_transcript()
+        if self._started:
+            name = self._persona_display_name(resp["id"])
+            if note:
+                self._append_line(_c("muted", note))
+            else:
+                self._append_line(_c("accent", f"now in {name}'s conversation"))
+                self._append_line(_c("muted", "a separate conversation"))
+                self._append_line(
+                    _c("muted", f"This is {name}'s conversation — separate from your others. Say hello."))
         # close the drawer + refocus the prompt
         self._show_drawer(False)
         self._active_input().focus()

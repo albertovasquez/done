@@ -2,8 +2,10 @@ import asyncio
 from pathlib import Path
 
 from harness.tui.app import HarnessTui
+from harness.tui.widgets.agent_rail import PersonaSelected
 from harness.tui.widgets.prompt_area import PromptArea
 from textual.containers import VerticalScroll
+from textual.widgets import Markdown, Static
 
 
 REPO = Path(__file__).resolve().parent.parent
@@ -30,6 +32,54 @@ def test_persona_display_name_falls_back_to_id(tmp_path, monkeypatch):
     assert isinstance(name, str) and name, "must return a non-empty string"
     # an unknown persona id with no workspace → falls back to the id verbatim
     assert app._persona_display_name("nope-nonexistent") == "nope-nonexistent"
+
+
+class _FakeConn:
+    def __init__(self):
+        self.ext_calls = []
+        self.set_persona_response = {
+            "ok": True, "id": "maya", "session_id": "sess-maya", "model": "mock"}
+
+    async def ext_method(self, method, params):
+        self.ext_calls.append((method, params))
+        if method == "harness/set_persona":
+            return self.set_persona_response
+        return {}
+
+
+def _transcript_text(app):
+    parts = []
+    for w in (app.query_one("#transcript", VerticalScroll).children):
+        if isinstance(w, Markdown):
+            parts.append(getattr(w, "source", "") or "")
+        elif isinstance(w, Static):
+            parts.append(str(w.content))
+    return "\n".join(parts)
+
+
+def test_switch_clears_old_persona_messages_and_shows_room_header():
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await _send_first_prompt(pilot, app, "MARKER42")
+            for _ in range(60):
+                await pilot.pause()
+                if "MARKER42" in _transcript_text(app):
+                    break
+            assert "MARKER42" in _transcript_text(app), "precondition"
+
+            app._conn = _FakeConn()
+            app._turn_active = False
+            await app.on_persona_selected(PersonaSelected("maya"))
+            await pilot.pause()
+
+            text = _transcript_text(app)
+        assert "MARKER42" not in text, f"old persona's message bled through:\n{text}"
+        assert "now in" in text and "conversation" in text, f"room header missing:\n{text}"
+        assert "now talking to persona:" not in text, "old terse line should be gone"
+
+    asyncio.run(go())
 
 
 def test_clear_transcript_empties_children_and_resets_stream_state():

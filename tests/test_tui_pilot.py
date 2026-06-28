@@ -1846,28 +1846,38 @@ def test_modal_error_keeps_modal_open():
 
 
 def test_apply_persona_switch_writes_visible_confirmation():
-    """After a switch/create, a confirmation line is written via _notify_line —
-    the status-bar chip alone is too easy to miss ("I don't see anything")."""
+    """After a switch/create in the conversation view, a room-header line appears
+    in the transcript. The status-bar chip alone is too easy to miss."""
     async def go():
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
         async with app.run_test() as pilot:
             await pilot.pause()
-            notes = []
-            app._notify_line = lambda msg: notes.append(str(msg))
+            # Transition to conversation view so _started=True and #transcript exists
+            await _send_first_prompt(pilot, app, "hello")
+            for _ in range(60):
+                await pilot.pause()
+                if app._started:
+                    break
             app._active_input = lambda: type("X", (), {"focus": lambda self: None})()
 
+            # note= path (create): should write the note text into the transcript
             app._apply_persona_switch(
                 {"ok": True, "id": "fred", "session_id": "s", "model": "m"},
                 note="created persona: fred — now talking to it")
-            assert any("created persona: fred" in n for n in notes), (
-                f"create must write a visible confirmation, got {notes!r}"
+            text = _transcript_text(app)
+            assert "created persona: fred" in text, (
+                f"create must write a visible confirmation, got {text!r}"
             )
 
-            notes.clear()
+            # plain switch path: should write "now in {name}'s conversation"
             app._apply_persona_switch(
                 {"ok": True, "id": "ana", "session_id": "s2", "model": "m"})
-            assert any("now talking to persona: ana" in n for n in notes), (
-                f"plain switch must write a visible confirmation, got {notes!r}"
+            text = _transcript_text(app)
+            assert "now in" in text and "conversation" in text, (
+                f"plain switch must write room header, got {text!r}"
+            )
+            assert "now talking to persona:" not in text, (
+                "old terse line must be gone"
             )
 
     asyncio.run(go())
