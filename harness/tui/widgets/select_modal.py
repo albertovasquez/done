@@ -30,7 +30,18 @@ class SelectOption:
 
 
 class SelectModal(ModalScreen):
-    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+    # The search Input holds focus (so typing filters), but a single-line Input
+    # doesn't navigate the list — ↑↓ would otherwise do nothing and you'd have to
+    # click. Bind the nav keys on the screen with priority so they reach the list
+    # regardless of which child is focused, then drive the ListView's own cursor
+    # actions (identical behavior to focusing the list directly).
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel"),
+        Binding("up", "nav_up", "Up", show=False, priority=True),
+        Binding("down", "nav_down", "Down", show=False, priority=True),
+        Binding("pageup", "nav_pageup", "Page up", show=False, priority=True),
+        Binding("pagedown", "nav_pagedown", "Page down", show=False, priority=True),
+    ]
 
     def __init__(self, title: str, options: list[SelectOption],
                  current: str | None = None, footer: str = "",
@@ -97,6 +108,18 @@ class SelectModal(ModalScreen):
     @on(ListView.Selected, "#select-list")
     def _selected(self, event: ListView.Selected) -> None:
         self.dismiss(getattr(event.item, "data", None))
+
+    def action_nav_up(self) -> None:
+        self.query_one("#select-list", ListView).action_cursor_up()
+
+    def action_nav_down(self) -> None:
+        self.query_one("#select-list", ListView).action_cursor_down()
+
+    def action_nav_pageup(self) -> None:
+        self.query_one("#select-list", ListView).action_page_up()
+
+    def action_nav_pagedown(self) -> None:
+        self.query_one("#select-list", ListView).action_page_down()
 
     def action_cancel(self) -> None:
         self.dismiss(None)

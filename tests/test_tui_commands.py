@@ -352,3 +352,61 @@ def test_select_modal_search_and_select():
         assert chosen.get("v") == "b-two", f"expected b-two, got {chosen}"
 
     asyncio.run(go())
+
+
+def test_select_modal_box_hugs_content_no_tall_gap():
+    """Regression: the box must hug its content, not stretch to max-height.
+
+    The header is a Vertical (defaults to height: 1fr); without an explicit
+    `#select-header { height: auto }` rule it expands and inflates the auto box
+    to its 80% cap, leaving a tall empty gap above the search/list. With 14 rows
+    the box should be far shorter than the 80%-of-50 = 40 it used to be."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test(size=(80, 50)) as pilot:
+            await pilot.pause()
+            options = [SelectOption(id=f"m{i}", label=f"model-{i}") for i in range(14)]
+            app.push_screen(SelectModal(title="Select model", options=options,
+                                        current="m9", footer="esc cancel"))
+            await pilot.pause()
+            modal = app.screen
+            box = modal.query_one("#select-box")
+            header = modal.query_one("#select-header")
+            # header hugs its content (title only here = 2 rows), not 1fr-stretched
+            assert header.outer_size.height <= 4, (
+                f"header should hug content, got {header.outer_size.height}")
+            # box should fit content (~title+search+list+footer+chrome), well under
+            # the old 40-row (80% of 50) blowup.
+            assert box.outer_size.height <= 28, (
+                f"box should hug content, got {box.outer_size.height} (was 40)")
+
+    asyncio.run(go())
+
+
+def test_select_modal_arrow_keys_navigate_while_search_focused():
+    """Regression: ↑↓ must move the list selection even though the search Input
+    holds focus on mount. Before the fix the keys were swallowed by the Input and
+    you had to click a row to change the highlight."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test(size=(80, 50)) as pilot:
+            await pilot.pause()
+            options = [SelectOption(id=f"m{i}", label=f"model-{i}") for i in range(14)]
+            app.push_screen(SelectModal(title="Select model", options=options,
+                                        current="m9", footer="esc cancel"))
+            await pilot.pause()
+            modal = app.screen
+            # focus starts on the search Input, not the list
+            assert isinstance(app.focused, Input), (
+                f"search Input should hold focus, got {type(app.focused).__name__}")
+            lv = modal.query_one("#select-list", ListView)
+            assert lv.index == 9, f"current 'm9' should be highlighted, got {lv.index}"
+            await pilot.press("down")
+            await pilot.pause()
+            assert lv.index == 10, f"down should move to 10, got {lv.index}"
+            await pilot.press("up")
+            await pilot.press("up")
+            await pilot.pause()
+            assert lv.index == 8, f"two ups from 10 should land on 8, got {lv.index}"
+
+    asyncio.run(go())
