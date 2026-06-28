@@ -1685,3 +1685,113 @@ def test_new_persona_modal_is_a_centered_box_not_fullscreen():
             assert box.styles.border.top[0] == "round", "box must have the round $accent border"
 
     asyncio.run(go())
+
+
+# ---- structured clarification (#66) ----
+
+def test_submit_text_starts_a_turn():
+    """_submit_text routes through the same path as a typed prompt: a chosen
+    option's text lands in the transcript as a user message."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await _send_first_prompt(pilot, app, "hello")
+            for _ in range(50):
+                await pilot.pause()
+                if app._started and app.query("#transcript"):
+                    break
+            await app._submit_text("chosen option title")
+            await pilot.pause()
+            assert "chosen option title" in _transcript_text(app)
+
+    asyncio.run(go())
+
+
+def _decision_meta(question, options):
+    return {"harness": {"decision": {
+        "question": question,
+        "options": [{"title": t, "rationale": r} for t, r in options]}}}
+
+
+def _started_app(pilot, app):
+    """Wait until the conversation transcript exists."""
+    async def _wait():
+        for _ in range(50):
+            await pilot.pause()
+            if app._started and app.query("#transcript"):
+                return
+    return _wait()
+
+
+def test_decision_meta_mounts_prompt():
+    from harness.tui.messages import SessionUpdate
+    from acp import update_agent_message_text
+
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await _send_first_prompt(pilot, app, "hi")
+            await _started_app(pilot, app)
+            upd = update_agent_message_text("Which did you mean?")
+            upd.field_meta = _decision_meta("Which did you mean?", [("Explain", "r1"), ("Fix", "r2")])
+            app.on_session_update(SessionUpdate(upd))
+            await pilot.pause()
+            assert app.query("#decision-prompt"), "DecisionPrompt must mount on a decision meta"
+
+    asyncio.run(go())
+
+
+def test_selecting_option_submits_its_title():
+    from harness.tui.messages import SessionUpdate
+    from harness.tui.widgets.decision_prompt import DecisionPrompt
+    from acp import update_agent_message_text
+
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        submitted = []
+        async with app.run_test() as pilot:
+            await _send_first_prompt(pilot, app, "hi")
+            await _started_app(pilot, app)
+
+            async def fake_submit(t):
+                submitted.append(t)
+            app._submit_text = fake_submit
+
+            upd = update_agent_message_text("Which?")
+            upd.field_meta = _decision_meta("Which?", [("Explain it", "r1"), ("Fix it", "r2")])
+            app.on_session_update(SessionUpdate(upd))
+            await pilot.pause()
+            app.on_decision_prompt_selected(DecisionPrompt.Selected(1))   # pick "Fix it"
+            await pilot.pause()
+            assert submitted == ["Fix it"]
+            assert not app.query("#decision-prompt"), "prompt must unmount after selection"
+
+    asyncio.run(go())
+
+
+def test_type_something_focuses_without_submit():
+    from harness.tui.messages import SessionUpdate
+    from harness.tui.widgets.decision_prompt import DecisionPrompt, TYPE_SOMETHING
+    from acp import update_agent_message_text
+
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        submitted = []
+        async with app.run_test() as pilot:
+            await _send_first_prompt(pilot, app, "hi")
+            await _started_app(pilot, app)
+
+            async def fake_submit(t):
+                submitted.append(t)
+            app._submit_text = fake_submit
+
+            upd = update_agent_message_text("Which?")
+            upd.field_meta = _decision_meta("Which?", [("A", "r1")])
+            app.on_session_update(SessionUpdate(upd))
+            await pilot.pause()
+            app.on_decision_prompt_selected(DecisionPrompt.Selected(TYPE_SOMETHING))
+            await pilot.pause()
+            assert submitted == []                       # no turn submitted
+            assert not app.query("#decision-prompt")     # still dismissed
+
+    asyncio.run(go())

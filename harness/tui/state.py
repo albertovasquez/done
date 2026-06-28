@@ -141,7 +141,7 @@ class PermissionClosed: ...
 
 @dataclass(frozen=True)
 class DecisionOpened:
-    view: "DecisionView"
+    view: "DecisionView | None"   # None clears an open decision
 
 
 @dataclass(frozen=True)
@@ -184,6 +184,9 @@ def _reduce_agent(a: AgentSnapshot, event) -> AgentSnapshot:
         nxt = AgentState.RUNNING_TOOL if a.tool is not None else AgentState.RESPONDING
         return replace(a, state=nxt)
     if isinstance(event, DecisionOpened):
+        if event.view is None:   # clear: leave the awaiting-decision state
+            nxt = AgentState.RUNNING_TOOL if a.tool is not None else AgentState.RESPONDING
+            return replace(a, state=nxt, decision=None)
         return replace(a, state=AgentState.AWAITING_DECISION, decision=event.view)
     if isinstance(event, TurnEnded):
         return replace(a, state=AgentState.DONE if event.ok else AgentState.FAILED,
