@@ -48,8 +48,8 @@ def _format_catalog(catalog: "list[skills.SkillMeta]",
     shadowed = shadowed or []
     visible = [m for m in catalog if getattr(m, "origin", "unknown") != "bundled"]
     if not visible:
-        head = ("I currently have **no skills** loaded — none are bundled or "
-                "configured in your skills directories.")
+        head = ("I currently have **no skills** loaded — none are configured "
+                "in your skills directories.")
         lines = [head]
     else:
         n = len(visible)
