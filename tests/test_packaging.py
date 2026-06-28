@@ -1,3 +1,4 @@
+import re
 import subprocess
 import sys
 import zipfile
@@ -22,6 +23,35 @@ def _build_wheel(tmp_path) -> Path:
             if wheels:
                 return wheels[0]
     pytest.skip("no working wheel builder (python -m build / uv build) available")
+
+
+def _requires_python_floor() -> tuple[int, int]:
+    """Parse the lower bound of `requires-python` from pyproject.toml.
+
+    Avoids a tomllib dependency (the very thing under test) by reading the
+    line directly."""
+    text = (REPO / "pyproject.toml").read_text(encoding="utf-8")
+    m = re.search(r'requires-python\s*=\s*"([^"]+)"', text)
+    assert m, "requires-python not found in pyproject.toml"
+    floor = re.search(r">=\s*(\d+)\.(\d+)", m.group(1))
+    assert floor, f"no >= lower bound in requires-python: {m.group(1)!r}"
+    return int(floor.group(1)), int(floor.group(2))
+
+
+def test_requires_python_floor_supports_tomllib():
+    """`tomllib` is stdlib only since 3.11 and is imported unconditionally on
+    the boot path (config.py, persona_config.py). The declared floor must not
+    promise a Python the code cannot run on. Regression for #103."""
+    sources = "\n".join(
+        (REPO / "harness" / name).read_text(encoding="utf-8")
+        for name in ("config.py", "persona_config.py")
+    )
+    assert "import tomllib" in sources, (
+        "test premise stale: tomllib no longer imported on the boot path"
+    )
+    assert _requires_python_floor() >= (3, 11), (
+        "requires-python floor promises a Python without stdlib tomllib"
+    )
 
 
 def test_wheel_includes_tui_assets_and_skills(tmp_path):

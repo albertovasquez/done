@@ -46,7 +46,7 @@ event tracer, a request router, a skills layer, and the ACP interface.
 
 ## Quick start
 
-DoneDone needs Python 3.10+. Install the `dn` command with
+DoneDone needs Python 3.11+. Install the `dn` command with
 [uv](https://github.com/astral-sh/uv):
 
 ```bash
