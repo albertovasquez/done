@@ -45,7 +45,7 @@ def _load_agent_config() -> dict:
     return cfg["agent"]
 
 
-def _build_vibeproxy_model(project_cwd=None):
+def _build_vibeproxy_model(project_cwd=None, memory_root=None):
     # StreamingLitellmModel (not bare LitellmModel) so the standalone CLI advertises
     # the full tool registry too; on_delta defaults None => byte-identical blocking path.
     from harness.streaming_model import StreamingLitellmModel
@@ -57,7 +57,9 @@ def _build_vibeproxy_model(project_cwd=None):
         cost_tracking="ignore_errors",
         # skill_roots => the agent gets a load_skill tool to pull bodies on demand;
         # project_cwd so it can resolve project .agents/.claude skills too.
-        registry=build_registry(skill_roots=_paths.skills_dirs(project_cwd=project_cwd)),
+        # memory_root => the load_memory tool for on-demand fact recall.
+        registry=build_registry(skill_roots=_paths.skills_dirs(project_cwd=project_cwd),
+                                memory_root=memory_root),
     )
 
 
