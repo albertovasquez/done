@@ -1877,3 +1877,31 @@ def test_drawer_open_prehighlights_active_persona():
             assert rail._rows[rail.index].id == app._current_persona()
 
     asyncio.run(go())
+
+
+def test_enter_on_active_persona_is_noop_close():
+    from harness.tui.widgets.agent_rail import AgentRail, PersonaSelected
+
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        calls = []
+        async with app.run_test() as pilot:
+            await _send_first_prompt(pilot, app, "hi")
+            for _ in range(50):
+                await pilot.pause()
+                if app._started:
+                    break
+
+            async def fake_ext(method, params):
+                calls.append((method, params))
+                return {"ok": True, "id": params["id"], "session_id": "s"}
+            app._conn.ext_method = fake_ext       # spy on set_persona
+
+            rail = app.query_one("#agent-rail", AgentRail)
+            rail.display = True
+            await app.on_persona_selected(PersonaSelected(app._current_persona()))  # enter on active
+            await pilot.pause()
+            assert calls == []                    # no set_persona call
+            assert not rail.display               # drawer closed
+
+    asyncio.run(go())

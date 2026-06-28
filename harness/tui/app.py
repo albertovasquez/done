@@ -1057,6 +1057,14 @@ class HarnessTui(App):
             return
         if self._conn is None:
             return
+        if event.id == self._current_persona():
+            # already this persona — just close the drawer, no switch (no-op enter)
+            try:
+                self.query_one("#agent-rail", AgentRail).display = False
+            except Exception:
+                pass
+            self._active_input().focus()
+            return
         try:
             resp = await self._conn.ext_method("harness/set_persona", {"id": event.id})
         except Exception as e:
