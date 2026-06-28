@@ -37,7 +37,7 @@ from harness.tui.render import render_update, harness_chips, format_cwd
 from harness.tui.state import (
     initial_snapshot, reduce, TurnStarted, TurnEnded, ItemReceived,
     TokensUpdated, DecisionOpened, decision_from_meta,
-    PersonaResolved, persona_from_meta,
+    PersonaResolved, persona_from_meta, AgentState,
 )
 from harness.tui.theme import HARNESS_THEME, COLORS
 from harness.tui.widgets.activity_region import ActivityRegion
@@ -576,7 +576,7 @@ class HarnessTui(App):
             if event.key == "tab":
                 rail = self.query_one("#agent-rail", AgentRail)
                 if isinstance(self.focused, PromptArea) and not rail.display:
-                    rail.set_rows(self._persona_rows())
+                    rail.set_rows(self._persona_rows(), subline_of=self._persona_subline)
                     rail.display = True
                     rail.focus()
                     event.stop()
@@ -1027,13 +1027,24 @@ class HarnessTui(App):
             ws = paths.default_workspace_dir() if pid == "default" \
                 else paths.config_dir() / "agents" / pid
             return persona_config.read_name(ws)
-        return persona_rows(persona_select.list_personas(),
-                            self._current_persona(), name_of)
+        active = self._snapshot.active
+        return persona_rows(persona_select.list_personas(), self._current_persona(),
+                            name_of,
+                            active_status=(active.state if active else AgentState.IDLE))
+
+    def _persona_subline(self, row):
+        """Sub-line for a persona card: real task count for the active persona,
+        'idle' for the rest (no fabricated telemetry — others aren't running)."""
+        active = self._snapshot.active
+        if row.active and active is not None:
+            n = len(active.tasks)
+            return f"{n} task{'s' if n != 1 else ''}" if n else "idle"
+        return "idle"
 
     def action_toggle_rail(self) -> None:
         rail = self.query_one("#agent-rail", AgentRail)
         if not rail.display:
-            rail.set_rows(self._persona_rows())   # refresh on open
+            rail.set_rows(self._persona_rows(), subline_of=self._persona_subline)   # refresh on open
             rail.display = True
             rail.focus()
         else:

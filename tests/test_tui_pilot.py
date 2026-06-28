@@ -970,11 +970,11 @@ def test_agent_rail_renders_rows_and_posts_selection():
                 PersonaRow(id="fred", name="Fred R.", active=True),
             ))
             await pilot.pause()
-            # the rendered content shows both names with correct glyphs
+            # the rendered cards show both names; active is accent-bold, idle plain
             text = rail._rail_text()
             assert "default" in text and "Fred R." in text
-            assert "● Fred R." in text, f"active glyph missing: {text!r}"
-            assert "○ default" in text, f"idle glyph missing: {text!r}"
+            assert "[$accent][b]Fred R.[/b][/]" in text, f"active card styling missing: {text!r}"
+            assert "[$foreground]default[/]" in text, f"idle card styling missing: {text!r}"
             # selecting the "fred" row posts PersonaSelected("fred")
             rail.select_id("fred")             # a direct selection entrypoint the widget exposes
             await pilot.pause()
@@ -1169,9 +1169,9 @@ def test_persona_rows_highlights_launch_persona_before_first_turn():
     try:
         import harness.tui.roster as roster_mod
         real_persona_rows = roster_mod.persona_rows
-        def spy_rows(personas, active_id, name_of):
+        def spy_rows(personas, active_id, name_of, *args, **kwargs):
             captured["active_id"] = active_id
-            return real_persona_rows(personas, active_id, name_of)
+            return real_persona_rows(personas, active_id, name_of, *args, **kwargs)
         roster_mod.persona_rows = spy_rows
         # _persona_rows is called when the rail is opened
         app._persona_rows()
@@ -1852,5 +1852,28 @@ def test_type_something_focuses_without_submit():
             await pilot.pause()
             assert submitted == []                       # no turn submitted
             assert not app.query("#decision-prompt")     # still dismissed
+
+    asyncio.run(go())
+
+
+# ---- prominent agents drawer ----
+
+def test_drawer_open_prehighlights_active_persona():
+    from harness.tui.widgets.agent_rail import AgentRail
+
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await _send_first_prompt(pilot, app, "hi")
+            for _ in range(50):
+                await pilot.pause()
+                if app._started:
+                    break
+            app.action_toggle_rail()              # open the drawer
+            await pilot.pause()
+            rail = app.query_one("#agent-rail", AgentRail)
+            assert rail.display
+            # the active persona's row is pre-highlighted (not forced to index 0)
+            assert rail._rows[rail.index].id == app._current_persona()
 
     asyncio.run(go())
