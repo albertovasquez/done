@@ -82,6 +82,8 @@ grant:
   network: false
 ```
 
+> **Note (v1 — grant fields are recorded, not enforced):** The `grant` fields you collect (paths, shell, tools, network) are stored on the job spec as a declared scope — honest, best-effort metadata — but the harness does **not yet enforce them at runtime**. Enforcement (path confinement, tool restriction, headless deny-by-default) is a planned later phase. This means a scheduled job's effective access is currently "whatever the persona could do," not what is declared in `grant`. Collecting these values is still the right practice — it produces an auditable record and will slot directly into enforcement once it lands — but **do not treat the Permissions Gate as a hard security boundary yet**. Be conservative about what you schedule unattended, and prefer narrow, low-privilege tasks until runtime enforcement ships.
+
 ## Fail Closed
 
 **CRITICAL: Fail closed is not optional. It is the rule.**
