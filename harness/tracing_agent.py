@@ -85,6 +85,13 @@ class TracingAgent(DefaultAgent):
             # ONLY divergence from upstream: `prior` injected between the fresh
             # system message and the fresh instance message.
             self.extra_template_vars |= {"task": task, **kwargs}
+            # load_skill dedup is per-turn: a fresh set each run so a long-lived
+            # ACP session can re-pull a skill on a later turn (and so a skill
+            # loaded once isn't re-injected mid-turn).
+            try:
+                self.env._loaded_skills = set()
+            except Exception:
+                pass
             self.messages = []
             self.add_messages(self.model.format_message(
                 role="system", content=self._render_template(self.config.system_template)))

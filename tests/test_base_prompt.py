@@ -96,3 +96,15 @@ def test_persona_files_section_is_byte_identical_no_args():
     # adding the optional args must not change the no-args render at all
     before = base_prompt.render_base_prompt(model_id="m", cwd="/p", system_line="OS")
     assert "# Persona files" not in before
+
+
+def test_base_prompt_omits_menu_when_none():
+    a = base_prompt.render_base_prompt(model_id="m", cwd="/x", system_line="os")
+    b = base_prompt.render_base_prompt(model_id="m", cwd="/x", system_line="os", skills_menu=None)
+    assert a == b and "# Skills" not in a       # byte-identical no-op
+
+
+def test_base_prompt_appends_menu():
+    out = base_prompt.render_base_prompt(model_id="m", cwd="/x", system_line="os",
+                                         skills_menu="\n\n# Skills\n\n- **a** — d")
+    assert out.endswith("- **a** — d") and "# Skills" in out

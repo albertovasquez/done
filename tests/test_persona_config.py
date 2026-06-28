@@ -54,3 +54,25 @@ def test_read_name_none_when_empty_string(tmp_path):
     """Empty string name is falsy — read_name returns None, not ""."""
     (tmp_path / "persona.toml").write_text('name = ""\n')
     assert persona_config.read_name(tmp_path) is None
+
+
+# --- flows (Layer C1) --------------------------------------------------------
+
+from harness.persona_config import read_flows  # noqa: E402
+
+
+def test_read_flows_happy(tmp_path):
+    (tmp_path / "persona.toml").write_text('flows = ["seo", "marketing"]\n')
+    assert read_flows(tmp_path) == ["seo", "marketing"]
+
+
+def test_read_flows_absent_or_garbage(tmp_path):
+    assert read_flows(tmp_path) == []                 # no file
+    (tmp_path / "persona.toml").write_text('flows = "nope"\n')
+    assert read_flows(tmp_path) == []                 # not a list
+    assert read_flows(None) == []
+
+
+def test_read_flows_filters_non_strings(tmp_path):
+    (tmp_path / "persona.toml").write_text('flows = ["seo", 3, "ok"]\n')
+    assert read_flows(tmp_path) == ["seo", "ok"]

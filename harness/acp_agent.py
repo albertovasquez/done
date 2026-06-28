@@ -359,13 +359,23 @@ class HarnessAgent(acp.Agent):
         # active session's persona seat — consistent with how the model is bound for
         # this turn (C2c). Falls back to "mock" when there is no model.
         ws = state.workspace_dir
+        # Lazy skill discovery: a flow-scoped MENU (names+descriptions) in the
+        # prompt; the agent pulls bodies on demand via load_skill. No persona
+        # flows => full catalog, no gating (no-op vs. before).
+        from harness import flows as _flows
+        from harness import persona_config as _persona_config
+        _enabled_flows = _persona_config.read_flows(ws)
+        _menu_metas = (_flows.scope_catalog(self._router.catalog, _enabled_flows)
+                       if _enabled_flows else self._router.catalog)
+        _skills_menu = skills.compose_menu(_menu_metas)
         # Absolute path so the agent's Edit tool (which requires absolute paths) can
         # act on it; .resolve() also guards a relative XDG_CONFIG_HOME (Codex).
         base_block = base_prompt.render_base_prompt(
             model_id=(model_id or "mock"),
             cwd=state.cwd, system_line=platform.platform(),
             persona_id=(ws.name if ws else None),
-            persona_dir=(str(ws.resolve()) if ws else None))
+            persona_dir=(str(ws.resolve()) if ws else None),
+            skills_menu=_skills_menu)
 
         if cls.task_type == "chat_question":
             # hand the router's catalog so "what skills do we have?" is answered

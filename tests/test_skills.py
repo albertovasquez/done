@@ -133,3 +133,18 @@ def test_load_catalog_returns_skillmeta(tmp_path):
     cat = load_catalog([tmp_path])
     assert cat == [SkillMeta(name="alpha", description="A",
                              model_invocable=False, user_invocable=True, flows=("seo",))]
+
+
+# --- Layer B: lazy skill menu ------------------------------------------------
+
+def test_compose_menu_lists_names_not_bodies():
+    metas = [SkillMeta("a", "does A"), SkillMeta("b", "does B")]
+    from harness.skills import compose_menu
+    out = compose_menu(metas)
+    assert "does A" in out and "**a**" in out and "load_skill" in out
+    assert "# Skills" in out
+
+
+def test_compose_menu_empty_is_blank():
+    from harness.skills import compose_menu
+    assert compose_menu([]) == ""

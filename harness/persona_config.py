@@ -35,6 +35,28 @@ def read_skills(workspace_dir: Path | None) -> list[Path]:
     return [Path(s).expanduser() for s in skills if isinstance(s, str)]
 
 
+def read_flows(workspace_dir: Path | None) -> list[str]:
+    """Flow families this persona enables, from <workspace_dir>/persona.toml
+    `flows`. Returns [] when the dir/file is absent, unreadable, corrupt, or the
+    key is missing or not a list of strings — [] means NO flow gating: all global
+    skills are available and nothing is scoped out (the pre-flows behavior)."""
+    if workspace_dir is None:
+        return []
+    path = workspace_dir / PERSONA_TOML
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return []
+    try:
+        data = tomllib.loads(raw.decode("utf-8"))
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError):
+        return []
+    flows = data.get("flows")
+    if not isinstance(flows, list):
+        return []
+    return [f for f in flows if isinstance(f, str)]
+
+
 def read_name(workspace_dir: Path | None) -> str | None:
     """The persona's display name from <workspace_dir>/persona.toml `name`.
     Returns None when the dir/file is absent, unreadable, corrupt, or the key is

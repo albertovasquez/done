@@ -128,3 +128,18 @@ def compose(roots: list[Path], names: list[str]) -> SkillLoad:
                       "The following skills apply to this task. Follow them.\n\n"
                       + "\n\n".join(bodies))
     return load
+
+
+def compose_menu(metas: list[SkillMeta]) -> str:
+    """A lightweight skill MENU (names + one-line descriptions, NO bodies) for the
+    agent prompt. The agent pulls a body with the load_skill tool only when it
+    needs it — progressive disclosure, so a large skill set costs ~one line each,
+    not a wall of bodies. Empty when there are no skills."""
+    if not metas:
+        return ""
+    lines = "\n".join(f"- **{m.name}** — {m.description}" for m in metas)
+    return ("\n\n# Skills\n\n"
+            "These skills are available. Their full instructions are NOT loaded "
+            "yet. Before doing work a skill governs, call the `load_skill` tool "
+            "with its name to read its instructions. Don't load skills you won't "
+            "use.\n\n" + lines)

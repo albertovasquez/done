@@ -103,6 +103,7 @@ class TurnContext:
     persona_block: str = ""
     memory_block: str = ""
     skill_block: str = ""
+    skills_menu: str = ""        # lazy menu (names+desc) of in-flow skills; bodies pulled via load_skill
     skills: "skills.SkillLoad" = field(default_factory=lambda: skills.SkillLoad())
 
 
@@ -116,12 +117,18 @@ def resolve_persona(workspace_dir: Path | None) -> PersonaLoad:
 
 
 def compose_context(persona_block: str, memory_block: str, skill_roots: list[Path],
-                    skill_names: list[str]) -> TurnContext:
+                    skill_names: list[str],
+                    menu_metas: "list[skills.SkillMeta] | None" = None) -> TurnContext:
     """Bundle already-resolved persona + memory blocks with a fresh skill compose.
-    Persona+memory resolve once per session (caller-cached); skills per turn."""
+    Persona+memory resolve once per session (caller-cached); skills per turn.
+
+    skill_names are the router PRE-SEEDED skills (eager-composed into skill_block).
+    menu_metas (when given) become the lazy # Skills menu the agent pulls from via
+    load_skill — names+descriptions only, no bodies. None == no menu (no-op)."""
     skill_load = skills.compose(skill_roots, skill_names)
+    menu = skills.compose_menu(menu_metas) if menu_metas else ""
     return TurnContext(persona_block=persona_block, memory_block=memory_block,
-                       skill_block=skill_load.block, skills=skill_load)
+                       skill_block=skill_load.block, skills_menu=menu, skills=skill_load)
 
 
 def _trim(text: str, limit: int) -> tuple[str, bool]:

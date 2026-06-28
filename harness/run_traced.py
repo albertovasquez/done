@@ -50,11 +50,13 @@ def _build_vibeproxy_model():
     # the full tool registry too; on_delta defaults None => byte-identical blocking path.
     from harness.streaming_model import StreamingLitellmModel
     from harness.tools.registry import build_registry
+    from harness import paths as _paths
     return StreamingLitellmModel(
         model_name=vibeproxy.model_id(vibeproxy.default_model()),
         model_kwargs=vibeproxy.model_kwargs(),
         cost_tracking="ignore_errors",
-        registry=build_registry(),
+        # skill_roots => the agent gets a load_skill tool to pull bodies on demand.
+        registry=build_registry(skill_roots=_paths.skills_dirs()),
     )
 
 
@@ -153,12 +155,24 @@ def main(argv: list[str] | None = None) -> int:
     agent_cfg["output_path"] = str(run_dir / "traj.json")
     emitter = Emitter(run_dir / "events.jsonl", clock=lambda: 0.0, console=True)
     from datetime import date
+    from harness import paths as _paths
+    from harness import flows as _flows
+    from harness import persona_config as _persona_config
     persona_block = _persona.resolve_persona(workspace_dir).block
     memory_block = _memory.resolve_memory(workspace_dir, today=date.today()).block
+    # Lazy skill discovery: the agent gets a flow-scoped MENU (names+descriptions)
+    # and pulls bodies on demand via load_skill. No flows on the persona => full
+    # catalog, no gating (no-op vs. before).
+    skills_roots = _paths.skills_dirs()
+    _full_catalog = skills.load_catalog(skills_roots)
+    _enabled_flows = _persona_config.read_flows(workspace_dir)
+    _menu_metas = (_flows.scope_catalog(_full_catalog, _enabled_flows)
+                   if _enabled_flows else _full_catalog)
     base_block = base_prompt.render_base_prompt(
         model_id=(worker_model_id or "mock"),
         cwd=args.cwd,
-        system_line=platform.platform())
+        system_line=platform.platform(),
+        skills_menu=skills.compose_menu(_menu_metas))
 
     def run_agent(prompt, skill_block=""):
         runner = MiniSweAgentRunner(model, env, agent_cfg=agent_cfg)
@@ -175,9 +189,8 @@ def main(argv: list[str] | None = None) -> int:
         # propagates to main()'s handler. (KeyboardInterrupt stays local: a
         # Ctrl-C is a user abort, not a traced failure.)
 
-    from harness import paths as _paths
-    skills_roots = _paths.skills_dirs()
-    router = Router(complete, catalog=skills.load_catalog(skills_roots))
+    # Router classifies against the same flow-scoped catalog the agent sees.
+    router = Router(complete, catalog=_menu_metas)
     try:
         rc = route_and_dispatch(
             args.task, router=router, emitter=emitter,
