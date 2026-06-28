@@ -39,6 +39,7 @@ from harness.tui.state import (
     initial_snapshot, reduce, TurnStarted, TurnEnded, ItemReceived,
     TokensUpdated, DecisionOpened, decision_from_meta,
     PersonaResolved, persona_from_meta, AgentState,
+    strip_done_sentinel_prose,
 )
 from harness.tui.theme import HARNESS_THEME, COLORS
 from harness.tui.widgets.activity_region import ActivityRegion
@@ -1139,6 +1140,13 @@ class HarnessTui(App):
             return
         md, buf = self._streaming_md, self._stream_buf
         self._stream_dirty = False
+        # Drop the turn-end sentinel if a model typed it into its prose (the
+        # tool-row guard _is_done_sentinel never sees a typed line). Stripping the
+        # WHOLE buffer here — not the raw _stream_buf accumulator — keeps the
+        # rendered widget clean (which is also what the (copy) affordance reads,
+        # see _copy_turn_response) while leaving the accumulator untouched so a
+        # sentinel split across chunks is matched once fully assembled.
+        buf = strip_done_sentinel_prose(buf)
         # R4: md.update is a no-op until the widget mounts; call_after_refresh
         # guarantees the FIRST paint lands post-mount, matching prior behavior.
         self.call_after_refresh(md.update, buf)

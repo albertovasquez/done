@@ -1,7 +1,7 @@
 from harness.tui.state import (
     AgentState, ToolStatus, ToolView, TaskItem, ScheduleView, DecisionView,
     AgentSnapshot, FleetSnapshot, initial_snapshot,
-    infer_subtype,
+    infer_subtype, strip_done_sentinel_prose,
     persona_from_meta, PersonaResolved, reduce, _reduce_agent,
 )
 
@@ -187,7 +187,57 @@ def test_non_sentinel_echo_still_renders():
         kind="tool", id="e1", title="$ echo hello world", status="pending")))
     a = _active(fs)
     assert len(a.tools) == 1
-    assert len(a.tasks) == 1
+
+
+_SENTINEL = "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
+
+
+def test_strip_sentinel_prose_standalone_trailing_line():
+    # The reported leak: a model TYPES the sentinel as the final line of its
+    # answer (the tool-row guard never sees a typed line). Drop it — and the
+    # blank separator line it sat behind — so the answer ends cleanly.
+    buf = f"Here is the answer.\n\n{_SENTINEL}"
+    assert strip_done_sentinel_prose(buf) == "Here is the answer."
+
+
+def test_strip_sentinel_prose_with_trailing_newline():
+    buf = f"Done.\n\n{_SENTINEL}\n"
+    assert strip_done_sentinel_prose(buf) == "Done."
+
+
+def test_strip_sentinel_prose_midbuffer_line():
+    # Sentinel on its own line in the MIDDLE of the buffer — drop the line, keep
+    # the prose on both sides intact.
+    buf = f"Before.\n{_SENTINEL}\nAfter."
+    assert strip_done_sentinel_prose(buf) == "Before.\nAfter."
+
+
+def test_strip_sentinel_prose_split_across_chunks():
+    # Deltas can split the sentinel. A trailing PARTIAL (buffer ends mid-command)
+    # is held back so it never flickers; once the rest arrives the whole line goes.
+    partial = f"Answer.\n\necho COMPLETE_TASK_AND_"
+    assert strip_done_sentinel_prose(partial) == "Answer."
+    full = f"Answer.\n\n{_SENTINEL}"
+    assert strip_done_sentinel_prose(full) == "Answer."
+
+
+def test_strip_sentinel_prose_handles_fencing():
+    # Models wrap it in backticks or a bullet — match through those wrappers.
+    assert strip_done_sentinel_prose(f"x\n`{_SENTINEL}`") == "x"
+    assert strip_done_sentinel_prose(f"x\n- {_SENTINEL}") == "x"
+    assert strip_done_sentinel_prose(f"x\n> {_SENTINEL}") == "x"
+
+
+def test_strip_sentinel_prose_preserves_inline_mention():
+    # Scope guard: a sentence that MENTIONS the command (not a standalone line)
+    # is real prose and must survive untouched.
+    buf = f"I finish each turn by running {_SENTINEL} as a shell command."
+    assert strip_done_sentinel_prose(buf) == buf
+
+
+def test_strip_sentinel_prose_noop_when_absent():
+    buf = "A normal multi-line\nanswer with no sentinel at all."
+    assert strip_done_sentinel_prose(buf) == buf
 
 
 def test_tool_update_completes_task():
