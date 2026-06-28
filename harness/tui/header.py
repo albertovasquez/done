@@ -24,15 +24,19 @@ def icon_markup() -> str:
     return "\n".join(f"[{BLUE}]{row}[/]" if row.strip() else row for row in _ICON_ROWS)
 
 
-def header_text_markup(title: str, version: str, tagline: str) -> str:
-    """Three-line header text: bold name + dim version / tagline + muted rule.
-
-    The mode·model line is intentionally NOT here — it lives on the compose-meta
-    line under the input (and the status bar), so repeating it in the header was
-    redundant."""
+def header_text_markup(title: str, version: str, tagline: str,
+                       model_line: str | None = None) -> str:
+    """Header text: bold name + dim version / tagline / muted rule, and — when
+    `model_line` is given — the model·provider on a fourth row directly under
+    the rule (e.g. 'gpt-5.4 Vibeproxy'). The model lives here rather than on the
+    compose-meta line so the composer reads as just the mode word; bypass status
+    shows in the footer chip."""
     underline = "─" * max(8, len(tagline))
-    return (
-        f"[$accent][b]{title}[/b][/] [$muted]v{version}[/]\n"
-        f"[$foreground]{tagline}[/]\n"
-        f"[$muted]{underline}[/]"
-    )
+    lines = [
+        f"[$accent][b]{title}[/b][/] [$muted]v{version}[/]",
+        f"[$foreground]{tagline}[/]",
+        f"[$muted]{underline}[/]",
+    ]
+    if model_line:
+        lines.append(f"[$muted]{model_line}[/]")
+    return "\n".join(lines)
