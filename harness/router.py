@@ -38,6 +38,7 @@ class Classification:
     suggested_model: str | None = None
     needs_clarification: bool = False
     clarifying_question: str | None = None
+    options: list[tuple[str, str]] = field(default_factory=list)  # (title, rationale)
 
 
 def complete(system: str, user: str) -> str:
@@ -70,7 +71,12 @@ def _system_prompt(catalog: list[tuple[str, str]]) -> str:
         f"task_type (one of {TASK_TYPES}), skills (list of skill NAMES from the "
         "catalog that apply, may be empty), confidence (0.0-1.0), "
         "suggested_model (a model name or null; advisory only), "
-        "reasoning (one short sentence).\n\nSkill catalog (name: description):\n"
+        "reasoning (one short sentence). When the request is ambiguous or "
+        "low-confidence, ALSO return options: a list of 2-4 objects {title, "
+        "rationale}, each a concrete interpretation the agent could act on "
+        "(title = the rephrased task, rationale = one short why). Omit options "
+        "or use [] when the request is clear."
+        "\n\nSkill catalog (name: description):\n"
         + "\n".join(f"  {n}: {d}" for n, d in catalog)
     )
 
@@ -134,6 +140,11 @@ class Router:
             confidence = 0.0
         reasoning = str(data.get("reasoning") or "")  # `or ""` so a null reasoning isn't "None"
         suggested = data.get("suggested_model") or None
+        raw_opts = data.get("options")
+        raw_opts = raw_opts if isinstance(raw_opts, list) else []   # scalar/str isn't a list
+        options = [(str(o["title"]), str(o.get("rationale", "")))
+                   for o in raw_opts
+                   if isinstance(o, dict) and o.get("title")]
         needs = confidence < self._threshold or task_type == "ambiguous"
         question = None
         if needs:
@@ -141,4 +152,5 @@ class Router:
                         "What concrete task should I do?")
         return Classification(task_type=task_type, skills=skills, confidence=confidence,
                               reasoning=reasoning, suggested_model=suggested,
-                              needs_clarification=needs, clarifying_question=question)
+                              needs_clarification=needs, clarifying_question=question,
+                              options=options)

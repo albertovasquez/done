@@ -130,3 +130,37 @@ def test_5_system_prompt_tells_router_it_runs_in_a_real_project():
     assert "inspect" in sys_l or "read" in sys_l, seen["system"]
     # and explicitly steers project-reference questions to code_explain, not ambiguous
     assert "code_explain" in seen["system"], seen["system"]
+
+
+# ---- structured clarification options (#66) ----
+
+def test_classify_parses_options_array():
+    payload = ('{"task_type": "ambiguous", "confidence": 0.2, "reasoning": "vague", '
+               '"options": [{"title": "Explain how auth works", "rationale": "read the code"}, '
+               '{"title": "Fix the auth bug", "rationale": "repair the failing check"}]}')
+    cls = Router(_stub(payload), catalog=_CATALOG).classify("do the auth thing")
+    assert cls.needs_clarification
+    assert cls.options == [("Explain how auth works", "read the code"),
+                           ("Fix the auth bug", "repair the failing check")]
+
+
+def test_classify_options_absent_degrades_to_empty_and_keeps_question():
+    payload = '{"task_type": "ambiguous", "confidence": 0.1, "reasoning": "unclear"}'
+    cls = Router(_stub(payload), catalog=_CATALOG).classify("hmm")
+    assert cls.options == []
+    assert cls.clarifying_question                      # flat question still set
+
+
+def test_classify_malformed_options_filtered_no_raise():
+    # scalar options, an entry missing title, and a non-dict entry — all dropped
+    payload = ('{"task_type": "ambiguous", "confidence": 0.1, "reasoning": "x", '
+               '"options": [{"rationale": "no title"}, "junk", {"title": "Keep me", "rationale": "ok"}]}')
+    cls = Router(_stub(payload), catalog=_CATALOG).classify("hmm")
+    assert cls.options == [("Keep me", "ok")]
+
+
+def test_classify_clear_request_has_no_options():
+    payload = '{"task_type": "code_fix", "skills": [], "confidence": 0.95, "reasoning": "clear"}'
+    cls = Router(_stub(payload), catalog=_CATALOG).classify("fix the add() bug")
+    assert cls.options == []
+    assert not cls.needs_clarification
