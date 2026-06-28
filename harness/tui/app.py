@@ -122,6 +122,8 @@ class HarnessTui(App):
         self._turn_start = 0.0                # monotonic at send, for elapsed meta
         self._streaming_md = None             # the live Markdown widget for the current answer, else None
         self._stream_buf = ""                 # accumulated text for _streaming_md
+        self._stream_dirty = False            # buffer changed since last paint
+        self._stream_timer = None             # Textual Timer while a stream is open
         self._stream_closed = True            # True => the next message delta starts a fresh widget
         self._boundary_after = False          # True => an in-turn boundary (tool/thought/stream_reset) closed the block; next prose opens a FRESH widget (vs. a late delta of the prior answer, which extends in place)
         self._tokens = 0                      # last-known token count from usage updates
@@ -848,6 +850,10 @@ class HarnessTui(App):
         the persona switch) — unlike async _reset_conversation."""
         if self._started:
             self._transcript.remove_children()
+        # R2: stop the flusher and clear dirty BEFORE nulling the widget so a
+        # stale flush can't fire (or paint into) a reset/replaced stream.
+        self._stop_stream_timer()
+        self._stream_dirty = False
         self._streaming_md = None
         self._stream_buf = ""
         self._stream_closed = True
@@ -911,6 +917,8 @@ class HarnessTui(App):
         place. `_stream_message` keys on `_boundary_after` to tell the two
         apart."""
         self._stream_closed = True
+        self._flush_stream()          # R1: paint any unpainted tail before close
+        self._stop_stream_timer()     # R2: no free-running timer between turns
         if boundary:
             self._boundary_after = True
 
@@ -1064,6 +1072,7 @@ class HarnessTui(App):
         # turn is the late-delta case, where the prior widget extends in place).
         boundary_after = self._boundary_after and self._streaming_md is not None
 
+        opened_new = False
         if self._stream_closed and self._streaming_md is not None \
                 and not prior_is_last and not boundary_after:
             # late delta for the just-closed answer → extend its widget in place;
@@ -1078,11 +1087,44 @@ class HarnessTui(App):
             self._stream_buf = ""
             self._stream_closed = False
             self._boundary_after = False
+            opened_new = True
         # else: stream already open → keep extending it.
         self._stream_buf += text
-        md, buf = self._streaming_md, self._stream_buf
-        self.call_after_refresh(md.update, buf)
+        self._stream_dirty = True
+        if self._stream_closed or opened_new:
+            # R1: a late delta after close cannot rely on the interval (stopped on
+            # close) → flush SYNC. opened_new: the first chunk of a new answer must
+            # paint immediately, not wait up to 80ms for the timer (avoids a
+            # post-_hide_working blank flicker). Subsequent open-stream chunks
+            # coalesce on the timer.
+            self._flush_stream()
+            if not self._stream_closed:
+                self._ensure_stream_timer()   # arm for the chunks that follow
+        else:
+            self._ensure_stream_timer()
         self._transcript.scroll_end(animate=False)
+
+    def _ensure_stream_timer(self) -> None:
+        # R2: start a 12Hz flusher on stream-open; it is stopped on close/reset.
+        if self._stream_timer is None:
+            self._stream_timer = self.set_interval(1 / 12, self._flush_stream)
+
+    def _stop_stream_timer(self) -> None:
+        if self._stream_timer is not None:
+            self._stream_timer.stop()
+            self._stream_timer = None
+
+    def _flush_stream(self) -> None:
+        # R2/R3: no-op when nothing to paint or the widget is gone (teardown);
+        # capture the CURRENT widget+buffer so a flush can't paint a stale buffer
+        # into a new widget after a reset.
+        if not self._stream_dirty or self._streaming_md is None:
+            return
+        md, buf = self._streaming_md, self._stream_buf
+        self._stream_dirty = False
+        # R4: md.update is a no-op until the widget mounts; call_after_refresh
+        # guarantees the FIRST paint lands post-mount, matching prior behavior.
+        self.call_after_refresh(md.update, buf)
 
     def on_session_update(self, msg: SessionUpdate) -> None:
         if not self._started:

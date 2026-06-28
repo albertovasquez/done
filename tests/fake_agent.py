@@ -98,6 +98,14 @@ class FakeAgent(acp.Agent):
                 session_id, update_agent_message_text("late answer"))
             return acp.PromptResponse(stop_reason="end_turn")
 
+        # MANYCHUNKS: emit many small deltas with NO awaits between them, to
+        # stress the client's per-chunk render path (coalescing test C2).
+        if "MANYCHUNKS" in text:
+            for i in range(60):
+                await self._conn.session_update(
+                    session_id, update_agent_message_text(f"word{i} "))
+            return acp.PromptResponse(stop_reason="end_turn")
+
         # 3) optionally stream several message deltas for ONE turn (so the client
         # can be tested accumulating them into a single live Markdown widget).
         if "STREAM" in text:
