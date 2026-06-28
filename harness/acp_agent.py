@@ -35,6 +35,32 @@ from minisweagent.exceptions import UserInterruption
 logger = logging.getLogger("harness.acp_agent")
 
 
+# Answer-only instance template for code_explain turns. The engine's default
+# instance_template (mini.yaml) is injected as the USER turn EVERY step and reads
+# "Please solve this issue: {{task}} … Edit the source code to resolve it" — an
+# every-turn work-order framing that overrides the clarify-before-acting skill
+# (appended far down the SYSTEM prompt) and makes the agent edit files when the
+# user only asked it to look. For an explain classification we swap that framing
+# for one whose job is to answer, not act. {{task}} is preserved so the agent
+# still sees the request; Jinja renders it the same way the default does.
+ANSWER_ONLY_INSTANCE = (
+    "The user asked: {{task}}\n\n"
+    "This is a QUESTION, not a work order. Investigate as needed — read files, "
+    "run read-only commands — then ANSWER in words. Do NOT edit, create, or "
+    "delete files to answer it. If a good answer would require changing code, "
+    "say so and ask whether to proceed; do not start the change yourself. "
+    "When you have answered, finish by issuing exactly: "
+    "`echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`."
+)
+
+
+def _instance_template_for(task_type: str, default: str) -> str:
+    """Pick the engine instance_template for this turn. code_explain gets the
+    answer-only template (the clarify gate, enforced at the prompt the model
+    actually obeys); every other task_type keeps the engine default unchanged."""
+    return ANSWER_ONLY_INSTANCE if task_type == "code_explain" else default
+
+
 class HarnessAgent(acp.Agent):
     def __init__(self, *, model_factory, agent_cfg, skills_dir: list[Path], router: Router,
                  worker_model_id, yolo: bool = False, backend: str = "vibeproxy",
@@ -417,7 +443,8 @@ class HarnessAgent(acp.Agent):
                                       "skipped": ctx.skills.skipped}}))
         engine = await self._run_agent_turn(loop, session_id, state, text, ctx.skill_block,
                                             transcript, ctx.persona_block, ctx.memory_block,
-                                            base_block=base_block, model_id=model_id)
+                                            base_block=base_block, model_id=model_id,
+                                            task_type=cls.task_type)
         stop_reason = engine["stop_reason"]
         if stop_reason == "refusal":
             # streamed-on-screen == stored: never fold prior-turn prose in.
@@ -435,7 +462,8 @@ class HarnessAgent(acp.Agent):
         return acp.PromptResponse(stop_reason=stop_reason)
 
     async def _run_agent_turn(self, loop, session_id, state, text, skill_block, prior,
-                              persona_block="", memory_block="", base_block="", model_id=None) -> dict:
+                              persona_block="", memory_block="", base_block="", model_id=None,
+                              task_type="") -> dict:
         # Tool-call ids are TURN-LOCAL: the counter resets each turn and the
         # "current id" lives here (not on SessionState), so the start/done/permission
         # handshake within this turn pairs correctly and ids restart at tc1 per turn.
@@ -586,6 +614,11 @@ class HarnessAgent(acp.Agent):
             else:
                 emitter = Emitter("/dev/null", clock=lambda: 0.0, console=False)
             cfg = dict(self._agent_cfg)
+            # Clarify-before-acting, enforced where the model actually obeys: an
+            # explain turn runs with an answer-only instance_template instead of
+            # the engine's every-turn "solve this issue / edit the source" one.
+            cfg["instance_template"] = _instance_template_for(
+                task_type, cfg.get("instance_template", ""))
             agent = None  # bound before construction so the except can reference it
             try:
                 # pass the CURRENT worker model so /models hot-swaps the agent path
