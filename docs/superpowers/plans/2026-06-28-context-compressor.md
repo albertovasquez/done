@@ -364,13 +364,18 @@ git commit -m "feat(compaction): sanitize orphaned tool pairs by tool_call_id"
 # append to tests/test_compaction.py
 def test_recompress_is_bounded_and_valid_not_equal():
     prior = _msgs(60)
-    once = compress(prior, summarize=lambda m: "S", count_tokens=lambda s: len(s),
+    # *50 so the corpus clears MIN_BUDGET_FLOOR=1000 and compaction actually
+    # fires on BOTH passes (with plain len() the floor dominates -> method="none"
+    # -> the guard would be vacuous).
+    once = compress(prior, summarize=lambda m: "S", count_tokens=lambda s: len(s) * 50,
                     fixed_overhead_tokens=0, ctx_window=200,
                     protect_head_n=2, protect_last_n=5)
+    assert once.method == "summary"          # first pass actually compressed
     twice = compress(once.messages, summarize=lambda m: "S",
-                     count_tokens=lambda s: len(s),
+                     count_tokens=lambda s: len(s) * 50,
                      fixed_overhead_tokens=0, ctx_window=200,
                      protect_head_n=2, protect_last_n=5)
+    assert twice.method == "summary"         # second pass (the path under guard) compressed
     # bounded: never grows; valid: exactly one summary marker, no stacking
     assert twice.after_msgs <= once.after_msgs
     markers = [m for m in twice.messages
