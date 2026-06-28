@@ -10,20 +10,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import logging
-import re
 from pathlib import Path
 
 from harness import paths
 from harness import persona_config
 from harness import persona_select   # _VALID_ID, RESERVED_KEY, InvalidPersonaId
 from harness import skills
+# Content-gate helpers live in the leaf textgate module so agents.py can reuse
+# them without importing persona (which would cycle). Re-exported here for any
+# existing `from harness.persona import _meaningful/_trim` caller (e.g. memory).
+from harness.textgate import _meaningful, _trim, _HTML_COMMENT  # noqa: F401
 
 logger = logging.getLogger("harness.persona")
 
 PERSONA_FILES = ["SOUL.md", "IDENTITY.md", "USER.md"]   # order = injection order
 MAX_FILE_CHARS = 8000                                   # per-file trim ceiling
-
-_HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 
 
 class PersonaExists(Exception):
@@ -78,15 +79,6 @@ def _write_persona_name(workspace_dir: Path, display_name: str) -> None:
         pass
 
 
-def _meaningful(raw: str) -> bool:
-    """True if the file has injectable content — anything but whitespace remains
-    after HTML comments are removed. A comment-only template => False (skipped,
-    never injected), so shipped templates preserve the byte-identical no-op.
-    HTML comments only: '#' is a Markdown heading and must NOT be treated as a
-    comment."""
-    return bool(_HTML_COMMENT.sub("", raw).strip())
-
-
 @dataclass
 class PersonaLoad:
     block: str = ""
@@ -129,13 +121,6 @@ def compose_context(persona_block: str, memory_block: str, skill_roots: list[Pat
     menu = skills.compose_menu(menu_metas) if menu_metas else ""
     return TurnContext(persona_block=persona_block, memory_block=memory_block,
                        skill_block=skill_load.block, skills_menu=menu, skills=skill_load)
-
-
-def _trim(text: str, limit: int) -> tuple[str, bool]:
-    """Cap text at `limit` chars. Returns (text, was_trimmed)."""
-    if len(text) <= limit:
-        return text, False
-    return text[:limit], True
 
 
 def seed_default_workspace() -> None:

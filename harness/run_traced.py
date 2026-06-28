@@ -168,11 +168,18 @@ def main(argv: list[str] | None = None) -> int:
     _enabled_flows = _persona_config.read_flows(workspace_dir)
     _menu_metas = (_flows.scope_catalog(_full_catalog, _enabled_flows)
                    if _enabled_flows else _full_catalog)
+    # Three-tier AGENTS.md (persona > project > global), folded into base_block so
+    # both the agent runner and the chat handler inherit it. No-op when no files.
+    from harness import agents as _agents
+    _agents_block = _agents.resolve_agents(
+        persona_dir=workspace_dir, project_cwd=args.cwd,
+        global_dir=_paths.config_dir()).block
     base_block = base_prompt.render_base_prompt(
         model_id=(worker_model_id or "mock"),
         cwd=args.cwd,
         system_line=platform.platform(),
-        skills_menu=skills.compose_menu(_menu_metas))
+        skills_menu=skills.compose_menu(_menu_metas),
+        agents_block=_agents_block)
 
     def run_agent(prompt, skill_block=""):
         runner = MiniSweAgentRunner(model, env, agent_cfg=agent_cfg)

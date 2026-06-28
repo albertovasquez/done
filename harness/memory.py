@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
 
-from harness.persona import _meaningful, _trim
+from harness.textgate import _meaningful, _trim
 
 MEMORY_FILE = "MEMORY.md"
 MEMORY_DIR = "memory"

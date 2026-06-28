@@ -394,6 +394,15 @@ class HarnessAgent(acp.Agent):
         _menu_metas = (_flows.scope_catalog(self._router.catalog, _enabled_flows)
                        if _enabled_flows else self._router.catalog)
         _skills_menu = skills.compose_menu(_menu_metas)
+        # Three-tier AGENTS.md (persona > project > global), folded into base_block
+        # so BOTH the chat branch and the agent branch below inherit it (both consume
+        # base_block). No-op when no AGENTS.md files exist.
+        from harness import agents as _agents
+        from harness import paths as _paths
+        _agents_block = _agents.resolve_agents(
+            persona_dir=ws,
+            project_cwd=Path(state.cwd) if state.cwd else None,
+            global_dir=_paths.config_dir()).block
         # Absolute path so the agent's Edit tool (which requires absolute paths) can
         # act on it; .resolve() also guards a relative XDG_CONFIG_HOME (Codex).
         base_block = base_prompt.render_base_prompt(
@@ -401,7 +410,8 @@ class HarnessAgent(acp.Agent):
             cwd=state.cwd, system_line=platform.platform(),
             persona_id=(ws.name if ws else None),
             persona_dir=(str(ws.resolve()) if ws else None),
-            skills_menu=_skills_menu)
+            skills_menu=_skills_menu,
+            agents_block=_agents_block)
 
         if cls.task_type == "chat_question":
             # hand the router's catalog so "what skills do we have?" is answered

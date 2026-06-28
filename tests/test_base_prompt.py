@@ -108,3 +108,18 @@ def test_base_prompt_appends_menu():
     out = base_prompt.render_base_prompt(model_id="m", cwd="/x", system_line="os",
                                          skills_menu="\n\n# Skills\n\n- **a** — d")
     assert out.endswith("- **a** — d") and "# Skills" in out
+
+
+def test_base_prompt_omits_agents_when_none():
+    a = base_prompt.render_base_prompt(model_id="m", cwd="/x", system_line="os")
+    b = base_prompt.render_base_prompt(model_id="m", cwd="/x", system_line="os", agents_block=None)
+    assert a == b and "# Instructions" not in a
+
+
+def test_base_prompt_appends_agents_after_menu():
+    out = base_prompt.render_base_prompt(
+        model_id="m", cwd="/x", system_line="os",
+        skills_menu="\n\n# Skills\n\n- **a** — d",
+        agents_block="\n\n# Instructions\n\nfollow persona...")
+    assert out.index("# Skills") < out.index("# Instructions")    # agents after menu
+    assert out.endswith("follow persona...")
