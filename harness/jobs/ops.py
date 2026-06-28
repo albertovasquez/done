@@ -1,4 +1,6 @@
 # harness/jobs/ops.py
+import concurrent.futures
+import time
 from dataclasses import replace
 from harness.jobs import store, model as m
 from harness.jobs.executor import OrphanPersona
@@ -46,17 +48,39 @@ def run(job_id: str, *, executor, now: float, force: bool = False) -> m.JobRun:
         store.append_run(run_rec, now=now)
         return run_rec
     error = None
+    timeout_s = job.cost.timeout_s
+    t0 = time.perf_counter()
     try:
-        executor(job)
+        if timeout_s and timeout_s > 0:
+            # Wall-clock budget around the synchronous executor. We run it on a
+            # worker thread and stop WAITING at timeout_s; Python can't safely kill
+            # the thread, so on timeout the underlying executor may finish in the
+            # background (acceptable for v1) — we just record the timeout failure.
+            # NOTE: do NOT use `with ThreadPoolExecutor(...)` — its __exit__ joins
+            # the still-running worker (wait=True), which would re-block past the
+            # timeout. We shut down WITHOUT waiting so the timeout is honored; the
+            # daemon thread is left to exit on its own.
+            pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            try:
+                fut = pool.submit(executor, job)
+                fut.result(timeout=timeout_s)
+            finally:
+                pool.shutdown(wait=False)
+        else:
+            executor(job)                # timeout disabled (timeout_s <= 0) — run inline
         status = "ok"
     except OrphanPersona:
         raise                            # daemon.tick handles orphan — do NOT record a run
+    except concurrent.futures.TimeoutError:
+        status, error = "error", f"timeout after {timeout_s}s"
     except BaseException as e:           # mirror runner.py: process death = BaseException
         status, error = "error", str(e)
-    run_rec = m.JobRun(job_id=job_id, started_at=now, duration=0.0, status=status, error=error)
+    elapsed = time.perf_counter() - t0
+    run_rec = m.JobRun(job_id=job_id, started_at=now, duration=elapsed, status=status, error=error)
     store.append_run(run_rec, now=now)
     consec = 0 if status == "ok" else job.state.consecutive_errors + 1
     new_state = replace(job.state, last_run_at=now, last_status=status, last_error=error,
+                        last_duration=elapsed,
                         consecutive_errors=consec,
                         next_run_at=m.next_run_at(job.schedule, now, replace(job.state, last_run_at=now)),
                         version=job.state.version + 1)

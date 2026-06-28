@@ -2,9 +2,13 @@
 """Daemon loop: due-job selection, per-tick execution, async run_forever."""
 from __future__ import annotations
 
+import logging
+
 from harness.jobs import ops
 from harness.jobs import model as m
 from harness.jobs.executor import OrphanPersona, run_headless_turn
+
+logger = logging.getLogger(__name__)
 
 
 def due_jobs(jobs: list[m.Job], *, now: float) -> list[m.Job]:
@@ -54,5 +58,10 @@ async def run_forever(
         executor = run_headless_turn
     while True:
         now = clock()
-        tick(now, executor=executor)
+        try:
+            tick(now, executor=executor)
+        except Exception:  # noqa: BLE001 — a transient tick failure must not kill the loop
+            # KeyboardInterrupt / CancelledError are NOT Exception, so they still
+            # propagate and the loop stays stoppable.
+            logger.exception("cron tick failed at %s; continuing to next interval", now)
         await sleep(interval)

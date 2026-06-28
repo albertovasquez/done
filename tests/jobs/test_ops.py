@@ -1,4 +1,6 @@
 # tests/jobs/test_ops.py
+import threading
+
 import pytest
 from harness.jobs import ops, model as m
 
@@ -63,3 +65,45 @@ def test_run_skips_disabled_job_unless_forced():
     result = ops.run("j1", executor=record, now=20.0, force=True)
     assert result.status == "ok"
     assert called == ["j1"]
+
+
+def test_run_records_real_duration(monkeypatch):
+    """duration is timed (not hard-zero) and wired into JobState.last_duration.
+
+    Deterministic without sleeping: monkeypatch time.perf_counter in harness.jobs.ops
+    to return successive values so elapsed == 0.5 exactly.
+    """
+    ops.add(_job(), now=0.0)
+    ticks = iter([100.0, 100.5])
+    monkeypatch.setattr("harness.jobs.ops.time.perf_counter", lambda: next(ticks))
+
+    def ok(job):  # does NOT sleep; the clock is driven by perf_counter monkeypatch
+        pass
+
+    run_rec = ops.run("j1", executor=ok, now=10.0)
+    assert isinstance(run_rec.duration, float)
+    assert run_rec.duration >= 0.0
+    assert run_rec.duration == 0.5                       # 100.5 - 100.0
+    assert ops.get("j1").state.last_duration == 0.5      # wired through, not hard-zero
+
+
+def test_run_times_out():
+    """An executor that blocks past cost.timeout_s records a timeout error and
+    increments consecutive_errors. Kept fast (0.1s budget) and can't hang the test."""
+    # 0.1s wall-clock budget around a blocking executor. (timeout_s is nominally int,
+    # but the threadpool wait accepts a float; 0.1 keeps the test sub-second.)
+    ops.add(_job(cost=m.CostGate(timeout_s=0.1, min_cadence_s=60, max_consecutive_failures=2)),
+            now=0.0)
+
+    released = threading.Event()
+
+    def blocker(job):
+        released.wait(timeout=5.0)   # blocks until released or its own safety cap
+
+    try:
+        run_rec = ops.run("j1", executor=blocker, now=10.0)
+        assert run_rec.status == "error"
+        assert "timeout" in (run_rec.error or "")
+        assert ops.get("j1").state.consecutive_errors == 1
+    finally:
+        released.set()   # let the background thread finish so it can't leak

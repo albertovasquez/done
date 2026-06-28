@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import MagicMock, call, patch
 
 
 def test_once_calls_tick_and_returns_0(monkeypatch):

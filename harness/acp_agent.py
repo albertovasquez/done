@@ -78,6 +78,15 @@ def handle_create_job(spec: dict, *, now: float) -> dict:
     if not spec.get("grant"):
         raise ValueError("grant required (fail closed)")
 
+    schedule = m.schedule_from_dict(spec["schedule"])
+    cost = m.CostGate(**spec["cost"])
+    # Cadence-floor footgun guard (spec §5.3 / §6.5). v1 enforces the floor only for
+    # Every schedules (a fixed interval is cheap to check). At is one-shot (skip).
+    # Cron's implied interval isn't floor-checked yet (no cheap interval read) —
+    # TODO: derive successive croniter steps and reject sub-floor cron cadences.
+    if isinstance(schedule, m.Every) and schedule.seconds < cost.min_cadence_s:
+        raise ValueError("cadence below min_cadence_s floor")
+
     job = m.Job(
         id=spec["id"],
         name=spec.get("name", spec["id"]),
@@ -86,10 +95,10 @@ def handle_create_job(spec: dict, *, now: float) -> dict:
         enabled=spec.get("enabled", True),
         delete_after_run=spec.get("delete_after_run"),
         session_target=spec.get("session_target", "isolated"),
-        schedule=m.schedule_from_dict(spec["schedule"]),
+        schedule=schedule,
         payload=m.payload_from_dict(spec["payload"]),
         grant=m.Grant(**spec["grant"]),
-        cost=m.CostGate(**spec["cost"]),
+        cost=cost,
         state=m.JobState(),
     )
     result = ops.add(job, now=now)

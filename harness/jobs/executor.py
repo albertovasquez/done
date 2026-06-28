@@ -51,14 +51,27 @@ class Deps:
 def _default_deps() -> Deps:
     """Wire the real harness functions.
 
+    The cron turn is composed IDENTICALLY to the interactive/run_traced path
+    (spec §6: the daemon never short-circuits compose_context). compose() resolves
+    persona+memory; run_turn() builds the skill spine via persona.compose_context
+    and the base/AGENTS.md block via base_prompt.render_base_prompt, then runs the
+    turn with the REAL skill_block + base_block — not "" as before.
+
     All live-source symbols verified against run_traced.py + persona_sessions.py
     (see inline comments).
     """
+    import platform
     from datetime import date
 
-    from harness import persona as _persona   # resolve_persona: persona.py:102
+    from harness import agents as _agents       # resolve_agents: agents.py:56
+    from harness import base_prompt as _base_prompt  # render_base_prompt: base_prompt.py:47
+    from harness import flows as _flows         # scope_catalog: flows.py:11
     from harness import memory as _memory     # resolve_memory: memory.py
+    from harness import paths as _paths        # skills_dirs/config_dir: paths.py:50/16
+    from harness import persona as _persona   # resolve_persona / compose_context: persona.py:102/111
+    from harness import persona_config as _persona_config  # read_flows: persona_config.py:38
     from harness import persona_sessions as _ps   # resolve_session_model: persona_sessions.py:20
+    from harness import skills as _skills      # load_catalog_with_skips: skills.py:85
     from harness import vibeproxy as _vp          # vibeproxy.model_id, vibeproxy.DEFAULT_MODEL
     from harness.models_mock import build_mock_model  # harness/models_mock.py:58
     from harness.runner import MiniSweAgentRunner     # harness/runner.py:72
@@ -81,6 +94,28 @@ def _default_deps() -> Deps:
 
     def run_turn(*, model_id: str | None, workspace: Path, persona_block: str,
                  memory_block: str, message: str) -> None:
+        # Compose skills + base block IDENTICALLY to run_traced.py:171-190 so the
+        # cron turn is indistinguishable from the persona typing live (spec §6).
+        skills_roots = _paths.skills_dirs(project_cwd=str(workspace))
+        _catalog_load = _skills.load_catalog_with_skips(skills_roots)
+        _enabled_flows = _persona_config.read_flows(workspace)
+        _menu_metas = (_flows.scope_catalog(_catalog_load.skills, _enabled_flows)
+                       if _enabled_flows else _catalog_load.skills)
+        # compose_context bundles persona+memory+skills via the SAME chokepoint the
+        # ACP path uses (acp_agent.py:540). skill_names=[] => lazy menu only.
+        ctx = _persona.compose_context(persona_block, memory_block, skills_roots,
+                                       [], menu_metas=_menu_metas)
+        # Three-tier AGENTS.md (persona > project > global), run_traced.py:182.
+        _agents_block = _agents.resolve_agents(
+            persona_dir=workspace, project_cwd=workspace,
+            global_dir=_paths.config_dir()).block
+        base_block = _base_prompt.render_base_prompt(
+            model_id=(model_id or "mock"),
+            cwd=str(workspace),
+            system_line=platform.platform(),
+            skills_menu=ctx.skills_menu,
+            agents_block=_agents_block)
+
         # Fresh model per call; NEVER vibeproxy.default_model() (persona-fidelity rule #1).
         if model_id is None:
             model = build_mock_model()
@@ -90,13 +125,12 @@ def _default_deps() -> Deps:
             # the litellm backend expects (e.g. "openai/gpt-5.4").
             from harness.streaming_model import StreamingLitellmModel
             from harness.tools.registry import build_registry
-            from harness import paths as _paths
             model = StreamingLitellmModel(
                 model_name=_vp.model_id(model_id),  # vibeproxy.py:36
                 model_kwargs=_vp.model_kwargs(),     # vibeproxy.py:47
                 cost_tracking="ignore_errors",
                 registry=build_registry(
-                    skill_roots=_paths.skills_dirs(project_cwd=str(workspace)),
+                    skill_roots=skills_roots,
                     memory_root=workspace,
                 ),
             )
@@ -107,8 +141,10 @@ def _default_deps() -> Deps:
 
         agent_cfg = _load_agent_cfg()
         runner = MiniSweAgentRunner(model, env, agent_cfg=agent_cfg)
-        for _ in runner.run(message, skill_block="", persona_block=persona_block,
-                            memory_block=memory_block, base_block=""):
+        # Pass the REAL skill_block + base_block (run_traced.py:195-198 parity).
+        for _ in runner.run(message, skill_block=ctx.skill_block,
+                            persona_block=ctx.persona_block,
+                            memory_block=ctx.memory_block, base_block=base_block):
             pass
 
     return Deps(

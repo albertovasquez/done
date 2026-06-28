@@ -197,3 +197,41 @@ class TestRunForever:
         assert all(i == 15.0 for i in sleep_intervals)
 
         assert all(i == 15.0 for i in sleep_intervals)
+
+    def test_run_forever_survives_tick_error(self, monkeypatch):
+        """A transient tick failure must be logged and the loop must continue to
+        the next interval, not propagate and die."""
+        tick_calls = []
+
+        def flaky_tick(now, **kwargs):
+            tick_calls.append(now)
+            if len(tick_calls) == 1:
+                raise RuntimeError("transient tick failure")
+            return []
+
+        monkeypatch.setattr("harness.jobs.daemon.tick", flaky_tick)
+
+        sleep_calls = []
+
+        async def fake_sleep(interval):
+            sleep_calls.append(interval)
+            if len(sleep_calls) >= 2:
+                raise asyncio.CancelledError   # stop the loop after the 2nd iteration
+
+        times = iter([70.0, 130.0, 200.0])
+
+        async def go():
+            with pytest.raises(asyncio.CancelledError):
+                await daemon.run_forever(
+                    interval=30.0,
+                    clock=lambda: next(times),
+                    sleep=fake_sleep,
+                    executor=lambda job: None,
+                )
+
+        asyncio.run(go())
+
+        # The first tick raised, but the loop kept going: a 2nd tick ran and sleep
+        # was awaited twice — the RuntimeError did NOT propagate.
+        assert len(tick_calls) >= 2
+        assert len(sleep_calls) >= 2

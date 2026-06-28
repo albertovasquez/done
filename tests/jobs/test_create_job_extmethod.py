@@ -156,6 +156,21 @@ def test_happy_path_cron_schedule():
 
 
 # ---------------------------------------------------------------------------
+# Cadence-floor gate: an Every schedule below min_cadence_s is rejected (nothing written)
+# ---------------------------------------------------------------------------
+
+def test_create_job_rejects_subfloor_cadence():
+    spec = _base_spec(
+        id="too-fast",
+        schedule={"kind": "every", "seconds": 5},
+        cost={"timeout_s": 30, "min_cadence_s": 3600, "max_consecutive_failures": 3},
+    )
+    with pytest.raises(ValueError, match="cadence below min_cadence_s floor"):
+        handle_create_job(spec, now=100.0)
+    assert ops.get("too-fast") is None   # nothing written on a failed gate
+
+
+# ---------------------------------------------------------------------------
 # ext_method registration — "harness/create_job" routes to handle_create_job
 # ---------------------------------------------------------------------------
 

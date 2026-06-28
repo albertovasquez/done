@@ -74,6 +74,21 @@ def test_reminder_does_not_run_turn():
     assert notify_calls[0]["agent_id"] == "fred"
 
 
+def test_default_deps_constructs():
+    """_default_deps() wires the real harness functions without NameErrors.
+
+    The other executor tests inject Deps, so they never exercise _default_deps —
+    this catches a missing import / typo in the now-more-complex compose+run_turn
+    wiring without needing a live engine (no turn is run)."""
+    deps = ex._default_deps()
+    assert isinstance(deps, ex.Deps)
+    assert callable(deps.resolve_workspace)
+    assert callable(deps.resolve_model)
+    assert callable(deps.compose)
+    assert callable(deps.run_turn)
+    assert callable(deps.notify)
+
+
 def test_reminder_orphan_persona_raises():
     """Even for a Reminder, an orphaned persona should raise OrphanPersona."""
     from harness import persona_select
