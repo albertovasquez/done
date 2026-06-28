@@ -86,6 +86,18 @@ class FakeAgent(acp.Agent):
             await self._conn.session_update(session_id, tupd)
             return acp.PromptResponse(stop_reason="end_turn")
 
+        # 2d) SLOW: a long pre-stream gap with NOTHING emitted — faithfully
+        # replays the agent-path "spinner, nothing printing yet" window (the
+        # ~4.5s uncached router classify before the first frame reaches the TUI,
+        # real trace 20260628-151948 turn 2). The chip in step (1) already went
+        # out; here we just stall, then emit one delta and return. Used by the
+        # input-freeze repro to probe composer usability DURING that gap.
+        if "SLOW" in text:
+            await asyncio.sleep(0.6)
+            await self._conn.session_update(
+                session_id, update_agent_message_text("late answer"))
+            return acp.PromptResponse(stop_reason="end_turn")
+
         # 3) optionally stream several message deltas for ONE turn (so the client
         # can be tested accumulating them into a single live Markdown widget).
         if "STREAM" in text:
