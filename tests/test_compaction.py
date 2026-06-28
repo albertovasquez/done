@@ -143,3 +143,35 @@ def test_sanitize_mixed_orphans():
     assert "c2" in tool_ids
     stub = next(m for m in tool_msgs if m["tool_call_id"] == "c2")
     assert "[result omitted during context compaction]" in stub["content"]
+
+
+# ---------------------------------------------------------------------------
+# End-to-end: compress() sanitizes after a real middle-cut
+# ---------------------------------------------------------------------------
+
+def _assistant_with_call(cid, text="ran"):
+    return {"role": "assistant", "content": text,
+            "tool_calls": [{"id": cid, "type": "function",
+                            "function": {"name": "bash", "arguments": "{}"}}]}
+
+
+def test_compress_sanitizes_after_cut():
+    # head keeps an assistant call; its result lives in the middle (cut) ->
+    # surviving call must get a stub, and no orphan result remains.
+    head = [_assistant_with_call("call_M")]
+    middle = [_tool_result("call_M")] + [{"role": "user", "content": f"m{i}"} for i in range(40)]
+    tail = [{"role": "user", "content": f"t{i}"} for i in range(5)]
+    prior = head + middle + tail
+    r = compress(prior, summarize=lambda m: "SUMMARY", count_tokens=lambda s: len(s) * 50,
+                 fixed_overhead_tokens=0, ctx_window=200,
+                 protect_head_n=1, protect_last_n=5)
+    # the surviving assistant call gets a stub result right after it
+    assert r.messages[0] == head[0]
+    assert r.messages[1]["role"] == "tool"
+    assert r.messages[1]["tool_call_id"] == "call_M"
+    # no tool message references a call that isn't present
+    call_ids = {c["id"] for m in r.messages if m.get("role") == "assistant"
+                for c in m.get("tool_calls", [])}
+    for m in r.messages:
+        if m.get("role") == "tool":
+            assert m["tool_call_id"] in call_ids
