@@ -161,6 +161,62 @@ def test_router_failure_logs_and_traces(caplog):
                for m in traces), f"router.failed trace missing; got {traces}"
 
 
+def test_engine_baseexception_yields_refusal_not_disconnect(monkeypatch, caplog):
+    """A BaseException from the engine (asyncio.CancelledError / SystemExit /
+    KeyboardInterrupt) must be caught and turned into a clean refusal — NOT escape
+    the prompt handler. If it escapes, the ACP request task dies, the agent process
+    exits, and the TUI shows 'agent disconnected (Connection closed)'. run_engine
+    catching only `except Exception` (BaseException re-raised by tracing_agent) was
+    the root cause of that intermittent disconnect."""
+    import acp
+    from harness import acp_agent as M
+    from harness.router import Classification
+
+    class _WorkOrderRouter:
+        catalog = []
+        def classify(self, *a, **k):
+            # code_explain reaches the agent path (run_engine), high confidence so
+            # it does NOT branch to clarify.
+            return Classification(task_type="code_explain", skills=[], confidence=0.94)
+
+    class _FakeConn:
+        def __init__(self):
+            self.updates = []
+        async def session_update(self, session_id, update, **kw):
+            self.updates.append(update)
+
+    class _ExplodingAgent:
+        """Stands in for TracingAgent: construction succeeds, run() raises a
+        BaseException-only exception (the class that escapes `except Exception`)."""
+        messages = []
+        n_calls = 0
+        def __init__(self, *a, **k):
+            self.model = type("Mdl", (), {})()      # no on_delta attr -> mock-like
+        def run(self, text, prior=None):
+            raise asyncio.CancelledError("cancelled mid-turn")
+
+    monkeypatch.setattr("harness.tracing_agent.TracingAgent", _ExplodingAgent)
+
+    agent = HarnessAgent(
+        model_factory=lambda *a, **k: type("Mdl", (), {"registry": None})(),
+        agent_cfg={}, skills_dir=[], router=_WorkOrderRouter(),
+        worker_model_id="m", backend="vibeproxy", yolo=True)
+    conn = _FakeConn()
+    agent.on_connect(conn)
+    asyncio.run(agent.initialize(protocol_version=acp.PROTOCOL_VERSION))  # sets _client_caps
+    sid = agent._store.new(cwd=".", workspace_dir=None)
+
+    async def go():
+        return await agent.prompt([acp.text_block("explain the router flow")], sid)
+
+    with caplog.at_level("ERROR", logger="harness.acp_agent"):
+        resp = asyncio.run(go())          # must NOT raise
+
+    assert resp.stop_reason == "refusal"
+    assert any("agent engine failed" in r.message for r in caplog.records), \
+        f"engine failure must be logged; got {[r.message for r in caplog.records]}"
+
+
 def test_set_yolo_active_true_sets_gate_no_persist():
     agent = _make_agent()
     agent._yolo = False

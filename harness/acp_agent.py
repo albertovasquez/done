@@ -662,7 +662,14 @@ class HarnessAgent(acp.Agent):
                     # never marshal a delta to a dead loop after the turn ends.
                     if hasattr(model, "on_delta"):
                         model.on_delta = None
-            except Exception:  # engine/construction failure → refusal; capture any prose
+            except BaseException:  # engine/construction failure → refusal; capture any prose
+                # BaseException (not just Exception): tracing_agent re-raises
+                # BaseException, so a BaseException-only exc (asyncio.CancelledError,
+                # SystemExit, KeyboardInterrupt) would otherwise escape this handler,
+                # kill the ACP request task, exit the agent process, and surface in
+                # the TUI as 'agent disconnected (Connection closed)'. Catching it
+                # here turns an intermittent disconnect into a clean refusal. Mirrors
+                # runner.py, which already catches BaseException for the same reason.
                 # The refusal otherwise hides WHY the turn died (bad model id,
                 # litellm/network error, engine crash). Log the traceback — this
                 # runs on the worker thread, so logger.exception is the right sink.
