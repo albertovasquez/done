@@ -9,19 +9,33 @@ PERSONA-FIDELITY RULES (non-negotiable):
 2. Persona/memory blocks come via resolve_persona / resolve_memory from the workspace.
 3. Workspace MUST come from resolve_workspace(job.agent_id). On UnknownPersona → OrphanPersona.
 4. Fresh model + fresh LocalEnvironment + fresh runner per call. Never mutate os.environ.
+
+Payload dispatch:
+- AgentTurn → full persona-faithful LLM turn (rules 1-4 apply).
+- Reminder  → notification ONLY; no inference, no run_turn. Workspace is still
+              resolved (so orphaned-persona Reminders raise OrphanPersona), then
+              deps.notify(text=..., agent_id=...) is called.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import logging
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
 from harness import persona_select
+from harness.jobs.model import AgentTurn, Reminder
+
+logger = logging.getLogger(__name__)
 
 
 class OrphanPersona(Exception):
     """job.agent_id no longer resolves to a persona dir — caller auto-disables the job."""
+
+
+def _default_notify(*, text: str, agent_id: str) -> None:
+    logger.info("cron reminder [%s]: %s", agent_id, text)
 
 
 @dataclass
@@ -31,6 +45,7 @@ class Deps:
     resolve_model: Callable[..., str | None]
     compose: Callable[[Path], tuple]       # ws -> (persona_block, memory_block, ws)
     run_turn: Callable[..., None]
+    notify: Callable[..., None] = field(default=_default_notify)
 
 
 def _default_deps() -> Deps:
@@ -111,6 +126,7 @@ def _default_deps() -> Deps:
         ),
         compose=compose,
         run_turn=run_turn,
+        # notify uses the module default (_default_notify); no override needed for production.
     )
 
 
@@ -118,14 +134,29 @@ def run_headless_turn(job, *, deps: Deps | None = None) -> None:
     """Execute one scheduled turn for `job` with full persona fidelity.
 
     Raises OrphanPersona if job.agent_id no longer maps to a persona directory.
+
+    Payload dispatch:
+    - AgentTurn: resolves model + blocks, then calls deps.run_turn (full LLM turn).
+    - Reminder:  resolves workspace only (for orphan check), then calls deps.notify.
+                 No inference is performed.
     """
     deps = deps or _default_deps()
 
     # Rule #3: workspace from agent_id; OrphanPersona on failure.
+    # Always resolve workspace — even for Reminders — so an orphaned-persona
+    # Reminder is detected and raises OrphanPersona consistently.
     try:
         ws = deps.resolve_workspace(job.agent_id)
     except persona_select.UnknownPersona as e:
         raise OrphanPersona(job.agent_id) from e
+
+    if isinstance(job.payload, Reminder):
+        # Reminder = notification only. No model resolution, no compose, no run_turn.
+        deps.notify(text=job.payload.text, agent_id=job.agent_id)
+        return
+
+    # From here: AgentTurn path only.
+    assert isinstance(job.payload, AgentTurn), f"unknown payload type: {type(job.payload)}"
 
     # Rule #1: model from resolve_session_model, NOT vibeproxy.default_model().
     model_id = deps.resolve_model(job.agent_id)
@@ -133,14 +164,11 @@ def run_headless_turn(job, *, deps: Deps | None = None) -> None:
     # Rule #2: blocks via compose (resolve_persona + resolve_memory).
     persona_block, memory_block, ws = deps.compose(ws)
 
-    # Extract the prompt message from the job payload.
-    message = job.payload.message if hasattr(job.payload, "message") else job.payload.text
-
     # Rule #4: fresh model + env + runner inside run_turn; os.environ never mutated.
     deps.run_turn(
         model_id=model_id,
         workspace=ws,
         persona_block=persona_block,
         memory_block=memory_block,
-        message=message,
+        message=job.payload.message,
     )
