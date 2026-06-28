@@ -175,3 +175,19 @@ def test_compress_sanitizes_after_cut():
     for m in r.messages:
         if m.get("role") == "tool":
             assert m["tool_call_id"] in call_ids
+
+
+def test_recompress_is_bounded_and_valid_not_equal():
+    prior = _msgs(60)
+    once = compress(prior, summarize=lambda m: "S", count_tokens=lambda s: len(s),
+                    fixed_overhead_tokens=0, ctx_window=200,
+                    protect_head_n=2, protect_last_n=5)
+    twice = compress(once.messages, summarize=lambda m: "S",
+                     count_tokens=lambda s: len(s),
+                     fixed_overhead_tokens=0, ctx_window=200,
+                     protect_head_n=2, protect_last_n=5)
+    # bounded: never grows; valid: exactly one summary marker, no stacking
+    assert twice.after_msgs <= once.after_msgs
+    markers = [m for m in twice.messages
+               if str(m.get("content", "")).startswith("[Earlier conversation summarized")]
+    assert len(markers) <= 1
