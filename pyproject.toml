@@ -36,6 +36,8 @@ dn = "harness.tui_main:main"
 # The raw ACP agent server (for editor clients like Zed); also used internally
 # by the TUI, which launches it via `python -m harness.acp_main`.
 dn-agent = "harness.acp_main:main"
+# The background cron daemon; schedules and fires jobs for all personas.
+harness-cron = "harness.jobs.cron_main:main"
 
 # The engine is the vendored, unmodified mini-swe-agent under upstream/. We
 # install it as a real, editable dependency instead of sys.path-hacking it —
