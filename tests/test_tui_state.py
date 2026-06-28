@@ -151,6 +151,45 @@ def test_tool_item_sets_tool_and_task():
     assert len(a.tasks) == 1 and a.tasks[0].status == "in_progress"
 
 
+def test_done_sentinel_tool_is_suppressed():
+    # The agent finishes every turn by running `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`
+    # (acp_emit prefixes the title with "$ "). That protocol artifact must NOT show up
+    # as a tool row / task in the activity region — it is not user-facing work.
+    fs = reduce(initial_snapshot(), TurnStarted())
+    fs = reduce(fs, ItemReceived(RenderedItem(
+        kind="tool", id="done",
+        title="$ echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT", status="pending")))
+    a = _active(fs)
+    assert a.tools == ()                       # no tool row
+    assert a.tasks == ()                       # no task entry
+    assert a.tool is None                      # no active tool
+    assert a.state != AgentState.RUNNING_TOOL  # state untouched by the sentinel
+
+
+def test_done_sentinel_update_is_noop():
+    # The matching tool_update (status flip for the suppressed sentinel id) must also
+    # be a no-op — it has no row to update and must not resurrect one.
+    fs = reduce(initial_snapshot(), TurnStarted())
+    fs = reduce(fs, ItemReceived(RenderedItem(
+        kind="tool", id="done",
+        title="$ echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT", status="pending")))
+    fs = reduce(fs, ItemReceived(RenderedItem(
+        kind="tool_update", id="done", status="completed", body="COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT")))
+    a = _active(fs)
+    assert a.tools == () and a.tasks == ()
+
+
+def test_non_sentinel_echo_still_renders():
+    # Scope guard: only the EXACT sentinel command is hidden. Any other echo the
+    # agent runs is real work and must render normally.
+    fs = reduce(initial_snapshot(), TurnStarted())
+    fs = reduce(fs, ItemReceived(RenderedItem(
+        kind="tool", id="e1", title="$ echo hello world", status="pending")))
+    a = _active(fs)
+    assert len(a.tools) == 1
+    assert len(a.tasks) == 1
+
+
 def test_tool_update_completes_task():
     fs = reduce(initial_snapshot(), TurnStarted())
     fs = reduce(fs, ItemReceived(RenderedItem(kind="tool", id="t1",

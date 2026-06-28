@@ -442,6 +442,21 @@ class HarnessTui(App):
         widget = getattr(event, "widget", None)
         if widget is not None and getattr(widget, "id", None) == "statusbar-mode":
             self.action_toggle_yolo()
+            return
+        # Turn footer: a click copies that turn's response (stashed in _write_meta)
+        # and flips the ⧉ icon to ✓. Guard on the presence of _copy_text so only
+        # footers built with copy text respond.
+        if widget is not None and getattr(widget, "_copy_text", None) is not None:
+            self._copy_turn_response(widget)
+
+    def _copy_turn_response(self, footer) -> None:
+        """Copy the footer's stashed response to the clipboard and flip its icon to
+        ✓. Empty responses are a no-op (nothing to copy)."""
+        text = getattr(footer, "_copy_text", "") or ""
+        if not text:
+            return
+        self.copy_to_clipboard(text)
+        footer.update(self._meta_markup(getattr(footer, "_elapsed", 0.0), copied=True))
 
     # ---- presentation model (reducer) ----
 
@@ -887,11 +902,19 @@ class HarnessTui(App):
             return
         self.run_worker(self._submit_text(self._queued.pop(0)), thread=False)
 
-    def _meta_markup(self, elapsed: float) -> str:
-        """The '▣ Build [bypass] · model · Ns' run caption markup."""
+    # The footer copy affordance: a dimmed ⧉ the user clicks to copy the turn's
+    # response; flips to ✓ on success (set by on_click on the footer widget).
+    _COPY_ICON = "⧉"
+    _COPIED_ICON = "✓"
+
+    def _meta_markup(self, elapsed: float, *, copied: bool = False) -> str:
+        """The '▣ Build [bypass] · model · Ns · ⧉' run caption markup. The trailing
+        glyph is the copy affordance (✓ once the response has been copied)."""
         model_label = _model_label(self.model, self._worker_model_id)
         yolo = f" {_c('error', 'bypass on')}" if self._yolo else ""   # records mode at turn time
-        return f"{_c('accent', '▣ ' + _MODE)}{yolo} {_c('muted', f'· {model_label} · {elapsed:.1f}s')}"
+        icon = self._COPIED_ICON if copied else self._COPY_ICON
+        return (f"{_c('accent', '▣ ' + _MODE)}{yolo} "
+                f"{_c('muted', f'· {model_label} · {elapsed:.1f}s · ')}{_c('muted', icon)}")
 
     def _apply_pending_persona(self) -> bool:
         """If a persona switch was requested mid-turn, apply it now (turn-end),
@@ -927,8 +950,14 @@ class HarnessTui(App):
     def _write_meta(self, elapsed: float) -> None:
         """Append the turn's run caption as a FOOTER below the response, once the
         turn ends and the elapsed time is known. A dimmed, indented .turn-meta-run
-        line that summarizes the run that produced the answer above it."""
-        self._append_line(self._meta_markup(elapsed), classes="turn-meta-run")
+        line that summarizes the run that produced the answer above it. The footer
+        carries a ⧉ copy affordance: we stash THIS turn's response prose on the
+        widget (`_copy_text`) so a click copies that answer and nothing else — the
+        live `_stream_buf` is overwritten next turn, so it must be captured now."""
+        foot = Static(self._meta_markup(elapsed), markup=True, classes="turn-meta-run")
+        foot._copy_text = self._stream_buf       # the response prose only — no tools/chips/footer
+        foot._elapsed = elapsed                  # to re-render markup when the icon flips
+        self._append(foot)
         self._refresh_status()
 
     # ---- streaming session updates → themed transcript ----

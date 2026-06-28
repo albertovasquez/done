@@ -130,6 +130,60 @@ def test_pilot_streams_deltas_into_one_markdown_widget():
     asyncio.run(go())
 
 
+def _footer(app):
+    """The most recent turn footer Static (class 'turn-meta-run')."""
+    scroll = app.query_one("#transcript", VerticalScroll)
+    foots = [w for w in scroll.children
+             if isinstance(w, Static) and "turn-meta-run" in (w.classes or set())]
+    return foots[-1] if foots else None
+
+
+def test_footer_carries_copy_affordance_and_response_text():
+    """The turn footer shows a ⧉ copy icon and stashes THIS turn's response text
+    so a click can copy it. The stashed text is the response prose only — no tool
+    calls, no chips, no footer markup."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await app._enter_conversation()
+            app._session_id = "fake-session"
+            app._stream_message("Hello **world** done")   # the turn's response prose
+            await pilot.pause()
+            app._write_meta(1.2)                           # footer is appended at turn end
+            await pilot.pause()
+            foot = _footer(app)
+            assert foot is not None, "no turn-meta-run footer was appended"
+            assert "⧉" in str(foot.content), "footer is missing the copy icon"
+            assert getattr(foot, "_copy_text", None) == "Hello **world** done"
+
+    asyncio.run(go())
+
+
+def test_footer_click_copies_response_to_clipboard():
+    """Clicking the footer copies the stashed response to the clipboard and flips
+    the icon to ✓ for feedback."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        copied = []
+        app.copy_to_clipboard = lambda text: copied.append(text)   # capture the copy
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await app._enter_conversation()
+            app._session_id = "fake-session"
+            app._stream_message("the answer")
+            await pilot.pause()
+            app._write_meta(0.5)
+            await pilot.pause()
+            foot = _footer(app)
+            app.on_click(NS(widget=foot))                  # simulate a click on the footer
+            await pilot.pause()
+            assert copied == ["the answer"], f"clipboard got {copied!r}"
+            assert "✓" in str(foot.content), "icon did not flip to the copied state"
+
+    asyncio.run(go())
+
+
 def test_late_prior_turn_delta_does_not_start_block_under_next_prompt():
     """A prompt response may return before the client has processed trailing
     session_update notifications. Starting the next turn must not let a late
