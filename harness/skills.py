@@ -78,15 +78,18 @@ class CatalogLoad:
     must not hide a skill with no explanation. (name = the skill DIR name, since a
     skill that failed to parse may have no valid frontmatter name.)"""
     skills: list[SkillMeta] = field(default_factory=list)
-    skipped: list[tuple[str, str]] = field(default_factory=list)  # (dir_name, reason)
+    skipped: list[tuple[str, str]] = field(default_factory=list)   # (dir_name, reason) — dropped
+    shadowed: list[tuple[str, str]] = field(default_factory=list)  # (name, winning_root) — overridden across roots
 
 
 def load_catalog_with_skips(roots: list[Path]) -> CatalogLoad:
     """Scan each root's <name>/SKILL.md; later roots override earlier by name.
-    Returns the valid SkillMeta list AND every dir dropped (with a human reason),
-    so callers can tell the user why a skill is unselectable. Never raises."""
+    Returns the valid SkillMeta list, every dir DROPPED (with a human reason), and
+    every skill SHADOWED across roots (a later root won) so a name clash is visible
+    rather than silent. Never raises."""
     merged: dict[str, SkillMeta] = {}
     skipped: list[tuple[str, str]] = []
+    shadowed: list[tuple[str, str]] = []
     for root in roots:
         if not Path(root).is_dir():
             continue
@@ -106,8 +109,11 @@ def load_catalog_with_skips(roots: list[Path]) -> CatalogLoad:
                 logger.warning("skipping skill %s/SKILL.md: %s", child.name, e)
                 skipped.append((child.name, str(e)))
                 continue
+            if name in merged:                       # an earlier root had this name
+                shadowed.append((name, str(root)))
             merged[name] = _meta_from_frontmatter(data, name)   # later root wins
-    return CatalogLoad(skills=[merged[k] for k in sorted(merged)], skipped=skipped)
+    return CatalogLoad(skills=[merged[k] for k in sorted(merged)],
+                       skipped=skipped, shadowed=shadowed)
 
 
 def load_catalog(roots: list[Path]) -> list[SkillMeta]:

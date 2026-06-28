@@ -63,12 +63,25 @@ def test_load_env_reads_project_env_from_explicit_cwd(monkeypatch, tmp_path):
     assert os.environ["PROJ_ONLY"] == "yes"
 
 
-def test_skills_dirs_orders_bundled_then_user(monkeypatch, tmp_path):
+def test_skills_dirs_no_project_cwd(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    (tmp_path / "harness" / "skills").mkdir(parents=True)   # user dir exists
     dirs = paths.skills_dirs()
-    assert dirs[0] == paths.bundled_skills_dir()            # bundled first (lowest precedence)
-    assert dirs[-1] == tmp_path / "harness" / "skills"      # user last (wins)
+    # bundled (lowest), ~/.claude/skills compat, <config>/skills native (highest user)
+    assert dirs[0] == paths.bundled_skills_dir()
+    assert dirs[1] == Path.home() / ".claude" / "skills"
+    assert dirs[-1] == tmp_path / "harness" / "skills"     # native user dir last among user scopes
+    assert len(dirs) == 3                                   # no project roots without project_cwd
+
+
+def test_skills_dirs_with_project_cwd_adds_project_roots(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    proj = tmp_path / "proj"
+    dirs = paths.skills_dirs(project_cwd=proj)
+    # project roots are highest precedence; .agents/skills is THE standard (last/highest)
+    assert dirs[-1] == proj / ".agents" / "skills"
+    assert dirs[-2] == proj / ".claude" / "skills"
+    # native config dir still outranks the ~/.claude compat dir
+    assert dirs.index(tmp_path / "harness" / "skills") > dirs.index(Path.home() / ".claude" / "skills")
 
 
 def test_default_workspace_dir_under_config(monkeypatch, tmp_path):

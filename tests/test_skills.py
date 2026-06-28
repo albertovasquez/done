@@ -190,3 +190,30 @@ def test_format_catalog_no_skips_unchanged(tmp_path):
     from harness.skills import SkillMeta
     out = _format_catalog([SkillMeta("good", "fine")])
     assert "skipped" not in out.lower() and "good" in out
+
+
+# --- skills-roots: shadow tracking + tie-break (PR1) --------------------------
+
+def test_shadowed_records_later_root_win(tmp_path):
+    from harness.skills import load_catalog_with_skips
+    early = tmp_path / "early"; late = tmp_path / "late"
+    _write_skill(early, "dup", "from early", "body-early")
+    _write_skill(late, "dup", "from late", "body-late")
+    _write_skill(early, "solo", "only here", "b")
+    load = load_catalog_with_skips([early, late])           # late wins by name
+    names = {m.name: m.description for m in load.skills}
+    assert names["dup"] == "from late"                      # later root won
+    assert ("dup", str(late)) in load.shadowed             # shadow recorded with winner
+    assert all(n != "solo" for n, _ in load.shadowed)      # un-clashed skill not shadowed
+
+
+def test_native_outranks_compat_tie_break(tmp_path):
+    # the subtle precedence rule: same-named skill in native (config) vs compat
+    # (~/.claude) roots — the NATIVE one wins because it's later in the root list.
+    from harness.skills import load_catalog_with_skips
+    compat = tmp_path / "claude"; native = tmp_path / "config"
+    _write_skill(compat, "tool", "borrowed copy", "b")
+    _write_skill(native, "tool", "deliberate copy", "b")
+    # order mirrors skills_dirs: compat BEFORE native => native wins
+    load = load_catalog_with_skips([compat, native])
+    assert {m.name: m.description for m in load.skills}["tool"] == "deliberate copy"

@@ -37,12 +37,15 @@ def is_capability_question(prompt: str) -> bool:
 
 
 def _format_catalog(catalog: "list[skills.SkillMeta]",
-                    skipped: "list[tuple[str, str]] | None" = None) -> str:
-    """A markdown answer listing every skill (name + description). When skills were
-    dropped during catalog load (malformed frontmatter, name mismatch, unreadable),
-    list them with their reason so the user learns WHY a skill is unselectable
-    rather than it silently vanishing."""
+                    skipped: "list[tuple[str, str]] | None" = None,
+                    shadowed: "list[tuple[str, str]] | None" = None) -> str:
+    """A markdown answer listing every skill (name + description). Dropped skills
+    (skipped: malformed/name-mismatch/unreadable) and overridden skills (shadowed:
+    a same-named skill in a higher-precedence root won) are listed too, so the user
+    learns why a skill is unselectable or which copy is active rather than it being
+    silent."""
     skipped = skipped or []
+    shadowed = shadowed or []
     if not catalog:
         head = ("I currently have **no skills** loaded — none are bundled or "
                 "configured in your skills directories.")
@@ -55,6 +58,10 @@ def _format_catalog(catalog: "list[skills.SkillMeta]",
         k = len(skipped)
         lines += ["", f"⚠️ **{k} skill{'s' if k != 1 else ''} skipped** (won't load):"]
         lines += [f"- `{name}` — {reason}" for name, reason in skipped]
+    if shadowed:
+        s = len(shadowed)
+        lines += ["", f"ℹ️ **{s} skill{'s' if s != 1 else ''} overridden** (a higher-precedence root won):"]
+        lines += [f"- `{name}` — using the copy in `{root}`" for name, root in shadowed]
     return "\n".join(lines)
 
 
@@ -62,7 +69,8 @@ class ChatHandler:
     def __init__(self, worker_model_id: str | None,
                  catalog: list[tuple[str, str]] | None = None,
                  persona_block: str = "", base_block: str = "",
-                 skipped: "list[tuple[str, str]] | None" = None):
+                 skipped: "list[tuple[str, str]] | None" = None,
+                 shadowed: "list[tuple[str, str]] | None" = None):
         # None => mock mode (no chat-capable model available)
         self._model_id = worker_model_id
         # The skill catalog (name, description) — used to answer capability
@@ -71,6 +79,9 @@ class ChatHandler:
         # Skills dropped during catalog load (dir_name, reason) — surfaced in the
         # capability answer so the user learns why a skill is unselectable. [] => none.
         self._skipped = skipped or []
+        # Skills overridden across roots (name, winning_root) — surfaced so a name
+        # clash is visible (which copy is active). [] => none.
+        self._shadowed = shadowed or []
         # Persona context (identity trio). Prepended as a system message on every
         # turn when non-empty; "" => no system message (byte-identical to before).
         self._persona_block = persona_block
@@ -86,7 +97,7 @@ class ChatHandler:
         A capability question is answered from the catalog (one piece, no model);
         mock mode otherwise yields one honest piece."""
         if is_capability_question(prompt):
-            yield _format_catalog(self._catalog, self._skipped)
+            yield _format_catalog(self._catalog, self._skipped, self._shadowed)
             return
         if self._model_id is None:
             yield ("[mock mode] classified as chat_question; chat answers require "

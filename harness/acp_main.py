@@ -46,12 +46,12 @@ def _model_factory(model_choice: str):
     if model_choice == "mock":
         from harness.models_mock import build_mock_model
 
-        def make(current_model=None):
+        def make(current_model=None, project_cwd=None):
             return build_mock_model()
         return make
     # vibeproxy path — api_base/api_key live in model_kwargs (LitellmModelConfig has
     # no top-level api_base/api_key fields); mirror run_traced.py's proven wiring.
-    def make(current_model=None):
+    def make(current_model=None, project_cwd=None):
         from harness.streaming_model import StreamingLitellmModel
         from harness.tools.registry import build_registry
         from harness import vibeproxy, paths
@@ -60,8 +60,9 @@ def _model_factory(model_choice: str):
             model_name=vibeproxy.model_id(model_id),
             model_kwargs=vibeproxy.model_kwargs(),
             cost_tracking="ignore_errors",
-            # skill_roots => the agent gets a load_skill tool to pull bodies on demand.
-            registry=build_registry(skill_roots=paths.skills_dirs()),
+            # skill_roots (project-aware) => the load_skill tool can pull project
+            # .agents/.claude skill bodies, not just global ones.
+            registry=build_registry(skill_roots=paths.skills_dirs(project_cwd=project_cwd)),
         )
     return make
 
