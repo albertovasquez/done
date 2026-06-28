@@ -285,14 +285,23 @@ data. Phase 2 loops over `state.transcript` (the actual messages).
 
 **New ext-method `harness/replay_session`** in `acp_agent.py`'s `ext_method` dispatch
 (alongside `set_persona`, ~L177):
-- Params `{id}` → resolve the persona's seat session_id (reuse the seat lookup;
-  `_persona_sessions.get_or_create` already ran during the just-completed `set_persona`, so
-  the seat exists — fetch its `session_id`).
+- Params `{id}` → resolve the persona's seat session_id via a **side-effect-free** seat
+  resolver. **(Codex review — RISKY):** `_activate_seat` mutates active state
+  (`_active_persona`, `_worker_model_id`, the session's `worker_model`, acp_agent.py:219-221).
+  Replay must NOT re-trigger those — it only READS. So extract the pure `get_or_create` into a
+  `_seat_for(pid) -> Seat` helper (no mutations) shared by both `_activate_seat` and
+  `_replay_session`.
 - `state = self._store.get(session_id)`.
 - For each `m` in `state.transcript`, emit a `session_update` whose ACP update type renders as
   the right kind: assistant/agent messages → `update_agent_message_text(m["content"])`
   (renders as `kind="message"`); user messages → the user-message update
   (renders as `kind="user"`, the `▌` prefix). Map by `m["role"]`.
+- **Boundary between messages (Codex review — message-merge):** the client's `_stream_message`
+  keeps ONE markdown widget open across consecutive `message` deltas (app.py:936-987), so
+  back-to-back replayed messages would MERGE into a single block. Before every message *after
+  the first*, emit a `stream_reset` meta update (`with_meta(message_chunk(""),
+  {"stream_reset": True})`) — the existing multi-step-narration boundary the client already
+  folds via `_end_stream(boundary=True)`. Each replayed message then renders as its own widget.
 - After the loop, emit ONE seam update: an `update_agent_message_text("")` carrying
   `field_meta={"harness": {"resumed": True}}` (via `with_meta`, acp_emit.py:41) so the client
   renders the `── resumed ──` divider as a distinct chip (not a message). The client folds

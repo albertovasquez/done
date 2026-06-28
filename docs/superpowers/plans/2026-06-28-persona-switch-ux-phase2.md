@@ -188,11 +188,39 @@ def test_replay_session_streams_transcript_then_resumed_seam():
         assert out == {"ok": True, "count": 2}
         # conn.updates is a list of (session_id, update) recorded by the fake conn.
         kinds = [_render_kind(u) for (_sid, u) in conn.updates]   # helper: render_update(u).kind
-        # two messages then a resumed-seam update (meta-bearing, empty text)
+        # first message has NO leading boundary; user then assistant then resumed seam
         assert kinds[:2] == ["user", "message"]
         last_sid, last_upd = conn.updates[-1]
         meta = getattr(last_upd, "field_meta", None) or {}
         assert (meta.get("harness") or {}).get("resumed") is True
+
+    asyncio.run(go())
+
+
+def _meta_of(upd):
+    return (getattr(upd, "field_meta", None) or {}).get("harness") or {}
+
+
+def test_replay_separates_consecutive_assistant_messages_with_a_boundary():
+    """Two back-to-back ASSISTANT messages must be separated by a stream_reset
+    boundary, else the client's _stream_message MERGES them into one widget
+    (Codex review). The first message has no leading boundary; the second does."""
+    async def go():
+        agent, conn = _make_agent_with_recording_conn()
+        resp = agent._activate_seat("default")
+        sid = resp["session_id"]
+        agent._store.extend(sid, [
+            {"role": "assistant", "content": "first answer", "origin": "chat"},
+            {"role": "assistant", "content": "second answer", "origin": "chat"},
+        ])
+        await agent.ext_method("harness/replay_session", {"id": "default"})
+        seq = [(_render_kind(u), _meta_of(u).get("stream_reset"), _meta_of(u).get("resumed"))
+               for (_sid, u) in conn.updates]
+        # expected order: msg(first), boundary(stream_reset), msg(second), seam(resumed)
+        assert seq[0][0] == "message" and seq[0][1] is None        # no leading boundary
+        assert seq[1][1] is True                                   # boundary before 2nd
+        assert seq[2][0] == "message"
+        assert seq[-1][2] is True                                  # resumed seam last
 
     asyncio.run(go())
 
@@ -235,21 +263,61 @@ In `harness/acp_agent.py`, add to the `ext_method` dispatch (near the `set_perso
                 return {"ok": False, "error": str(e)}
 ```
 
-Add the helper (near `_activate_seat`):
+**First, extract a SIDE-EFFECT-FREE seat resolver (Codex review — RISKY).** `_activate_seat`
+(acp_agent.py:205-222) does `get_or_create` (L210-218) **then mutates active state**:
+`self._active_persona = pid`, `self._worker_model_id = seat.model`, and
+`self._store.get(seat.session_id).worker_model = seat.model` (L219-221). `_replay_session`
+must NOT re-trigger those mutations (it only READS an already-active seat's session_id).
+Extract ONLY the resolution (L210-218) into `_seat_for(pid) -> Seat`; `_activate_seat` keeps
+its three mutations **and the Task-2 `message_count`** after calling it (this step refactors
+the method Task 2 already touched — preserve `message_count`):
+
+```python
+    def _seat_for(self, pid: str):
+        """Resolve (get-or-create) the persona's seat — NO active-state mutation.
+        Shared by _activate_seat (which then mirrors the model) and _replay_session
+        (which only reads session_id). Raises UnknownPersona / InvalidPersonaId."""
+        from harness import persona_select
+        from harness.persona_sessions import resolve_session_model
+        resolve_session_model_for = lambda p: resolve_session_model(
+            p, shell_set_model=self._shell_set_model,
+            shell_env=self._shell_env, dotenv=self._shell_env, backend=self._backend)
+        return self._persona_sessions.get_or_create(
+            pid, cwd=self._cwd, store=self._store,
+            resolve_ws=persona_select.resolve_workspace,
+            resolve_model=resolve_session_model_for)
+
+    def _activate_seat(self, pid: str) -> dict:
+        """... unchanged docstring ..."""
+        seat = self._seat_for(pid)
+        self._active_persona = pid
+        self._worker_model_id = seat.model
+        self._store.get(seat.session_id).worker_model = seat.model
+        count = len(self._store.get(seat.session_id).transcript)   # Task 2
+        return {"ok": True, "id": pid, "session_id": seat.session_id,
+                "model": seat.model, "message_count": count}
+```
+
+Add the replay helper (near `_activate_seat`):
 
 ```python
     async def _replay_session(self, pid: str) -> dict:
         """Stream the persona's stored transcript back to the client as ACP
         session_update notifications (rendered by the client's normal path), then
-        a `resumed` seam. The seat already exists (set_persona ran first)."""
+        a `resumed` seam. Read-only — uses _seat_for (no re-activation)."""
         from harness.acp_emit import message_chunk, user_message_chunk, with_meta
-        seat = self._persona_sessions.get_or_create(
-            pid, cwd=self._cwd, store=self._store,
-            resolve_ws=__import__("harness.persona_select", fromlist=["resolve_workspace"]).resolve_workspace,
-            resolve_model=lambda p: seat_model_unused)  # see note
-        sid = seat.session_id
+        sid = self._seat_for(pid).session_id
         transcript = self._store.get(sid).transcript
-        for m in transcript:
+        for i, m in enumerate(transcript):
+            # BOUNDARY between messages (Codex review — message-merge): the client's
+            # _stream_message keeps ONE markdown widget open across consecutive
+            # message deltas. Without a boundary, back-to-back replayed messages
+            # MERGE into a single block. Emit a stream_reset meta before every
+            # message after the first, so each renders as its OWN widget — the same
+            # signal the agent uses for multi-step narration.
+            if i > 0:
+                await self._conn.session_update(
+                    sid, with_meta(message_chunk(""), {"stream_reset": True}))
             upd = (user_message_chunk(m["content"]) if m["role"] == "user"
                    else message_chunk(m["content"]))
             await self._conn.session_update(sid, upd)
@@ -259,7 +327,10 @@ Add the helper (near `_activate_seat`):
         return {"ok": True, "count": len(transcript)}
 ```
 
-> **Implementer note on the seat lookup:** `_activate_seat` already resolves the seat via `self._persona_sessions.get_or_create(...)` with `resolve_ws=persona_select.resolve_workspace` and a `resolve_session_model_for` lambda. Do NOT duplicate that lambda crudely (the sketch above is a placeholder). Instead, **extract** the seat-resolution from `_activate_seat` into a small private helper `_seat_for(pid) -> Seat` and call it from BOTH `_activate_seat` and `_replay_session`. This avoids duplicating the model-resolver wiring. Keep `_activate_seat`'s behavior identical. If extraction proves noisy, the minimal alternative is: since `set_persona` ran immediately before, the active seat's `session_id` is `self._store`-resolvable via the persona id through the same `get_or_create` call `_activate_seat` makes — reuse exactly that call.
+> The `stream_reset` meta is already folded by the client's `on_session_update` (it calls
+> `_end_stream(boundary=True)`, app.py ~L1013-1044), which closes the current widget so the
+> next message opens a fresh one. This is the existing multi-step-narration mechanism —
+> reused, not invented.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -539,7 +610,24 @@ git commit -m "test(tui): persona switch-back replay coverage + full-suite green
 - §6.2 copy upgrade gated on count → Task 4 (subline always; empty-room only when count==0) ✓
 - §6.2 insertion point after `_clear_transcript()` → Task 4 ✓
 
-**Placeholder scan:** Task 3's `_replay_session` sketch contains a deliberately-flagged placeholder for the seat lookup with an explicit implementer note to **extract `_seat_for(pid)` from `_activate_seat`** (not copy the model-resolver lambda). This is the one spot requiring judgment; it's called out, not hidden. All other steps have concrete code.
+**Codex review folded in (2026-06-28, verified against live code):**
+- **Message-merge (HIGH, confirmed):** `_stream_message` (app.py:936-987) keeps one markdown
+  widget open across consecutive `message` deltas, so back-to-back replayed messages would
+  merge. FIX: Task 3 now emits a `stream_reset` boundary before every message after the first
+  (`test_replay_separates_consecutive_assistant_messages_with_a_boundary` guards it).
+- **Seat-extraction side effects (RISKY, confirmed):** `_activate_seat` mutates
+  `_active_persona`/`_worker_model_id`/session `worker_model` (acp_agent.py:219-221). FIX:
+  Task 3 extracts a **side-effect-free** `_seat_for(pid)` (pure `get_or_create`); `_replay_session`
+  uses it read-only, `_activate_seat` keeps its mutations + `message_count`.
+- **Transcript stores user prompts (point 1):** RIGHT — `store.extend` writes `{role:user}` +
+  `{role:assistant}` per turn (acp_agent.py:446); replay of both is sound.
+- **Generation guard (point 5):** RIGHT — replayed updates pass `on_session_update`'s
+  session-id/gen guards (gen stamped at post time via TuiClient; `_session_id` already repointed).
+- (Codex's background run stalled mid-synthesis — the known codex-rescue hang; findings were
+  salvaged from its captured messages and each re-verified against live code before folding.)
+
+**Placeholder scan:** the seat-lookup is now fully specified (`_seat_for` extraction, concrete
+code). No placeholders remain.
 
 **Type consistency:** `user_message_chunk(text)`, `message_count: int`, `harness/replay_session` params `{id}` / return `{ok, count}`, `_replay_session(pid)` (both engine async helper and client async method share the name across files but are distinct methods on different classes — acceptable; note in dispatch).
 
