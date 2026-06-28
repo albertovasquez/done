@@ -332,7 +332,14 @@ class HarnessAgent(acp.Agent):
 
         if cls.needs_clarification or cls.task_type == "ambiguous":
             q = cls.clarifying_question or "Could you clarify the task?"
-            await self._conn.session_update(session_id, message_chunk(q))
+            chunk = message_chunk(q)
+            if cls.options:
+                # Attach structured options so the TUI renders DecisionPrompt.
+                # Empty options => plain chunk, byte-identical to prior behavior.
+                chunk = with_meta(chunk, {"decision": {
+                    "question": q,
+                    "options": [{"title": t, "rationale": r} for t, r in cls.options]}})
+            await self._conn.session_update(session_id, chunk)
             self._store.record(session_id, {"prompt": text, "stop_reason": "end_turn",
                                             "kind": "clarify"})
             # write only the user turn — the clarifying question is router
