@@ -1,6 +1,4 @@
 import sys
-sys.path.insert(0, "upstream/src")
-sys.path.insert(0, ".")
 
 import asyncio
 from pathlib import Path

@@ -1,7 +1,3 @@
-import sys
-sys.path.insert(0, "upstream/src")
-sys.path.insert(0, ".")
-
 from harness.skills import SkillMeta
 from harness.flows import scope_catalog, render_map
 

@@ -12,10 +12,7 @@ does — without a network call. The agent loop terminates via a real submit ech
 """
 
 import asyncio
-import sys
 
-sys.path.insert(0, "upstream/src")
-sys.path.insert(0, ".")
 
 import acp
 

@@ -1,8 +1,3 @@
-import sys
-
-sys.path.insert(0, "upstream/src")
-sys.path.insert(0, ".")
-
 from harness.tui.widgets.quick_keys import QUICK_KEYS, quick_keys_markup  # noqa: E402
 
 

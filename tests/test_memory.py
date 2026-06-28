@@ -1,7 +1,3 @@
-import sys
-sys.path.insert(0, "upstream/src")
-sys.path.insert(0, ".")
-
 from datetime import date
 from pathlib import Path
 from harness.memory import MemoryLoad, resolve_memory, MAX_MEMORY_CHARS

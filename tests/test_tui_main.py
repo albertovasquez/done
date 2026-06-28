@@ -2,8 +2,6 @@ import os
 import sys
 from types import SimpleNamespace as NS
 
-sys.path.insert(0, "upstream/src")
-sys.path.insert(0, ".")
 
 import pytest
 from harness import tui_main

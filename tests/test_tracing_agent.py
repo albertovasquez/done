@@ -1,13 +1,10 @@
 import json
-import sys
 import threading
 import time
 from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, "upstream/src")
-sys.path.insert(0, ".")
 
 import yaml
 from minisweagent.environments.local import LocalEnvironment

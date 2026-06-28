@@ -1,7 +1,3 @@
-import sys
-sys.path.insert(0, "upstream/src")
-sys.path.insert(0, ".")
-
 from harness.tui.state import (
     AgentState, ToolStatus, ToolView, TaskItem, ScheduleView, DecisionView,
     AgentSnapshot, FleetSnapshot, initial_snapshot,

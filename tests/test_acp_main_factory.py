@@ -1,7 +1,3 @@
-import sys
-sys.path.insert(0, "upstream/src")
-sys.path.insert(0, ".")
-
 from harness.acp_main import _model_factory
 from harness.streaming_model import StreamingLitellmModel
 

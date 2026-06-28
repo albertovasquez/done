@@ -1,8 +1,3 @@
-import sys
-
-sys.path.insert(0, "upstream/src")
-sys.path.insert(0, ".")
-
 from harness.tools.registry import build_registry  # noqa: E402
 
 

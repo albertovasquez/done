@@ -1,7 +1,3 @@
-import sys
-sys.path.insert(0, "upstream/src")
-sys.path.insert(0, ".")
-
 import pytest
 from pathlib import Path
 from harness.persona import PersonaLoad, compose_persona, MAX_FILE_CHARS

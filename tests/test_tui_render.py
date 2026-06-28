@@ -1,7 +1,3 @@
-import sys
-sys.path.insert(0, "upstream/src")
-sys.path.insert(0, ".")
-
 from types import SimpleNamespace as NS
 
 from harness.tui.render import render_update, harness_chips, status_style, format_cwd, RenderedItem

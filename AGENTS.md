@@ -43,11 +43,20 @@ unverified, uncommitted changes you care about.
 
 ## 3. Tests must pass before opening the PR
 
-Run the suite from the worktree root and confirm green before opening the PR:
+Run the suite and confirm green before opening the PR. There is a single root
+`.venv` (you do not create one per worktree); `tests/conftest.py` makes `pytest`
+import the source of whichever worktree the tests live in, so you can run from
+anywhere:
 
 ```bash
-.venv/bin/python -m pytest tests/ -q     # target tests/ only — upstream/tests needs optional deps
+# from the worktree root:
+<repo-root>/.venv/bin/python -m pytest tests/ -q   # target tests/ only — upstream/tests needs optional deps
+# or, equivalently, from the repo root targeting the worktree:
+.venv/bin/python -m pytest .worktrees/<task>/tests/ -q
 ```
+
+conftest resolves imports to the worktree being tested regardless of cwd, so a
+worktree's tests never silently run the root checkout's code.
 
 `main` must always pass the suite. Don't open a PR from a red branch; put the test
 result in the PR body so the reviewer sees it.

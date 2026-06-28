@@ -1,7 +1,3 @@
-import sys
-sys.path.insert(0, "upstream/src")
-sys.path.insert(0, ".")
-
 from pathlib import Path
 from harness.skills import (SkillLoad, SkillMeta, load_catalog, compose,
                             _meta_from_frontmatter)

@@ -1,7 +1,3 @@
-import sys
-sys.path.insert(0, "upstream/src")
-sys.path.insert(0, ".")
-
 import json
 from harness.router import Router, Classification
 from harness.skills import SkillMeta

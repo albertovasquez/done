@@ -3,9 +3,6 @@ from pathlib import Path
 
 import pytest
 
-import sys
-sys.path.insert(0, "upstream/src")  # for any transitive import; events.py itself has none
-sys.path.insert(0, ".")
 
 from harness.events import Event, Emitter
 

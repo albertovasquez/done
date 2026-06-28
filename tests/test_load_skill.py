@@ -1,7 +1,3 @@
-import sys
-sys.path.insert(0, "upstream/src")
-sys.path.insert(0, ".")
-
 from types import SimpleNamespace
 
 from harness.tools.load_skill import LoadSkillTool

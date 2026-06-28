@@ -7,10 +7,7 @@ the user-visible "follow-ups are understood" behavior.
 """
 
 import asyncio
-import sys
 
-sys.path.insert(0, "upstream/src")
-sys.path.insert(0, ".")
 
 import acp
 

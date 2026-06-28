@@ -1,11 +1,8 @@
-import sys
 import threading
 import time
 
 import pytest
 
-sys.path.insert(0, "upstream/src")
-sys.path.insert(0, ".")
 
 import json
 import yaml

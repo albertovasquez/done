@@ -1,8 +1,3 @@
-import sys
-
-sys.path.insert(0, "upstream/src")
-sys.path.insert(0, ".")
-
 from harness.tui.roster import PersonaRow  # noqa: E402
 from harness.tui.state import AgentState  # noqa: E402
 from harness.tui.widgets.agent_rail import card_markup  # noqa: E402
