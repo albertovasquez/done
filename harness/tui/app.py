@@ -19,6 +19,7 @@ A LoadingIndicator shows while the model is working (between send and first toke
 
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from typing import Any
@@ -110,6 +111,8 @@ class HarnessTui(App):
         self._client = TuiClient(self)
         self._conn = None
         self._cm = None                       # the spawn_agent_process context manager
+        self._proc = None                     # the agent subprocess (for stderr drain)
+        self._stderr_task = None              # background task draining the agent's stderr
         self._session_id = None
         self._gen = 0                         # session generation; bumped each _connect
         self._send_gen = 0                    # generation a prompt worker was launched in
@@ -220,7 +223,14 @@ class HarnessTui(App):
             self._client, self.agent_cmd[0], *self.agent_cmd[1:],
             env=dict(os.environ), cwd=self.cwd,
         )
-        self._conn, _proc = await self._cm.__aenter__()
+        self._conn, self._proc = await self._cm.__aenter__()
+        # spawn_agent_process pipes the agent's stderr (transports.py stderr=PIPE)
+        # but NOTHING reads it. litellm and friends write to stderr on a chat turn;
+        # once the ~64KB pipe buffer fills, the agent BLOCKS on its next stderr
+        # write — mid-turn, after streaming chat.done but before writing the prompt
+        # RESPONSE frame — so our await prompt() never resolves ("Responding…"
+        # sticks, composer locks). Continuously drain it so the buffer never fills.
+        self._stderr_task = asyncio.create_task(self._drain_stderr(self._proc))
         try:
             await self._conn.initialize(
                 protocol_version=acp.PROTOCOL_VERSION,
@@ -233,14 +243,36 @@ class HarnessTui(App):
             raise
         self._gen += 1
 
+    async def _drain_stderr(self, proc) -> None:
+        """Read the agent subprocess's stderr to EOF so its pipe buffer can never
+        fill and block the agent mid-turn. Under --debug, relay each line to the
+        trace; otherwise discard. Best-effort: any error just ends the drain."""
+        stderr = getattr(proc, "stderr", None)
+        if stderr is None:
+            return
+        try:
+            while True:
+                line = await stderr.readline()
+                if not line:
+                    break                              # EOF: agent exited
+                if self._tracer is not None:
+                    self._tracer.emit("agent", "stderr",
+                                      text=line.decode("utf-8", "replace").rstrip("\n"))
+        except asyncio.CancelledError:
+            raise                                      # teardown cancelled us — propagate
+        except Exception:
+            return                                     # any read error just ends the drain
+
     async def _teardown(self) -> None:
         """Close the subprocess context (terminates the child). Clears connection
         state in finally so a raising __aexit__ can't leave a stale _conn."""
+        if self._stderr_task is not None:
+            self._stderr_task.cancel()
         try:
             if self._cm is not None:
                 await self._cm.__aexit__(None, None, None)
         finally:
-            self._cm = self._conn = self._session_id = None
+            self._cm = self._conn = self._proc = self._stderr_task = self._session_id = None
 
     async def _reapply_model(self) -> None:
         """After a respawn, re-apply a runtime-selected model. No-op if unchanged
