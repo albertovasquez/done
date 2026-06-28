@@ -27,10 +27,12 @@ class NewPersonaModal(ModalScreen):
     def __init__(
         self,
         on_create: "Callable[[str], Awaitable[dict]] | None" = None,
+        slugify: "Callable[[str], str] | None" = None,
         reduced_motion: bool = False,
     ) -> None:
         super().__init__()
         self._on_create = on_create
+        self._slugify = slugify
         self._reduced_motion = reduced_motion
         self._i = 0
         self._timer: "object | None" = None
@@ -39,17 +41,34 @@ class NewPersonaModal(ModalScreen):
         with Vertical(id="new-persona-box"):
             yield Static("[b]New persona[/b]   [$muted]esc[/]",
                          id="new-persona-title", markup=True)
-            yield Input(placeholder="name (a-z 0-9 - _)", id="new-persona-name")
+            yield Input(placeholder="e.g. My Persona", id="new-persona-name")
             yield Static("", id="new-persona-status", markup=True)
 
     def on_mount(self) -> None:
         self.query_one("#new-persona-name", Input).focus()
+
+    @on(Input.Changed, "#new-persona-name")
+    def _on_changed(self, event) -> None:
+        if self._slugify is None:
+            return
+        raw = event.value.strip()
+        if not raw:
+            self.query_one("#new-persona-status", Static).update("")
+            return
+        slug = self._slugify(raw)
+        status = self.query_one("#new-persona-status", Static)
+        if slug:
+            status.update(f"[$muted]→ will be created as:[/] [$accent]{slug}[/]")
+        else:
+            status.update("[$muted]enter a name with letters or numbers[/]")
 
     @on(Input.Submitted, "#new-persona-name")
     def _submit(self) -> None:
         name = self.query_one("#new-persona-name", Input).value.strip()
         if not name:
             return                                  # empty -> ignore, stay open
+        if self._slugify is not None and not self._slugify(name):
+            return                                  # unslugifiable -> no-op, hint stays
         if self._on_create is None:
             # Fallback for widget-only tests: dismiss with the name string directly.
             self.dismiss(name)
