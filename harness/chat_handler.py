@@ -29,12 +29,32 @@ _ABILITY_Q = re.compile(
     r"what (can|do) you (do|offer)|what are your (capabilities|abilities)",
     re.IGNORECASE)
 
+# A tools/commands question is about the agent's OWN tool surface, answerable
+# from the live registry (no model). POSSESSIVE-ONLY by design: it must be
+# self-directed ("what tools do YOU have", "your tools", "tools you can use") so
+# a request to BUILD or USE a tool ("write a tool to parse logs", "what tools
+# should I use in Rust") falls through to the model untouched. A false negative
+# is harmless (status quo); a false positive would hijack real work — so this
+# biases hard to precision.
+_TOOLS_Q = re.compile(
+    r"\b(?:what|which)\s+(?:tools?|commands?)\s+(?:do|can)\s+you\b"
+    r"|\byour\s+(?:tools?|commands?)\b"
+    r"|\b(?:tools?|commands?)\s+you\s+(?:have|can|use)\b",
+    re.IGNORECASE)
+
+
+def is_tools_question(prompt: str) -> bool:
+    """True when `prompt` asks what tools/commands the agent itself has."""
+    return bool(_TOOLS_Q.search(prompt))
+
 
 def is_capability_question(prompt: str) -> bool:
-    """True when `prompt` asks what skills/abilities the agent has (answerable
-    from the catalog, no model). Narrow by design: a false negative just falls
-    through to the model; a false positive would hijack legitimate chat."""
-    return bool(_ABILITY_Q.search(prompt) or _SKILL_WORD.search(prompt))
+    """True when `prompt` asks what skills/tools/abilities the agent has
+    (answerable deterministically, no model). Narrow by design: a false negative
+    just falls through to the model; a false positive would hijack legitimate
+    chat."""
+    return bool(_ABILITY_Q.search(prompt) or _SKILL_WORD.search(prompt)
+                or is_tools_question(prompt))
 
 
 def _deterministic_skills_list_enabled() -> bool:
@@ -106,6 +126,26 @@ def _format_catalog(catalog: "list[skills.SkillMeta]",
     return "\n".join(lines)
 
 
+def _format_tools(catalog: list[tuple[str, str]]) -> str:
+    """A markdown answer describing the agent's full capability surface: the live
+    tools (from the registry), the loaded skills (the same catalog), and the
+    `plan` checklist command. Read from build_registry() so this answer cannot
+    drift from the agent's real tools."""
+    from harness.tools.registry import build_registry
+
+    tools = [
+        (t.name, t.schema.get("function", {}).get("description", ""))
+        for t in build_registry()
+    ]
+    nt = len(tools)
+    lines = [f"I have **{nt} tool{'s' if nt != 1 else ''}** available:", ""]
+    lines += [f"- **{name}** — {desc}" for name, desc in tools]
+    lines += ["", _format_catalog(catalog), ""]
+    lines += ["Plus a `plan` command that drives an on-screen checklist for "
+              "multi-step work."]
+    return "\n".join(lines)
+
+
 class ChatHandler:
     def __init__(self, worker_model_id: str | None,
                  catalog: list[tuple[str, str]] | None = None,
@@ -135,10 +175,19 @@ class ChatHandler:
                       history: list[dict] | None = None) -> Iterator[str]:
         """Yield the answer in pieces (one message_chunk per delta downstream).
         `history` (plain {role, content} turns) is prepended for context.
-        By default every question (including skill questions) goes to the model,
-        which has the skills menu in its context. The legacy deterministic
-        catalog-dump path is gated behind HARNESS_DETERMINISTIC_SKILLS_LIST
-        (OFF by default; see `_deterministic_skills_list_enabled`)."""
+
+        A self-directed TOOLS question is always answered deterministically from
+        the live registry (`_format_tools`); its regex is possessive-only, so it
+        can't hijack a build-a-tool request. SKILL questions, by contrast, go to
+        the model by default — the legacy catalog-dump path is gated behind
+        HARNESS_DETERMINISTIC_SKILLS_LIST (OFF by default; see
+        `_deterministic_skills_list_enabled`)."""
+        # Tools first: a tools question is a SUBSET of capability, so the gated
+        # skills branch below would otherwise catch it (when the flag is on) and
+        # drop the tools. The tools answer is always on (precision-safe regex).
+        if is_tools_question(prompt):
+            yield _format_tools(self._catalog)
+            return
         if _deterministic_skills_list_enabled() and is_capability_question(prompt):
             yield _format_catalog(self._catalog, self._skipped, self._shadowed)
             return
