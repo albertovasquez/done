@@ -184,6 +184,49 @@ def test_late_prior_turn_delta_does_not_start_block_under_next_prompt():
     asyncio.run(go())
 
 
+def test_new_turn_prose_opens_fresh_block_after_classify_chip():
+    """Regression: from turn 2 on, the agent emits a task_classified chip (empty
+    body) BEFORE the turn's prose. By then the prior answer's kept Markdown widget
+    is no longer last (footer + new prompt + chip mounted after it) and
+    _add_user_message has cleared _boundary_after — so without treating the chip as
+    a turn boundary, the late-delta branch in _stream_message appends turn 2's
+    prose INTO turn 1's widget (answer renders under the wrong prompt). The chip
+    must open a fresh block for turn 2's answer."""
+    from harness.acp_emit import with_meta, message_chunk
+
+    def _classify_chip(task_type="chat_question"):
+        meta = {"task_type": task_type, "skills": [], "confidence": 0.99}
+        return with_meta(message_chunk(""), {"task_classified": meta})
+
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await app._enter_conversation()
+            app._session_id = "fake-session"
+
+            # turn 1: prompt, prose, footer
+            app._add_user_message("first")
+            app.on_session_update(SessionUpdate(update_agent_message_text("first answer")))
+            await pilot.pause()
+            app._write_meta(0.1)
+
+            # turn 2: new prompt, then the classify chip (empty body), then prose
+            app._add_user_message("second")
+            app.on_session_update(SessionUpdate(_classify_chip()))
+            await pilot.pause()
+            app.on_session_update(SessionUpdate(update_agent_message_text("second answer")))
+            await pilot.pause()
+
+            scroll = app.query_one("#transcript", VerticalScroll)
+            md_sources = [_md_source(md) for md in scroll.query(Markdown)]
+        assert md_sources == ["first answer", "second answer"], (
+            "turn-2 prose was merged into turn-1's widget instead of opening a "
+            f"fresh block: {md_sources!r}")
+
+    asyncio.run(go())
+
+
 def test_pilot_slash_menu_does_not_move_landing_input():
     """Opening the slash menu on the landing screen must not shift the input box.
     The menu should grow upward (overlay) so the input's vertical position is

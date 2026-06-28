@@ -913,6 +913,20 @@ class HarnessTui(App):
         if isinstance(meta, dict) and (meta.get("harness") or {}).get("stream_reset"):
             self._end_stream(boundary=True)
             return
+        # A new turn's classification chip is the first thing the agent emits for
+        # that turn (acp_agent.py emits task_classified before any prose, on EVERY
+        # dispatch path). Treat it as an in-turn boundary so the next prose opens a
+        # FRESH widget instead of extending the PRIOR turn's kept block — without
+        # this, _add_user_message clears _boundary_after, the prior widget is no
+        # longer last (footer/prompt/chip mounted after it), and the late-delta
+        # branch in _stream_message would append turn N's answer into turn N-1's
+        # widget (answer renders under the wrong prompt). A genuine late delta of
+        # the prior turn carries NO task_classified chip, so it still extends in
+        # place. NB: this relies on every prose-producing path emitting
+        # task_classified first; if a future path streams prose without it, the
+        # boundary won't fire and the misroute returns.
+        if isinstance(meta, dict) and (meta.get("harness") or {}).get("task_classified"):
+            self._end_stream(boundary=True)
         # fold a decision view if present
         dv = decision_from_meta(getattr(msg.update, "field_meta", None))
         if dv is not None:
