@@ -156,9 +156,10 @@ class HarnessTui(App):
                                  classes="compose-meta", markup=True)
                 yield Static("[b]tab[/b] agents   [b]ctrl+p[/b] commands", id="hint", markup=True)
         yield self._status_bar()
-        rail = AgentRail(id="agent-rail")
-        rail.display = False
-        yield rail
+        from harness.tui.widgets.quick_keys import QuickKeysPanel
+        drawer = Vertical(AgentRail(id="agent-rail"), QuickKeysPanel(), id="agent-drawer")
+        drawer.display = False            # the whole drawer (rail + legend) toggles as one
+        yield drawer
 
     def _yolo_meta_markup(self) -> str:
         """' · bypass on' (RED) for the top mode line when the permission bypass
@@ -575,9 +576,9 @@ class HarnessTui(App):
             # Tab from the prompt (when rail is hidden) → reveal and focus the rail.
             if event.key == "tab":
                 rail = self.query_one("#agent-rail", AgentRail)
-                if isinstance(self.focused, PromptArea) and not rail.display:
+                if isinstance(self.focused, PromptArea) and not self._drawer_visible():
                     rail.set_rows(self._persona_rows(), subline_of=self._persona_subline)
-                    rail.display = True
+                    self._show_drawer(True)
                     rail.focus()
                     event.stop()
                 # Otherwise let Tab do normal focus traversal (don't stop).
@@ -586,10 +587,9 @@ class HarnessTui(App):
             # FIX 4: only close the rail when no turn is active; if a turn is running,
             # let Esc fall through to action_cancel (the "Cancel turn" binding).
             if event.key == "escape":
-                rail = self.query_one("#agent-rail", AgentRail)
-                if rail.display and isinstance(self.focused, AgentRail) \
+                if self._drawer_visible() and isinstance(self.focused, AgentRail) \
                         and not self._turn_active:
-                    rail.display = False
+                    self._show_drawer(False)
                     self._active_input().focus()
                     event.stop()
             return
@@ -1041,14 +1041,27 @@ class HarnessTui(App):
             return f"{n} task{'s' if n != 1 else ''}" if n else "idle"
         return "idle"
 
+    def _drawer_visible(self) -> bool:
+        try:
+            return self.query_one("#agent-drawer").display
+        except Exception:
+            return False
+
+    def _show_drawer(self, visible: bool) -> None:
+        """Toggle the whole agents drawer (rail + QUICK KEYS legend) as one unit."""
+        try:
+            self.query_one("#agent-drawer").display = visible
+        except Exception:
+            pass
+
     def action_toggle_rail(self) -> None:
         rail = self.query_one("#agent-rail", AgentRail)
-        if not rail.display:
+        if not self._drawer_visible():
             rail.set_rows(self._persona_rows(), subline_of=self._persona_subline)   # refresh on open
-            rail.display = True
+            self._show_drawer(True)
             rail.focus()
         else:
-            rail.display = False
+            self._show_drawer(False)
             self._active_input().focus()
 
     async def on_persona_selected(self, event: PersonaSelected) -> None:
@@ -1059,10 +1072,7 @@ class HarnessTui(App):
             return
         if event.id == self._current_persona():
             # already this persona — just close the drawer, no switch (no-op enter)
-            try:
-                self.query_one("#agent-rail", AgentRail).display = False
-            except Exception:
-                pass
+            self._show_drawer(False)
             self._active_input().focus()
             return
         try:
@@ -1092,12 +1102,8 @@ class HarnessTui(App):
         # the switch in the transcript (the user reported "I don't see anything").
         # Done before the focus call below so a focus hiccup can't swallow it.
         self._notify_line(note or f"now talking to persona: {resp['id']}")
-        # close the rail + refocus the prompt
-        try:
-            rail = self.query_one("#agent-rail", AgentRail)
-            rail.display = False
-        except Exception:
-            pass
+        # close the drawer + refocus the prompt
+        self._show_drawer(False)
         self._active_input().focus()
 
     def on_new_persona_requested(self, event) -> None:

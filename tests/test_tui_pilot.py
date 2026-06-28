@@ -1035,7 +1035,7 @@ def test_rail_hidden_by_default_and_tab_toggles():
             from harness.tui.widgets.agent_rail import AgentRail
             from harness.tui.widgets.prompt_area import PromptArea
             rail = app.query_one("#agent-rail", AgentRail)
-            assert rail.display is False       # hidden by default
+            assert app.query_one("#agent-drawer").display is False       # hidden by default
 
             # Tab from the prompt (landing-input has focus on startup) → reveals rail
             prompt = app.query_one("#landing-input", PromptArea)
@@ -1044,13 +1044,13 @@ def test_rail_hidden_by_default_and_tab_toggles():
             assert isinstance(app.focused, PromptArea), "prompt should be focused"
             await pilot.press("tab")
             await pilot.pause()
-            assert rail.display is True        # rail revealed
+            assert app.query_one("#agent-drawer").display is True        # rail revealed
             assert isinstance(app.focused, AgentRail), "rail should have focus"
 
             # Esc from the rail → hides rail and returns focus to prompt
             await pilot.press("escape")
             await pilot.pause()
-            assert rail.display is False       # rail hidden
+            assert app.query_one("#agent-drawer").display is False       # rail hidden
             assert isinstance(app.focused, PromptArea), "focus back to prompt"
     asyncio.run(go())
 
@@ -1064,20 +1064,20 @@ def test_tab_from_prompt_reveals_rail_and_focuses_it():
             from harness.tui.widgets.agent_rail import AgentRail
             from harness.tui.widgets.prompt_area import PromptArea
             rail = app.query_one("#agent-rail", AgentRail)
-            assert rail.display is False
+            assert app.query_one("#agent-drawer").display is False
 
             # Focus prompt, press Tab → rail should open and be focused
             app.query_one("#landing-input", PromptArea).focus()
             await pilot.pause()
             await pilot.press("tab")
             await pilot.pause()
-            assert rail.display is True, "rail must be displayed after tab from prompt"
+            assert app.query_one("#agent-drawer").display is True, "rail must be displayed after tab from prompt"
             assert isinstance(app.focused, AgentRail), "AgentRail must hold focus"
 
             # action_toggle_rail still closes it (used by /persona no-arg)
             app.action_toggle_rail()
             await pilot.pause()
-            assert rail.display is False
+            assert app.query_one("#agent-drawer").display is False
     asyncio.run(go())
 
 
@@ -1092,14 +1092,14 @@ def test_esc_from_rail_hides_and_refocuses_prompt():
             app.action_toggle_rail()
             await pilot.pause()
             rail = app.query_one("#agent-rail", AgentRail)
-            assert rail.display is True
+            assert app.query_one("#agent-drawer").display is True
             # Rail should have focus (action_toggle_rail calls rail.focus())
             assert isinstance(app.focused, AgentRail), "rail must be focused after open"
 
             # Press Esc → hide rail, return focus to prompt
             await pilot.press("escape")
             await pilot.pause()
-            assert rail.display is False, "rail must hide on Esc"
+            assert app.query_one("#agent-drawer").display is False, "rail must hide on Esc"
             assert isinstance(app.focused, PromptArea), "focus must return to prompt"
     asyncio.run(go())
 
@@ -1120,11 +1120,11 @@ def test_tab_from_prompt_opens_rail_focus_traversal_model():
             inp.focus()
             await pilot.pause()
             rail = app.query_one("#agent-rail", AgentRail)
-            assert rail.display is False, "rail starts hidden"
+            assert app.query_one("#agent-drawer").display is False, "rail starts hidden"
             # Tab while prompt has focus: app.on_key intercepts → reveal+focus rail
             await pilot.press("tab")
             await pilot.pause()
-            assert rail.display is True, (
+            assert app.query_one("#agent-drawer").display is True, (
                 "tab with prompt focused must reveal the rail (focus-traversal model)")
             assert isinstance(app.focused, AgentRail), "focus must move to the rail"
     asyncio.run(go())
@@ -1199,7 +1199,7 @@ def test_esc_cancels_turn_even_when_rail_open():
             app.action_toggle_rail()
             await pilot.pause()
             rail = app.query_one("#agent-rail", AgentRail)
-            assert rail.display is True, "rail must be open for this test"
+            assert app.query_one("#agent-drawer").display is True, "rail must be open for this test"
 
             # Simulate a turn in flight
             app._turn_active = True
@@ -1216,7 +1216,7 @@ def test_esc_cancels_turn_even_when_rail_open():
             await pilot.pause()
 
             # Rail must still be open (not closed by on_key)
-            assert rail.display is True, (
+            assert app.query_one("#agent-drawer").display is True, (
                 "Esc with turn active must NOT close the rail "
                 "(it should fall through to action_cancel)"
             )
@@ -1242,13 +1242,13 @@ def test_esc_closes_rail_when_no_turn_active():
             rail = app.query_one("#agent-rail", AgentRail)
             rail.focus()
             await pilot.pause()
-            assert rail.display is True
+            assert app.query_one("#agent-drawer").display is True
             assert app._turn_active is False
 
             # Esc — should close the rail
             await pilot.press("escape")
             await pilot.pause()
-            assert rail.display is False, "Esc with no turn must close the rail"
+            assert app.query_one("#agent-drawer").display is False, "Esc with no turn must close the rail"
 
     asyncio.run(go())
 
@@ -1872,7 +1872,7 @@ def test_drawer_open_prehighlights_active_persona():
             app.action_toggle_rail()              # open the drawer
             await pilot.pause()
             rail = app.query_one("#agent-rail", AgentRail)
-            assert rail.display
+            assert app.query_one("#agent-drawer").display
             # the active persona's row is pre-highlighted (not forced to index 0)
             assert rail._rows[rail.index].id == app._current_persona()
 
@@ -1898,10 +1898,10 @@ def test_enter_on_active_persona_is_noop_close():
             app._conn.ext_method = fake_ext       # spy on set_persona
 
             rail = app.query_one("#agent-rail", AgentRail)
-            rail.display = True
+            app._show_drawer(True)
             await app.on_persona_selected(PersonaSelected(app._current_persona()))  # enter on active
             await pilot.pause()
             assert calls == []                    # no set_persona call
-            assert not rail.display               # drawer closed
+            assert not app.query_one("#agent-drawer").display   # drawer closed
 
     asyncio.run(go())
