@@ -192,6 +192,17 @@ def _reduce_agent(a: AgentSnapshot, event) -> AgentSnapshot:
         return replace(a, state=AgentState.DONE if event.ok else AgentState.FAILED,
                        tool=None, activity_label="")
     if isinstance(event, ItemReceived):
+        # TurnEnded is TERMINAL for the activity state. A late session_update
+        # notification (message/tool chunk) can drain on Textual's queue AFTER the
+        # prompt() RPC response already resolved and applied TurnEnded — the two
+        # channels have no app-level ordering guarantee. Without this guard such a
+        # straggler re-sets RESPONDING/RUNNING_TOOL with no following TurnEnded to
+        # clear it, so the ActivityRegion sticks on "Responding (elapsed)" forever
+        # (the reported stuck-spinner bug). Once terminal, no item advances the
+        # activity state. Prose still renders: that path is app._stream_message,
+        # independent of this reducer.
+        if a.state in (AgentState.DONE, AgentState.FAILED):
+            return a
         item = event.item
         kind = getattr(item, "kind", "")
         if kind == "message":

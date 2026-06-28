@@ -439,3 +439,44 @@ def test_persona_resolved_seeds_when_absent():
     assert out.active_id == "c"
     assert any(ag.id == "c" for ag in out.agents)
     assert out.active is not None
+
+
+# ---- TurnEnded is terminal: a late item must not resurrect a working state ----
+# Regression for the stuck "Responding…" spinner. The prompt() RPC response can
+# resolve (→ TurnEnded) BEFORE the agent's last message-chunk session_update
+# notifications drain on Textual's queue, so the proven _apply order is
+# [TurnStarted, TurnEnded, ItemReceived(message)…]. The late item must leave the
+# activity state terminal, else the ActivityRegion sticks on "Responding" forever.
+
+def test_late_message_after_turn_end_stays_done():
+    fs = reduce(initial_snapshot(), TurnStarted())
+    fs = reduce(fs, TurnEnded(ok=True))
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="message", text="trailing delta")))
+    a = _active(fs)
+    assert a.state == AgentState.DONE          # NOT resurrected to RESPONDING
+    assert a.activity_label == ""
+
+
+def test_late_tool_after_turn_end_stays_done():
+    fs = reduce(initial_snapshot(), TurnStarted())
+    fs = reduce(fs, TurnEnded(ok=True))
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="tool", id="t1",
+                                              title="$ echo late", status="pending")))
+    assert _active(fs).state == AgentState.DONE  # not resurrected to RUNNING_TOOL
+
+
+def test_late_item_after_failed_turn_stays_failed():
+    fs = reduce(initial_snapshot(), TurnStarted())
+    fs = reduce(fs, TurnEnded(ok=False))
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="message", text="trailing delta")))
+    assert _active(fs).state == AgentState.FAILED
+
+
+def test_new_turn_after_done_still_responds():
+    # the guard must NOT wedge the next turn: TurnStarted clears the terminal
+    # state first, so its first message correctly goes RESPONDING.
+    fs = reduce(initial_snapshot(), TurnStarted())
+    fs = reduce(fs, TurnEnded(ok=True))
+    fs = reduce(fs, TurnStarted())                         # next turn
+    fs = reduce(fs, ItemReceived(RenderedItem(kind="message", text="hi")))
+    assert _active(fs).state == AgentState.RESPONDING
