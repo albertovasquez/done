@@ -42,6 +42,8 @@ def mutate(fn: Callable[[list[m.Job]], list[m.Job]]) -> None:
         _write_unlocked(fn(_read_unlocked()))
 
 def bump_state(job_id: str, new_state: m.JobState, expected_version: int) -> bool:
+    # Caller is responsible for setting new_state.version to the incremented
+    # value; the store does not auto-increment it.
     with _locked():
         jobs = _read_unlocked()
         out, applied = [], False
@@ -56,6 +58,8 @@ def bump_state(job_id: str, new_state: m.JobState, expected_version: int) -> boo
             _write_unlocked(out)
         return applied
 
+# Single-writer assumption: each run-log file is written only by the owning
+# run, so this function does NOT acquire the flock used by mutate/bump_state.
 def append_run(run: m.JobRun, *, now: float | None = None) -> None:
     _ensure_dirs()
     path = jp.run_log(run.job_id)
