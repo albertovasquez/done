@@ -1014,6 +1014,10 @@ class HarnessTui(App):
         if isinstance(meta, dict) and (meta.get("harness") or {}).get("stream_reset"):
             self._end_stream(boundary=True)
             return
+        if isinstance(meta, dict) and (meta.get("harness") or {}).get("resumed"):
+            self._end_stream(boundary=True)
+            self._append_line(_c("muted", "── resumed ──────────────────────────────"))
+            return
         # A new turn's classification chip is the first thing the agent emits for
         # that turn (acp_agent.py emits task_classified before any prose, on EVERY
         # dispatch path). Treat it as an in-turn boundary so the next prose opens a
@@ -1211,10 +1215,10 @@ class HarnessTui(App):
 
     def _apply_persona_switch(self, resp: dict, note: str | None = None) -> None:
         """Apply a successful set_persona/create_persona result: repoint the session,
-        update the indicator + footer, CLEAR the prior persona's transcript (each
-        persona is a separate conversation — Phase 1 shows a fresh room, replay is
-        Phase 2), write the room header, close the rail, refocus. `note` overrides
-        the default room header (create passes its own)."""
+        update the indicator + footer, CLEAR the prior persona's transcript, write
+        the room header, optionally schedule a transcript replay (Phase 2), close
+        the rail, refocus. `note` overrides the default room header (create passes
+        its own)."""
         self._session_id = resp["session_id"]
         self._persona_seen = True
         self._apply(PersonaResolved(resp["id"]))   # updates snapshot + ActivityRegion
@@ -1226,18 +1230,36 @@ class HarnessTui(App):
         # Each persona is its own conversation: clear the previous room so its
         # messages don't bleed into this one, then show whose room this is.
         self._clear_transcript()
+        count = resp.get("message_count", 0)
         if self._started:
             name = self._persona_display_name(resp["id"])
             if note:
                 self._append_line(_c("muted", note))
             else:
                 self._append_line(_c("accent", f"now in {name}'s conversation"))
-                self._append_line(_c("muted", "a separate conversation"))
-                self._append_line(
-                    _c("muted", f"This is {name}'s conversation — separate from your others. Say hello."))
+                self._append_line(_c("muted", "a separate conversation · remembers across switches"))
+                if count == 0:
+                    self._append_line(_c(
+                        "muted",
+                        f"This is {name}'s conversation. It's separate from your others "
+                        f"and remembers across switches. Say hello."))
+        # If there's prior history, stream it back via the engine (Phase 2 replay).
+        # The worker is scheduled AFTER the room header so header appears first,
+        # then replayed messages, then the resumed seam.
+        if count > 0 and self._conn is not None:
+            self.run_worker(self._replay_session(resp["id"]), thread=False)
         # close the drawer + refocus the prompt
         self._show_drawer(False)
         self._active_input().focus()
+
+    async def _replay_session(self, pid: str) -> None:
+        """Ask the engine to stream this persona's prior transcript back; the
+        streamed session_updates render through the normal on_session_update path,
+        ending with the `resumed` seam."""
+        try:
+            await self._conn.ext_method("harness/replay_session", {"id": pid})
+        except Exception as e:
+            self._notify_line(f"could not load earlier messages: {e}")
 
     def on_new_persona_requested(self, event) -> None:
         event.stop()
