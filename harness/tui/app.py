@@ -122,11 +122,14 @@ class HarnessTui(App):
         self._turn_start = 0.0                # monotonic at send, for elapsed meta
         self._streaming_md = None             # the live Markdown widget for the current answer, else None
         self._stream_buf = ""                 # accumulated text for _streaming_md
+        self._stream_dirty = False            # buffer changed since last paint
+        self._stream_timer = None             # Textual Timer while a stream is open
         self._stream_closed = True            # True => the next message delta starts a fresh widget
         self._boundary_after = False          # True => an in-turn boundary (tool/thought/stream_reset) closed the block; next prose opens a FRESH widget (vs. a late delta of the prior answer, which extends in place)
         self._tokens = 0                      # last-known token count from usage updates
         self._persona_seen = False            # True after the first real PersonaResolved lands
         self._turn_active = False             # True while a prompt turn is in flight (used by Esc-rail guard)
+        self._cancel_posted = False           # True after the first action_cancel this turn (de-dupe double BINDING fire)
         self._queued: list[str] = []          # prompts typed mid-turn; drained FIFO when the turn ends
         self._pending_persona: str | None = None   # a switch requested mid-turn; applied on turn-end
         self._snapshot = initial_snapshot()   # the presentation model (pure, immutable)
@@ -179,6 +182,17 @@ class HarnessTui(App):
         if pid == "default":
             return '› Ask anything... "What is the tech stack of this project?"'
         return f"› Ask {self._persona_display_name(pid)} anything…"
+
+    def _conversation_placeholder(self) -> str:
+        """Idle placeholder for the conversation composer (between turns). Mirrors
+        _landing_placeholder's persona awareness: default → a plain 'Reply…'; a
+        non-default persona → '› Reply to <name>…' so the composer keeps its
+        identity after a turn instead of snapping back to a generic prompt. The
+        mid-turn queue hint ('Type to queue…') is separate and not persona-aware."""
+        pid = self._current_persona()
+        if pid == "default":
+            return "Reply…"
+        return f"› Reply to {self._persona_display_name(pid)}…"
 
     def _compose_meta_markup(self, model_label: str, provider: str) -> str:
         # Just the persona name now (replaced the 'Build' mode word). The
@@ -601,6 +615,8 @@ class HarnessTui(App):
         # next message (Enter while _turn_active enqueues — see on_prompt_area_submitted).
         self._turn_start = time.monotonic()
         self._turn_active = True
+        self._cancel_posted = False           # reset per-turn so ESC is fresh again
+        self._active_input().placeholder = "Type to queue your next message…"
         self._apply(TurnStarted())
         self._send_gen = self._gen            # tag this turn's worker with its generation
         self.run_worker(self._send_prompt(text), thread=False)
@@ -678,7 +694,14 @@ class HarnessTui(App):
     async def on_key(self, event) -> None:
         # while the slash menu is open, ↑/↓ move the selection; esc closes it
         if self._slash is None:
-            # menu closed: esc with text in the box clears it; empty box falls
+            # ESC precedence ladder (spec R5): slash already handled below
+            # (this branch is the slash-closed case). Turn active → cancel FIRST,
+            # before clear-text and rail-close, so a slow turn is always escapable.
+            if event.key == "escape" and self._turn_active:
+                event.stop()
+                await self.action_cancel()
+                return
+            # menu closed, no turn: esc with text clears it; empty box falls
             # through to action_cancel (the global "Cancel turn" binding).
             if event.key == "escape" and self._active_input().value:
                 self._active_input().value = ""
@@ -826,7 +849,8 @@ class HarnessTui(App):
         await self.mount(VerticalScroll(id="transcript"), before="#statusbar")
         composer = Vertical(id="composer", classes="compose")
         await self.mount(composer, before="#statusbar")
-        await composer.mount(PromptArea(placeholder="Reply…", id="conversation-input"))
+        await composer.mount(PromptArea(placeholder=self._conversation_placeholder(),
+                                        id="conversation-input"))
         await self.mount(ActivityRegion(id="activity-region"), before="#composer")
         self._refresh_status()
         self.query_one("#conversation-input", PromptArea).focus()
@@ -838,6 +862,10 @@ class HarnessTui(App):
         the persona switch) — unlike async _reset_conversation."""
         if self._started:
             self._transcript.remove_children()
+        # R2: stop the flusher and clear dirty BEFORE nulling the widget so a
+        # stale flush can't fire (or paint into) a reset/replaced stream.
+        self._stop_stream_timer()
+        self._stream_dirty = False
         self._streaming_md = None
         self._stream_buf = ""
         self._stream_closed = True
@@ -901,6 +929,8 @@ class HarnessTui(App):
         place. `_stream_message` keys on `_boundary_after` to tell the two
         apart."""
         self._stream_closed = True
+        self._flush_stream()          # R1: paint any unpainted tail before close
+        self._stop_stream_timer()     # R2: no free-running timer between turns
         if boundary:
             self._boundary_after = True
 
@@ -941,9 +971,15 @@ class HarnessTui(App):
             self._append_line(_c("error", f"agent disconnected — restart to continue ({e})"))
         finally:
             self._turn_active = False
+            if not self._running:                 # app shut down mid-turn: skip DOM ops
+                # Intentionally do NOT drain the queue here: _running is False only
+                # during Textual teardown (after workers.cancel_all()), so starting a
+                # new worker to process a queued prompt would run on a dying event loop.
+                return
             if gen == self._gen:                  # only the CURRENT generation touches the UI
                 self._hide_working()
                 self._active_input().disabled = False
+                self._active_input().placeholder = self._conversation_placeholder()
                 self._active_input().focus()
                 switched = self._apply_pending_persona()  # honor a mid-turn switch request first…
                 if not switched:                          # …drain immediately only when no switch
@@ -1053,6 +1089,7 @@ class HarnessTui(App):
         # turn is the late-delta case, where the prior widget extends in place).
         boundary_after = self._boundary_after and self._streaming_md is not None
 
+        opened_new = False
         if self._stream_closed and self._streaming_md is not None \
                 and not prior_is_last and not boundary_after:
             # late delta for the just-closed answer → extend its widget in place;
@@ -1067,11 +1104,44 @@ class HarnessTui(App):
             self._stream_buf = ""
             self._stream_closed = False
             self._boundary_after = False
+            opened_new = True
         # else: stream already open → keep extending it.
         self._stream_buf += text
-        md, buf = self._streaming_md, self._stream_buf
-        self.call_after_refresh(md.update, buf)
+        self._stream_dirty = True
+        if self._stream_closed or opened_new:
+            # R1: a late delta after close cannot rely on the interval (stopped on
+            # close) → flush SYNC. opened_new: the first chunk of a new answer must
+            # paint immediately, not wait up to 80ms for the timer (avoids a
+            # post-_hide_working blank flicker). Subsequent open-stream chunks
+            # coalesce on the timer.
+            self._flush_stream()
+            if not self._stream_closed:
+                self._ensure_stream_timer()   # arm for the chunks that follow
+        else:
+            self._ensure_stream_timer()
         self._transcript.scroll_end(animate=False)
+
+    def _ensure_stream_timer(self) -> None:
+        # R2: start a 12Hz flusher on stream-open; it is stopped on close/reset.
+        if self._stream_timer is None:
+            self._stream_timer = self.set_interval(1 / 12, self._flush_stream)
+
+    def _stop_stream_timer(self) -> None:
+        if self._stream_timer is not None:
+            self._stream_timer.stop()
+            self._stream_timer = None
+
+    def _flush_stream(self) -> None:
+        # R2/R3: no-op when nothing to paint or the widget is gone (teardown);
+        # capture the CURRENT widget+buffer so a flush can't paint a stale buffer
+        # into a new widget after a reset.
+        if not self._stream_dirty or self._streaming_md is None:
+            return
+        md, buf = self._streaming_md, self._stream_buf
+        self._stream_dirty = False
+        # R4: md.update is a no-op until the widget mounts; call_after_refresh
+        # guarantees the FIRST paint lands post-mount, matching prior behavior.
+        self.call_after_refresh(md.update, buf)
 
     def on_session_update(self, msg: SessionUpdate) -> None:
         if not self._started:
@@ -1193,10 +1263,22 @@ class HarnessTui(App):
         self.push_screen(PermissionModal(command, msg.options), _resolve)
 
     async def action_cancel(self) -> None:
+        # Gate the ENTIRE body on _cancel_posted: on_key calls action_cancel
+        # directly AND Textual's global ("escape","cancel") binding also fires
+        # because event.stop() does not suppress binding dispatch.  One ESC press
+        # therefore triggers two invocations — gating here means the second is a
+        # complete no-op (no extra cancel() RPC, no extra tx.cancel trace, no
+        # extra feedback line).  _cancel_posted is reset to False at the top of
+        # each new turn in _submit_text, so ESC works again on the next turn.
+        if self._cancel_posted:
+            return
         if self._conn is not None and self._session_id is not None:
+            self._cancel_posted = True
             if self._tracer is not None:
                 self._tracer.emit("dn", "tx.cancel", sid=self._session_id)
             await self._conn.cancel(session_id=self._session_id)
+            if self._started:
+                self._append_line(_c("muted", "— canceling… —"))
 
     async def action_clear(self) -> None:
         if self._busy:

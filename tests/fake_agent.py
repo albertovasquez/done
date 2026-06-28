@@ -86,6 +86,33 @@ class FakeAgent(acp.Agent):
             await self._conn.session_update(session_id, tupd)
             return acp.PromptResponse(stop_reason="end_turn")
 
+        # 2d) SLOW: a long pre-stream gap with NOTHING emitted — faithfully
+        # replays the agent-path "spinner, nothing printing yet" window (the
+        # ~4.5s uncached router classify before the first frame reaches the TUI,
+        # real trace 20260628-151948 turn 2). The chip in step (1) already went
+        # out; here we just stall, then emit one delta and return. Used by the
+        # input-freeze repro to probe composer usability DURING that gap.
+        if "SLOW" in text:
+            await asyncio.sleep(0.6)
+            await self._conn.session_update(
+                session_id, update_agent_message_text("late answer"))
+            return acp.PromptResponse(stop_reason="end_turn")
+
+        # MANYCHUNKS: emit many small deltas spread across real wall-clock time
+        # so that the invariant test (test_tui_always_interactive.py Phase C)
+        # can observe the mid-burst window (turn_active AND streaming_md set).
+        # Without real sleeps the TUI processes all 60 chunks before
+        # pilot.pause()'s wait_for_idle(0) returns, collapsing the window.
+        # Inter-chunk sleep of 30ms spreads 60 chunks over ~1.8s; the 12Hz
+        # coalescing timer fires ~21 times in that window, so render count
+        # stays well below 60 (coalescing guarantee intact, threshold raised).
+        if "MANYCHUNKS" in text:
+            for i in range(60):
+                await self._conn.session_update(
+                    session_id, update_agent_message_text(f"word{i} "))
+                await asyncio.sleep(0.03)   # 30ms: ~21 timer fires for 60 chunks
+            return acp.PromptResponse(stop_reason="end_turn")
+
         # 3) optionally stream several message deltas for ONE turn (so the client
         # can be tested accumulating them into a single live Markdown widget).
         if "STREAM" in text:
