@@ -11,12 +11,12 @@ from __future__ import annotations
 from textual import on
 from textual.binding import Binding
 from textual.message import Message
-from textual.widgets import Label, ListItem, ListView
+from textual.widgets import ListItem, ListView, Static
 
 from harness.tui.roster import PersonaRow
-
-ACTIVE_GLYPH = "●"
-IDLE_GLYPH = "○"
+from harness.tui.state import AgentState
+from harness.tui.tokens import GLYPH, STATUS_LABEL
+from harness.tui.widgets.status_chip import _STATE_GLYPH, state_color_token
 
 
 class PersonaSelected(Message):
@@ -29,8 +29,33 @@ class NewPersonaRequested(Message):
     """Posted when the user presses `n` in the rail to create a new persona."""
 
 
-def _row_label(r: PersonaRow) -> str:
-    return f"{ACTIVE_GLYPH if r.active else IDLE_GLYPH} {r.name}"
+# AgentState → the STATUS_LABEL/colour vocabulary key (display only).
+_STATUS_KEY = {
+    AgentState.IDLE: "idle",
+    AgentState.THINKING: "running",
+    AgentState.RESPONDING: "running",
+    AgentState.RUNNING_TOOL: "running",
+    AgentState.AWAITING_PERMISSION: "scheduled",
+    AgentState.AWAITING_DECISION: "scheduled",
+    AgentState.SCHEDULED: "scheduled",
+    AgentState.DONE: "idle",
+    AgentState.FAILED: "idle",
+}
+
+
+def _status_label(state: AgentState) -> str:
+    return STATUS_LABEL.get(_STATUS_KEY.get(state, "idle"), "IDLE")
+
+
+def card_markup(row: PersonaRow, subline: str) -> str:
+    """Two-line card markup: name (left) + status label/dot (right), then a muted
+    sub-line. Active name is accent-bold; idle is plain foreground. Tokens only;
+    no icon tile."""
+    token = state_color_token(row.status)
+    dot = GLYPH[_STATE_GLYPH.get(row.status, "idle")]
+    name = f"[$accent][b]{row.name}[/b][/]" if row.active else f"[$foreground]{row.name}[/]"
+    status = f"[${token}]{_status_label(row.status)} {dot}[/]"
+    return f"{name}    {status}\n[$muted]{subline}[/]"
 
 
 class AgentRail(ListView):
