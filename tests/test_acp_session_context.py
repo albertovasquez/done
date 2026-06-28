@@ -557,3 +557,33 @@ def test_persona_chip_not_written_to_session_record(tmp_path):
     # ... but the _meta chip is NOT in the session record (history/transcript).
     recorded = repr(agent._store.get(sid).transcript) + repr(agent._store.get(sid).history)
     assert "persona" not in recorded               # _meta is wire-only
+
+
+# --------------------------------------------------------------------------
+# persona-files-prompt: call site threads active session workspace
+# --------------------------------------------------------------------------
+
+def test_base_prompt_receives_active_persona_path(monkeypatch, tmp_path):
+    """render_base_prompt must receive persona_id/persona_dir from the session's
+    workspace_dir (state.workspace_dir), not the agent-level self._workspace_dir."""
+    from harness import base_prompt
+
+    captured = {}
+    real = base_prompt.render_base_prompt
+    def spy(**kw):
+        captured.update(kw)
+        return real(**kw)
+    monkeypatch.setattr(base_prompt, "render_base_prompt", spy)
+
+    ws = tmp_path / "agents" / "fred"
+    ws.mkdir(parents=True)
+
+    router = _ScriptedRouter([_chat()])
+    agent = _build(router)
+    # Use _store.new directly (same pattern as test_chat_turn_writes_user_and_assistant_with_chat_origin)
+    # to avoid new_session's vibeproxy call; pass workspace_dir so state.workspace_dir == ws.
+    sid = agent._store.new(cwd=".", workspace_dir=ws)
+    _prompt(agent, sid, "what is X")
+
+    assert captured.get("persona_id") == "fred"
+    assert captured.get("persona_dir") == str(ws)

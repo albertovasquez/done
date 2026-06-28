@@ -357,9 +357,12 @@ class HarnessAgent(acp.Agent):
         # the process-global self._worker_model_id, so the base prompt reflects the
         # active session's persona seat — consistent with how the model is bound for
         # this turn (C2c). Falls back to "mock" when there is no model.
+        ws = state.workspace_dir
         base_block = base_prompt.render_base_prompt(
             model_id=(model_id or "mock"),
-            cwd=state.cwd, system_line=platform.platform())
+            cwd=state.cwd, system_line=platform.platform(),
+            persona_id=(ws.name if ws else None),
+            persona_dir=(str(ws) if ws else None))
 
         if cls.task_type == "chat_question":
             # hand the router's catalog so "what skills do we have?" is answered
