@@ -365,3 +365,18 @@ def test_create_persona_invalid_keeps_active(agent_default, isolated_config):
 def test_create_persona_missing_id(agent_default, isolated_config):
     resp = asyncio.run(agent_default.ext_method("harness/create_persona", {}))
     assert resp["ok"] is False
+
+
+def test_create_persona_forwards_display_name(agent_default, isolated_config):
+    resp = asyncio.run(agent_default.ext_method(
+        "harness/create_persona", {"id": "my-persona", "display_name": "My Persona"}))
+    assert resp["ok"] is True
+    from harness import paths, persona_config
+    ws = paths.config_dir() / "agents" / "my-persona"
+    assert persona_config.read_name(ws) == "My Persona"
+
+
+def test_create_persona_without_display_name_still_works(agent_default, isolated_config):
+    resp = asyncio.run(agent_default.ext_method(
+        "harness/create_persona", {"id": "plain"}))
+    assert resp["ok"] is True

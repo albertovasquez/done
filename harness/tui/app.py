@@ -1094,18 +1094,21 @@ class HarnessTui(App):
                 self._apply_persona_switch(
                     resp, note=f"created persona: {resp['id']} — now talking to it")
 
-        self.push_screen(NewPersonaModal(on_create=self._do_create_persona), _done)
+        from harness.persona_select import slugify_persona_name
+        self.push_screen(NewPersonaModal(on_create=self._do_create_persona, slugify=slugify_persona_name), _done)
 
     async def _do_create_persona(self, name: str) -> dict:
-        """App-side create callback invoked by NewPersonaModal's worker.
-
-        Returns the ext_method resp dict so the modal can interpret ok/error.
-        Does NOT call _apply_persona_switch (the modal dismisses with resp and
-        _done in on_new_persona_requested applies it).
-        """
+        """App-side create callback invoked by NewPersonaModal's worker. Slugs the raw
+        typed name to a safe id, keeps the raw name as the display label, and forwards
+        both to the engine. Returns the ext_method resp dict (modal interprets ok/error)."""
+        from harness.persona_select import slugify_persona_name
+        slug = slugify_persona_name(name)
+        if not slug:
+            return {"ok": False, "error": "enter a name with letters or numbers"}
         if self._conn is None:
             return {}
-        return await self._conn.ext_method("harness/create_persona", {"id": name})
+        return await self._conn.ext_method(
+            "harness/create_persona", {"id": slug, "display_name": name.strip()})
 
     async def action_reload(self) -> None:
         if self._busy:

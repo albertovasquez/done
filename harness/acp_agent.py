@@ -163,9 +163,12 @@ class HarnessAgent(acp.Agent):
             pid = (params or {}).get("id")
             if not isinstance(pid, str) or not pid:
                 return {"ok": False, "error": "missing id"}
+            display_name = (params or {}).get("display_name")
+            if not isinstance(display_name, str):
+                display_name = None
             from harness import persona, persona_select
             try:
-                persona.create_persona(pid)              # raises InvalidPersonaId/PersonaExists/OSError
+                persona.create_persona(pid, display_name=display_name)  # raises InvalidPersonaId/PersonaExists/OSError
                 return self._activate_seat(pid)          # raises UnknownPersona/InvalidPersonaId
             except (persona_select.InvalidPersonaId, persona.PersonaExists,
                     persona_select.UnknownPersona, OSError) as e:

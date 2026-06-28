@@ -1,5 +1,6 @@
 import pytest
 from harness import persona_select, paths
+from harness.persona_select import slugify_persona_name, _VALID_ID
 
 
 @pytest.fixture(autouse=True)
@@ -69,3 +70,37 @@ def test_none_and_default_still_resolve_to_default():
 def test_invalid_persona_id_is_not_subclass_of_unknown_persona():
     assert not issubclass(persona_select.InvalidPersonaId, persona_select.UnknownPersona)
     assert issubclass(persona_select.InvalidPersonaId, Exception)
+
+
+# --- slugify_persona_name ---
+
+@pytest.mark.parametrize("raw,expected", [
+    ("My Persona", "my-persona"),
+    ("Alberto", "alberto"),
+    ("Fred.Smith", "fred-smith"),
+    ("  spaced  ", "spaced"),
+    ("a---b__c.d", "a-b-c-d"),
+    ("my-persona", "my-persona"),     # already valid → passthrough
+    ("ABC123", "abc123"),
+    ("--lead", "lead"),
+    ("trail--", "trail"),
+    ("MiXeD CaSe", "mixed-case"),
+    ("!!!", ""),
+    ("😀", ""),
+    ("", ""),
+    ("___", ""),
+    ("café", "caf"),                  # accented dropped (lossy, by design)
+    ("İstanbul", "i-stanbul"),        # unicode combining mark → separator
+])
+def test_slugify_persona_name(raw, expected):
+    assert slugify_persona_name(raw) == expected
+
+
+@pytest.mark.parametrize("raw", [
+    "My Persona", "Fred.Smith", "café", "İstanbul", "a.b.c", "  X Y  ",
+    "----", "a" * 200, "Ω mega", "tab\tname", "new\nline",
+])
+def test_slugify_result_always_valid_or_empty(raw):
+    """The invariant: a non-empty slug ALWAYS satisfies _VALID_ID."""
+    s = slugify_persona_name(raw)
+    assert s == "" or _VALID_ID.match(s), f"{raw!r} -> {s!r} violates _VALID_ID"

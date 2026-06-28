@@ -20,6 +20,18 @@ RESERVED_KEY = "default"
 _VALID_ID = re.compile(r"^[a-z0-9_-]+$")
 
 
+def slugify_persona_name(raw: str) -> str:
+    """Normalize a free-text persona name to a safe id: lowercase, every run of
+    characters outside [a-z0-9] becomes a single hyphen, leading/trailing hyphens
+    trimmed. Returns "" when nothing valid survives (e.g. "!!!", emoji, ""). A
+    non-empty result ALWAYS satisfies _VALID_ID — slugify is the friendly layer in
+    front of the strict storage charset; accented/non-ascii chars are dropped, not
+    transliterated (the typed name is kept separately as the display label)."""
+    s = raw.strip().lower()
+    s = re.sub(r"[^a-z0-9]+", "-", s)   # any non-[a-z0-9] run -> one hyphen
+    return s.strip("-")
+
+
 class UnknownPersona(Exception):
     """Raised when --persona names a workspace that does not exist."""
 

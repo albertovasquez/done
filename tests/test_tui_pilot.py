@@ -1463,8 +1463,8 @@ def test_do_create_persona_returns_resp():
             resp = await app._do_create_persona("fred")
             await pilot.pause()
 
-            assert ("harness/create_persona", {"id": "fred"}) in conn.ext_calls, (
-                "ext_method must be called with ('harness/create_persona', {'id': 'fred'})"
+            assert ("harness/create_persona", {"id": "fred", "display_name": "fred"}) in conn.ext_calls, (
+                "ext_method must be called with ('harness/create_persona', {'id': 'fred', 'display_name': 'fred'})"
             )
             assert resp == {"ok": True, "id": "fred", "session_id": "sess-fred", "model": "m-fred"}, (
                 f"_do_create_persona must return the raw resp dict, got {resp!r}"
@@ -1494,7 +1494,7 @@ def test_do_create_persona_returns_resp_error():
             resp = await app._do_create_persona("fred")
             await pilot.pause()
 
-            assert ("harness/create_persona", {"id": "fred"}) in conn.ext_calls, (
+            assert ("harness/create_persona", {"id": "fred", "display_name": "fred"}) in conn.ext_calls, (
                 "ext_method must be called even when the response is an error"
             )
             assert resp.get("ok") is False, f"resp must have ok=False, got {resp!r}"
@@ -1502,6 +1502,65 @@ def test_do_create_persona_returns_resp_error():
                 f"_session_id must remain unchanged, got {app._session_id!r}"
             )
 
+    asyncio.run(go())
+
+
+def test_do_create_persona_slugs_and_carries_display_name():
+    async def go():
+        class _FakeConn:
+            def __init__(self): self.ext_calls = []
+            async def ext_method(self, method, params):
+                self.ext_calls.append((method, params))
+                return {"ok": True, "id": params["id"], "session_id": "s", "model": None}
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._conn = _FakeConn()
+            resp = await app._do_create_persona("My Persona")
+            assert resp["ok"] is True
+            method, params = app._conn.ext_calls[-1]
+            assert method == "harness/create_persona"
+            assert params == {"id": "my-persona", "display_name": "My Persona"}
+    asyncio.run(go())
+
+
+def test_do_create_persona_empty_slug_rejected_no_ext_call():
+    async def go():
+        class _FakeConn:
+            def __init__(self): self.ext_calls = []
+            async def ext_method(self, method, params):
+                self.ext_calls.append((method, params)); return {}
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._conn = _FakeConn()
+            resp = await app._do_create_persona("!!!")
+            assert resp["ok"] is False
+            assert app._conn.ext_calls == []          # never reached the engine
+    asyncio.run(go())
+
+
+def test_modal_previews_the_slug():
+    async def go():
+        from harness.tui.widgets.new_persona_modal import NewPersonaModal
+        from textual.widgets import Input, Static
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.push_screen(NewPersonaModal(slugify=lambda s: __import__(
+                "harness.persona_select", fromlist=["slugify_persona_name"]
+            ).slugify_persona_name(s)))
+            await pilot.pause()
+            modal = app.screen
+            inp = modal.query_one("#new-persona-name", Input)
+            inp.value = "My Persona"
+            # fire the Input.Changed handler
+            await pilot.pause()
+            from textual.widgets import Input as _I
+            modal._on_changed(_I.Changed(inp, "My Persona"))
+            await pilot.pause()
+            status = str(modal.query_one("#new-persona-status", Static).content)
+            assert "my-persona" in status
     asyncio.run(go())
 
 

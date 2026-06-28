@@ -14,6 +14,7 @@ import re
 from pathlib import Path
 
 from harness import paths
+from harness import persona_config
 from harness import persona_select   # _VALID_ID, RESERVED_KEY, InvalidPersonaId
 from harness import skills
 
@@ -42,19 +43,39 @@ def _copy_persona_templates(dest: Path) -> None:
             d.write_bytes(s.read_bytes())
 
 
-def create_persona(persona_id: str) -> Path:
+def create_persona(persona_id: str, display_name: str | None = None) -> Path:
     """Create a NEW persona workspace under config_dir()/agents/<id> with the inert
     template trio, and return its path. Validation: charset (^[a-z0-9_-]+$) AND the
-    reserved id "default" is rejected (the charset gate alone would allow it). No
-    clobber: if the target path already exists (file or dir) -> PersonaExists.
-    Explicit creation REPORTS failure (OSError propagates) — unlike seed_default_workspace."""
+    reserved id "default" is rejected. No clobber: existing target -> PersonaExists.
+    Explicit creation REPORTS failure (OSError propagates). When display_name is given,
+    write it to persona.toml `name` (best-effort, non-fatal) so the rail shows a friendly
+    label."""
     if persona_id == persona_select.RESERVED_KEY or not persona_select._VALID_ID.match(persona_id):
         raise persona_select.InvalidPersonaId(persona_id)
     target = paths.config_dir() / "agents" / persona_id
     if target.exists():
         raise PersonaExists(persona_id)
     _copy_persona_templates(target)
+    if display_name:
+        try:
+            _write_persona_name(target, display_name)
+        except Exception:
+            pass                  # a failed label never breaks create
     return target
+
+
+def _write_persona_name(workspace_dir: Path, display_name: str) -> None:
+    """Write `name = "<display_name>"` to <workspace_dir>/persona.toml. Strips control
+    chars and escapes backslash + double-quote so the value is valid TOML for any input.
+    Best-effort: never raises (a failed label must not break create)."""
+    # strip control chars (newlines etc. would break the single-line value)
+    cleaned = "".join(c for c in display_name if c == "\t" or ord(c) >= 0x20).strip()
+    escaped = cleaned.replace("\\", "\\\\").replace('"', '\\"')
+    try:
+        (workspace_dir / persona_config.PERSONA_TOML).write_text(
+            f'name = "{escaped}"\n', encoding="utf-8")
+    except OSError:
+        pass
 
 
 def _meaningful(raw: str) -> bool:
