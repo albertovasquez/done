@@ -17,7 +17,6 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
-from textual.widgets import Static
 
 from harness.tui.state import AgentSnapshot, AgentState
 from harness.tui.widgets.activity_status import ActivityStatus
@@ -35,7 +34,6 @@ class ActivityRegion(Vertical):
         self._snap: AgentSnapshot | None = None
 
     def compose(self) -> ComposeResult:
-        yield Static("", id="ar-rule", markup=True)
         yield ActivityStatus(id="ar-status")
         yield TaskTree(id="ar-tasks")
         yield Vertical(id="ar-tools")   # holds one-line ToolCallRow children (ctrl+o)
@@ -58,8 +56,6 @@ class ActivityRegion(Vertical):
         self.display = not idle
 
         self.query_one("#ar-status", ActivityStatus).update_from(snap)
-        self.query_one("#ar-rule", Static).update(
-            "" if idle else "[$muted]" + "─" * 40 + "[/]")
 
         task_tree = self.query_one("#ar-tasks", TaskTree)
         tools_container = self.query_one("#ar-tools", Vertical)

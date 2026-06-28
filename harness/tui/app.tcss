@@ -145,9 +145,11 @@ PermissionModal #select-list { height: 2; margin-top: 1; }
 /* Command body block in the permission modal: code-tinted, wrapping. */
 .select-body-code { color: $code; padding: 0 0 1 0; }
 
-/* ---- pinned activity region (above the composer) ---- */
-#activity-region { height: auto; padding: 0 2; margin: 0 2; }
-#ar-rule { height: 1; color: $muted; }
+/* ---- pinned activity region (above the composer) ----
+   margin: 1 above (breathing room from the response) and 1 below (so the status
+   line + tool list don't crowd the composer below). The divider rule was removed
+   in favor of this whitespace. */
+#activity-region { height: auto; padding: 0 2; margin: 1 2; }
 #ar-status { height: 1; color: $accent; }
 #ar-tasks { height: auto; color: $foreground; }
 #ar-tools { height: auto; color: $foreground; }
