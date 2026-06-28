@@ -2100,3 +2100,178 @@ def test_highlighted_card_gets_accent_border():
             )
 
     asyncio.run(go())
+
+
+# ---- turn spacing & visual hierarchy (spec 2026-06-28-tui-turn-spacing) ----
+
+def _classify_chip_update(task_type="chat_question"):
+    """A task_classified session update with an empty body (chip only)."""
+    from harness.acp_emit import with_meta, message_chunk
+    meta = {"task_type": task_type, "skills": ["clarify-before-acting"], "confidence": 0.96}
+    return with_meta(message_chunk(""), {"task_classified": meta})
+
+
+def _transcript_kinds(app):
+    """Ordered list of (kind, css_classes, text) for each transcript child, where
+    kind is 'md' for a Markdown answer block or 'static' for a discrete line."""
+    scroll = app.query_one("#transcript", VerticalScroll)
+    out = []
+    for w in scroll.children:
+        if isinstance(w, Markdown):
+            out.append(("md", set(w.classes), _md_source(w)))
+        elif isinstance(w, Static):
+            out.append(("static", set(w.classes), str(w.content)))
+    return out
+
+
+def test_turn_metadata_captions_carry_turn_meta_class_and_order():
+    """The classification chip and the '▣ Build' run caption are dimmed metadata
+    captions (.turn-meta), and the Build caption is a HEADER mounted ABOVE the
+    response markdown — order: user ▌ / chip / Build / response."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await app._enter_conversation()
+            app._session_id = "fake-session"
+
+            app._add_user_message("explain the router")
+            app.on_session_update(SessionUpdate(_classify_chip_update()))
+            await pilot.pause()
+            app.on_session_update(SessionUpdate(update_agent_message_text("here is the answer")))
+            await pilot.pause()
+            app._write_meta(4.3)
+            await pilot.pause()
+
+            kinds = _transcript_kinds(app)
+
+        # locate the four turn elements in order
+        user_i = next(i for i, (k, c, t) in enumerate(kinds) if "▌" in t)
+        chip_i = next(i for i, (k, c, t) in enumerate(kinds) if "classified" in t)
+        build_i = next(i for i, (k, c, t) in enumerate(kinds) if "▣ Build" in t)
+        md_i = next(i for i, (k, c, t) in enumerate(kinds) if k == "md")
+
+        assert user_i < chip_i < build_i < md_i, (
+            f"turn elements out of order: user={user_i} chip={chip_i} "
+            f"build={build_i} md={md_i}\n{kinds}")
+        assert "turn-meta" in kinds[chip_i][1], f"chip lacks .turn-meta: {kinds[chip_i]}"
+        assert "turn-meta-run" in kinds[build_i][1], (
+            f"Build run caption lacks .turn-meta-run: {kinds[build_i]}")
+
+    asyncio.run(go())
+
+
+def test_build_caption_shows_real_elapsed_after_turn_end():
+    """The Build caption is a live placeholder ('…') while streaming, then patched
+    with the real elapsed time at turn end — NOT a stale duplicate line."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await app._enter_conversation()
+            app._session_id = "fake-session"
+
+            app._add_user_message("hi")
+            app.on_session_update(SessionUpdate(update_agent_message_text("answer")))
+            await pilot.pause()
+            # before turn end: exactly one Build caption, showing the '…' placeholder
+            builds = [t for k, c, t in _transcript_kinds(app) if "▣ Build" in t]
+            assert len(builds) == 1, f"expected one placeholder Build caption: {builds}"
+            assert "…" in builds[0], f"placeholder should show '…': {builds[0]}"
+
+            app._write_meta(2.0)
+            await pilot.pause()
+            builds = [t for k, c, t in _transcript_kinds(app) if "▣ Build" in t]
+
+        assert len(builds) == 1, f"Build caption duplicated instead of patched: {builds}"
+        assert "2.0s" in builds[0], f"elapsed not patched into caption: {builds[0]}"
+        assert "…" not in builds[0], f"placeholder '…' not replaced: {builds[0]}"
+
+    asyncio.run(go())
+
+
+def test_multistep_turn_emits_exactly_one_build_caption():
+    """A turn with a tool call between two answer blocks emits ONE Build caption
+    (it belongs to the run, not to each answer block)."""
+    from acp import start_tool_call
+
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await app._enter_conversation()
+            app._session_id = "fake-session"
+
+            app._add_user_message("do a thing")
+            app.on_session_update(SessionUpdate(update_agent_message_text("step one")))
+            await pilot.pause()
+            # a tool call interleaves (in-turn boundary → next prose opens a fresh block)
+            app.on_session_update(SessionUpdate(
+                start_tool_call(tool_call_id="t1", title="bash", kind="execute")))
+            await pilot.pause()
+            app.on_session_update(SessionUpdate(update_agent_message_text("step two")))
+            await pilot.pause()
+            app._write_meta(1.5)
+            await pilot.pause()
+
+            builds = [t for k, c, t in _transcript_kinds(app) if "▣ Build" in t]
+            md_count = sum(1 for k, c, t in _transcript_kinds(app) if k == "md")
+
+        assert len(builds) == 1, f"multi-step turn must emit exactly one Build caption: {builds}"
+        assert md_count == 2, f"expected two answer blocks across the tool boundary: {md_count}"
+
+    asyncio.run(go())
+
+
+def test_tool_only_turn_appends_build_caption_as_fallback():
+    """A turn that produces a tool item but NO message has no placeholder to patch,
+    so the Build caption is appended at turn end — metadata is never lost."""
+    from acp import start_tool_call
+
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await app._enter_conversation()
+            app._session_id = "fake-session"
+
+            app._add_user_message("just run it")
+            app.on_session_update(SessionUpdate(
+                start_tool_call(tool_call_id="t1", title="bash", kind="execute")))
+            await pilot.pause()
+            assert app._meta_widget is None, "no answer block opened ⇒ no placeholder"
+            app._write_meta(0.7)
+            await pilot.pause()
+
+            builds = [t for k, c, t in _transcript_kinds(app) if "▣ Build" in t]
+
+        assert len(builds) == 1, f"tool-only turn must still render a Build caption: {builds}"
+        assert "0.7s" in builds[0], f"appended caption missing elapsed: {builds[0]}"
+
+    asyncio.run(go())
+
+
+def test_run_caption_heads_response_with_turn_break_above():
+    """The turn break (blank line) sits ABOVE the run caption so the caption heads
+    the response: the Build caption (.turn-meta-run) carries margin-top 1, and both
+    it and the response markdown are left-indented (2) so they align as one group."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await app._enter_conversation()
+            app._session_id = "fake-session"
+            app._add_user_message("hi")
+            app.on_session_update(SessionUpdate(update_agent_message_text("answer")))
+            await pilot.pause()
+            scroll = app.query_one("#transcript", VerticalScroll)
+            md = scroll.query_one(Markdown)
+            run = next(w for w in scroll.children
+                       if isinstance(w, Static) and "turn-meta-run" in w.classes)
+            md_margin, run_margin = md.styles.margin, run.styles.margin
+        assert run_margin.top == 1, f"run caption needs the turn-break top margin: {run_margin}"
+        assert run_margin.left == 2, f"run caption should be indented: {run_margin}"
+        assert md_margin.top == 0, f"break is above the caption, not the response: {md_margin}"
+        assert md_margin.left == 2, f"response should align under its caption: {md_margin}"
+
+    asyncio.run(go())

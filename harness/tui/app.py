@@ -126,6 +126,8 @@ class HarnessTui(App):
         self._stream_buf = ""                 # accumulated text for _streaming_md
         self._stream_closed = True            # True => the next message delta starts a fresh widget
         self._boundary_after = False          # True => an in-turn boundary (tool/thought/stream_reset) closed the block; next prose opens a FRESH widget (vs. a late delta of the prior answer, which extends in place)
+        self._meta_widget = None              # the per-turn '▣ Build · model · time' caption Static (a HEADER above the response), patched with elapsed at turn end; None until the turn's first answer block opens
+        self._meta_emitted = False            # True once this turn emitted its Build caption — guards against a second caption on a multi-step turn (tool call → 2nd answer block)
         self._tokens = 0                      # last-known token count from usage updates
         self._persona_seen = False            # True after the first real PersonaResolved lands
         self._turn_active = False             # True while a prompt turn is in flight (used by Esc-rail guard)
@@ -771,6 +773,8 @@ class HarnessTui(App):
         self._stream_buf = ""
         self._stream_closed = True
         self._boundary_after = False
+        self._meta_widget = None
+        self._meta_emitted = False
         self._tokens = 0
         self._snapshot = initial_snapshot()
         self._refresh_status()
@@ -789,9 +793,13 @@ class HarnessTui(App):
         self._transcript.mount(widget)
         self._transcript.scroll_end(animate=False)
 
-    def _append_line(self, markup: str) -> None:
-        """Append a discrete themed line (chips, user msg, tool calls, meta, errors)."""
-        self._append(Static(markup, markup=True))
+    def _append_line(self, markup: str, *, classes: str | None = None) -> None:
+        """Append a discrete themed line (chips, user msg, tool calls, meta, errors).
+
+        `classes` optionally tags the Static for CSS (e.g. 'turn-meta' for the
+        dimmed, indented metadata captions). Default None ⇒ byte-identical to
+        every existing caller."""
+        self._append(Static(markup, markup=True, classes=classes))
 
     # ---- "model is working" indicator ----
 
@@ -831,6 +839,9 @@ class HarnessTui(App):
         # block under this prompt.
         self._end_stream()
         self._boundary_after = False
+        # New turn ⇒ no Build caption yet; the turn's first answer block emits one.
+        self._meta_widget = None
+        self._meta_emitted = False
         # accent bar glyph + bold text (the bordered-box look, inline).
         self._append_line(f"{_c('accent', '▌')} [b]{self._escape(text)}[/b]")
 
@@ -873,11 +884,24 @@ class HarnessTui(App):
             return
         self.run_worker(self._submit_text(self._queued.pop(0)), thread=False)
 
-    def _write_meta(self, elapsed: float) -> None:
+    def _meta_markup(self, elapsed: float | None) -> str:
+        """The '▣ Build [bypass] · model · Ns' caption markup. `elapsed=None`
+        renders a '…' placeholder (time not yet known mid-turn)."""
         model_label = _model_label(self.model, self._worker_model_id)
         yolo = f" {_c('error', 'bypass on')}" if self._yolo else ""   # records mode at turn time
-        self._append_line(
-            f"{_c('accent', '▣ ' + _MODE)}{yolo} {_c('muted', f'· {model_label} · {elapsed:.1f}s')}")
+        tail = f"· {model_label} · {elapsed:.1f}s" if elapsed is not None else f"· {model_label} · …"
+        return f"{_c('accent', '▣ ' + _MODE)}{yolo} {_c('muted', tail)}"
+
+    def _write_meta(self, elapsed: float) -> None:
+        """Finalize the turn's run caption with the real elapsed time. The caption
+        is a HEADER emitted above the response when the first answer block opened
+        (_meta_widget); here we patch its text in place. If no answer block opened
+        (pure tool turn, or an error before any delta), there is no placeholder —
+        fall back to appending the caption so metadata is never lost."""
+        if self._meta_widget is not None:
+            self._meta_widget.update(self._meta_markup(elapsed))
+        else:
+            self._append_line(self._meta_markup(elapsed), classes="turn-meta-run")
         self._refresh_status()
 
     # ---- streaming session updates → themed transcript ----
@@ -924,6 +948,16 @@ class HarnessTui(App):
             # new answer / new in-turn step → fresh widget at the bottom; stream
             # is now OPEN and the boundary has been consumed.
             self._hide_working()
+            # On the turn's FIRST answer block, emit the '▣ Build · model · …'
+            # run caption as a HEADER directly above the response. Placeholder
+            # time ('…') is patched with the real elapsed by _write_meta at turn
+            # end. Gated by _meta_emitted so a multi-step turn (tool call → 2nd
+            # answer block) does not stack a second caption.
+            if not self._meta_emitted:
+                self._meta_widget = Static(
+                    self._meta_markup(None), markup=True, classes="turn-meta-run")
+                self._append(self._meta_widget)
+                self._meta_emitted = True
             self._streaming_md = Markdown("")
             self._append(self._streaming_md)
             self._stream_buf = ""
@@ -990,7 +1024,7 @@ class HarnessTui(App):
             self._persona_seen = True
             self._refresh_persona()
         for chip in harness_chips(getattr(msg.update, "field_meta", None)):
-            self._append_line(_c("muted", f"\\[{chip}]"))
+            self._append_line(_c("muted", f"\\[{chip}]"), classes="turn-meta")
         item = render_update(msg.update)
         if item is None:
             return

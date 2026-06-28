@@ -47,11 +47,15 @@ to sit immediately before/with the thing it describes.
 
 ```
 ▌ My prompt text                        ← .user-msg card (accent left-border) — EXISTS, unchanged
-  classified: chat · skills · conf 0.96  ← .turn-meta caption (muted, indent 2) — rides with prompt
-                                          ← blank line = the turn break (margin)
-  ▣ Build bypass · opus · 4.3s           ← .turn-meta caption (muted, indent 2) — rides with response
+  classified: chat · skills · conf 0.96  ← .turn-meta caption (muted, indent 2) — hugs the prompt
+                                          ← blank line = the turn break (margin-top on the run caption)
+  ▣ Build bypass · opus · 4.3s           ← .turn-meta-run caption (muted, indent 2) — HEADS the response
   Agent response markdown…                ← borderless, indent 2 to align under its caption
 ```
+
+Two caption classes, because the chip and the run line want different top
+spacing: `.turn-meta` (chip) hugs the prompt above it; `.turn-meta-run` (Build)
+carries the `margin-top: 1` turn break so it heads the response group below.
 
 Next turn repeats the same shape. Separation between turns is the blank line
 above the next `▌` prompt plus the accent border itself.
