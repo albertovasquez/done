@@ -761,16 +761,23 @@ class HarnessTui(App):
         self._refresh_status()
         self.query_one("#conversation-input", PromptArea).focus()
 
-    async def _reset_conversation(self) -> None:
-        """Empty the transcript and reset per-conversation state WITHOUT leaving
-        the conversation view (flipping _started=False would query the removed
-        #landing-input/#header-text and crash). No-op before the first prompt."""
+    def _clear_transcript(self) -> None:
+        """Sync visual reset: empty the transcript and reset stream-accumulation
+        state so no late delta bleeds into a fresh view. Does NOT touch _snapshot
+        (its owner re-applies it) or _tokens. Safe to call from sync paths (e.g.
+        the persona switch) — unlike async _reset_conversation."""
         if self._started:
-            await self._transcript.remove_children()
+            self._transcript.remove_children()
         self._streaming_md = None
         self._stream_buf = ""
         self._stream_closed = True
         self._boundary_after = False
+
+    async def _reset_conversation(self) -> None:
+        """Empty the transcript and reset per-conversation state WITHOUT leaving
+        the conversation view (flipping _started=False would query the removed
+        #landing-input/#header-text and crash). No-op before the first prompt."""
+        self._clear_transcript()
         self._tokens = 0
         self._snapshot = initial_snapshot()
         self._refresh_status()
