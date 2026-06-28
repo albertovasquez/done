@@ -442,6 +442,59 @@ class HarnessTui(App):
         widget = getattr(event, "widget", None)
         if widget is not None and getattr(widget, "id", None) == "statusbar-mode":
             self.action_toggle_yolo()
+            return
+        # Turn footer: a click copies that turn's response and flips "(copy)" to
+        # "(copied)". Guard on the _copyable marker so only turn footers respond.
+        if widget is not None and getattr(widget, "_copyable", False):
+            self._copy_turn_response(widget)
+
+    def _response_md_for(self, footer):
+        """The response Markdown widget this footer summarizes: the nearest Markdown
+        among the footer's transcript siblings. The footer is appended right after
+        its turn's answer, so we scan the footer's neighbours and pick the closest
+        Markdown (searching both sides — a late delta can land the response just
+        below the footer). Returns None when no answer rendered (e.g. a tool-only
+        turn)."""
+        try:
+            kids = list(self._transcript.children)
+            idx = kids.index(footer)
+        except (ValueError, Exception):
+            return None
+        for off in range(1, len(kids)):
+            for j in (idx - off, idx + off):
+                if 0 <= j < len(kids) and isinstance(kids[j], Markdown):
+                    return kids[j]
+        return None
+
+    def _copy_turn_response(self, footer) -> None:
+        """Copy this turn's response to the clipboard and flip the label to
+        (copied). The text is read LIVE from the response Markdown widget — robust
+        to late-draining deltas. A turn with no rendered answer is a no-op."""
+        md = self._response_md_for(footer)
+        text = (getattr(md, "source", None) or "") if md is not None else ""
+        if not text:
+            return
+        if self._copy_to_clipboard(text):
+            footer.update(self._meta_markup(getattr(footer, "_elapsed", 0.0), copied=True))
+        else:
+            # No native tool AND no terminal to emit OSC 52 to — tell the user how
+            # to enable it, and leave the label as (copy) so they know it didn't take.
+            self._notify_line("clipboard unavailable — install xclip/wl-copy (Linux) "
+                              "or use a terminal that supports OSC 52")
+
+    def _copy_to_clipboard(self, text: str) -> bool:
+        """Put `text` on the clipboard. Native OS tool first (pbcopy/xclip/wl-copy
+        — a real success signal that also works in Terminal.app, which has no OSC
+        52 support); else fall back to Textual's OSC 52 escape (works over SSH and
+        in OSC-52 terminals like Ghostty/iTerm/kitty). Returns False only when
+        neither path is viable (no binary AND no terminal driver, e.g. headless)."""
+        from harness.tui.clipboard import native_copy
+        if native_copy(text):
+            return True
+        if getattr(self, "_driver", None) is None:
+            return False                  # OSC 52 has nowhere to write → real failure
+        self.copy_to_clipboard(text)      # OSC 52 (fire-and-forget; best effort)
+        return True
 
     # ---- presentation model (reducer) ----
 
@@ -887,11 +940,20 @@ class HarnessTui(App):
             return
         self.run_worker(self._submit_text(self._queued.pop(0)), thread=False)
 
-    def _meta_markup(self, elapsed: float) -> str:
-        """The '▣ Build [bypass] · model · Ns' run caption markup."""
+    # The footer copy affordance: a dimmed "(copy)" the user clicks to copy the
+    # turn's response; becomes "(copied)" on success (set by on_click on the footer
+    # widget). Plain text — no glyph-portability risk across terminal fonts.
+    _COPY_LABEL = "(copy)"
+    _COPIED_LABEL = "(copied)"
+
+    def _meta_markup(self, elapsed: float, *, copied: bool = False) -> str:
+        """The '▣ Build [bypass] · model · Ns · (copy)' run caption markup. The
+        trailing label is the copy affordance ('(copied)' once copied)."""
         model_label = _model_label(self.model, self._worker_model_id)
         yolo = f" {_c('error', 'bypass on')}" if self._yolo else ""   # records mode at turn time
-        return f"{_c('accent', '▣ ' + _MODE)}{yolo} {_c('muted', f'· {model_label} · {elapsed:.1f}s')}"
+        label = self._COPIED_LABEL if copied else self._COPY_LABEL
+        return (f"{_c('accent', '▣ ' + _MODE)}{yolo} "
+                f"{_c('muted', f'· {model_label} · {elapsed:.1f}s · ')}{_c('muted', label)}")
 
     def _apply_pending_persona(self) -> bool:
         """If a persona switch was requested mid-turn, apply it now (turn-end),
@@ -927,8 +989,16 @@ class HarnessTui(App):
     def _write_meta(self, elapsed: float) -> None:
         """Append the turn's run caption as a FOOTER below the response, once the
         turn ends and the elapsed time is known. A dimmed, indented .turn-meta-run
-        line that summarizes the run that produced the answer above it."""
-        self._append_line(self._meta_markup(elapsed), classes="turn-meta-run")
+        line that summarizes the run that produced the answer above it. The footer
+        carries a (copy) affordance; on click we resolve THIS turn's response from
+        the transcript (the nearest response Markdown widget) — NOT a buffer
+        snapshot taken here, because the message deltas can drain AFTER prompt()
+        returns (late-delivery; see _stream_message), so `_stream_buf` is often
+        empty at this point. `_copyable` marks the footer for the click handler."""
+        foot = Static(self._meta_markup(elapsed), markup=True, classes="turn-meta-run")
+        foot._copyable = True                    # routes on_click → _copy_turn_response
+        foot._elapsed = elapsed                  # to re-render markup when the label flips
+        self._append(foot)
         self._refresh_status()
 
     # ---- streaming session updates → themed transcript ----

@@ -171,6 +171,21 @@ def _plan_task_status(raw: str) -> str:
             "completed": "done"}.get(str(raw), "pending")
 
 
+# The agent ends every turn by running this exact command to signal completion
+# (see acp_agent.py / acp_emit.py, which titles the tool call "$ <command>"). It
+# is a protocol artifact, not user-facing work, so we drop it from the activity
+# region. We match ONLY this exact command — any other echo the agent runs is
+# real work and renders normally.
+_DONE_SENTINEL_CMD = "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
+
+
+def _is_done_sentinel(title: str) -> bool:
+    """True when a tool title is the turn-completion sentinel. Titles arrive as
+    "$ <command>"; we strip that prefix before the exact-match comparison."""
+    cmd = title[2:] if title.startswith("$ ") else title
+    return cmd.strip() == _DONE_SENTINEL_CMD
+
+
 def _reduce_agent(a: AgentSnapshot, event) -> AgentSnapshot:
     if isinstance(event, TurnStarted):
         return replace(a, state=AgentState.THINKING, activity_label="Thinking",
@@ -215,8 +230,10 @@ def _reduce_agent(a: AgentSnapshot, event) -> AgentSnapshot:
             )
             return replace(a, plan=plan)
         if kind == "tool":
-            ts = _tool_status(getattr(item, "status", ""))
             title = getattr(item, "title", "")
+            if _is_done_sentinel(title):
+                return a            # protocol artifact — never render the turn-end echo
+            ts = _tool_status(getattr(item, "status", ""))
             tid = getattr(item, "id", "")
             subtype = infer_subtype(title)
             tool = ToolView(title=title, status=ts, subtype=subtype, id=tid)

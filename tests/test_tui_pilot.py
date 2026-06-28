@@ -130,6 +130,139 @@ def test_pilot_streams_deltas_into_one_markdown_widget():
     asyncio.run(go())
 
 
+def _footer(app):
+    """The most recent turn footer Static (class 'turn-meta-run')."""
+    scroll = app.query_one("#transcript", VerticalScroll)
+    foots = [w for w in scroll.children
+             if isinstance(w, Static) and "turn-meta-run" in (w.classes or set())]
+    return foots[-1] if foots else None
+
+
+def test_footer_carries_copy_affordance():
+    """The turn footer shows a clickable (copy) affordance (the response text is
+    resolved at click time, not stashed here)."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await app._enter_conversation()
+            app._session_id = "fake-session"
+            app._stream_message("Hello **world** done")
+            await pilot.pause()
+            app._write_meta(1.2)
+            await pilot.pause()
+            foot = _footer(app)
+            assert foot is not None, "no turn-meta-run footer was appended"
+            assert "(copy)" in str(foot.content), "footer is missing the copy affordance"
+            assert getattr(foot, "_copyable", False) is True
+
+    asyncio.run(go())
+
+
+def test_footer_click_copies_response_to_clipboard():
+    """Clicking the footer copies THIS turn's response and flips to (copied).
+    Reproduces the real late-drain order: the footer is appended at turn end
+    (prompt() returns) and the response Markdown drains AFTER. The copy must
+    still resolve the response — it reads the Markdown live, not a build-time
+    buffer snapshot (regression guard for the empty-copy bug)."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        copied = []
+        # Patch the app's own clipboard seam so the test never touches the real OS
+        # clipboard or runs pbcopy; returns True ⇒ the label should flip.
+        app._copy_to_clipboard = lambda text: (copied.append(text) or True)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await app._enter_conversation()
+            app._session_id = "fake-session"
+            app._write_meta(0.5)                 # footer FIRST (turn end)…
+            await pilot.pause()
+            app._stream_message("the answer")    # …response drains AFTER (late delivery)
+            await pilot.pause()
+            foot = _footer(app)
+            app.on_click(NS(widget=foot))        # simulate a click on the footer
+            await pilot.pause()
+            assert copied == ["the answer"], f"clipboard got {copied!r}"
+            assert "(copied)" in str(foot.content), "label did not flip to the copied state"
+
+    asyncio.run(go())
+
+
+def test_footer_copy_is_noop_when_no_response_rendered():
+    """A footer with no answer above it (e.g. a tool-only turn) copies nothing and
+    does not flip — no crash, no empty clipboard write."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        copied = []
+        app._copy_to_clipboard = lambda text: (copied.append(text) or True)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await app._enter_conversation()
+            app._session_id = "fake-session"
+            app._write_meta(0.3)                 # footer with no response Markdown anywhere
+            await pilot.pause()
+            foot = _footer(app)
+            app.on_click(NS(widget=foot))
+            await pilot.pause()
+            assert copied == [], f"copied despite no response: {copied!r}"
+            assert "(copy)" in str(foot.content) and "(copied)" not in str(foot.content)
+
+    asyncio.run(go())
+
+
+def test_footer_copy_native_first_then_flips(monkeypatch):
+    """The real _copy_to_clipboard path: when a native tool succeeds, OSC 52 is NOT
+    used and the label flips to (copied)."""
+    import harness.tui.clipboard as clip
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        native_calls, osc_calls = [], []
+        monkeypatch.setattr(clip, "native_copy", lambda t, **k: (native_calls.append(t) or True))
+        app.copy_to_clipboard = lambda t: osc_calls.append(t)   # OSC 52 should NOT fire
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await app._enter_conversation()
+            app._session_id = "fake-session"
+            app._stream_message("answer text")
+            await pilot.pause()
+            app._write_meta(0.4)
+            await pilot.pause()
+            foot = _footer(app)
+            app.on_click(NS(widget=foot))
+            await pilot.pause()
+            assert native_calls == ["answer text"], native_calls
+            assert osc_calls == [], "OSC 52 used despite native success"
+            assert "(copied)" in str(foot.content)
+
+    asyncio.run(go())
+
+
+def test_footer_copy_falls_back_to_osc52_when_no_native_tool(monkeypatch):
+    """When no native tool is present, fall back to OSC 52 (Textual) and still
+    flip to (copied)."""
+    import harness.tui.clipboard as clip
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        osc_calls = []
+        monkeypatch.setattr(clip, "native_copy", lambda t, **k: False)  # no native tool
+        app.copy_to_clipboard = lambda t: osc_calls.append(t)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await app._enter_conversation()
+            app._session_id = "fake-session"
+            app._stream_message("via osc52")
+            await pilot.pause()
+            app._write_meta(0.4)
+            await pilot.pause()
+            foot = _footer(app)
+            app.on_click(NS(widget=foot))
+            await pilot.pause()
+            assert osc_calls == ["via osc52"], osc_calls
+            assert "(copied)" in str(foot.content)
+
+    asyncio.run(go())
+
+
 def test_late_prior_turn_delta_does_not_start_block_under_next_prompt():
     """A prompt response may return before the client has processed trailing
     session_update notifications. Starting the next turn must not let a late
