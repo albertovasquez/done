@@ -4,10 +4,11 @@ sys.path.insert(0, ".")
 
 import json
 from harness.router import Router, Classification
+from harness.skills import SkillMeta
 
 _CATALOG = [
-    ("systematic-debugging", "Use when encountering any bug, test failure, or unexpected behavior"),
-    ("test-driven-development", "Use when implementing any feature or bugfix, before writing implementation code"),
+    SkillMeta("systematic-debugging", "Use when encountering any bug, test failure, or unexpected behavior"),
+    SkillMeta("test-driven-development", "Use when implementing any feature or bugfix, before writing implementation code"),
 ]
 
 
@@ -164,3 +165,27 @@ def test_classify_clear_request_has_no_options():
     cls = Router(_stub(payload), catalog=_CATALOG).classify("fix the add() bug")
     assert cls.options == []
     assert not cls.needs_clarification
+
+
+def test_router_drops_non_model_invocable_selection():
+    # A disable-model-invocation skill must never be auto-selected, even if the
+    # cheap model names it in the JSON.
+    cat = [SkillMeta("a", "desc a", model_invocable=True),
+           SkillMeta("deploy", "desc deploy", model_invocable=False)]
+    r = Router(_stub(json.dumps({"task_type": "code_fix",
+               "skills": ["a", "deploy"], "confidence": 0.9,
+               "reasoning": "x", "suggested_model": None})), catalog=cat)
+    cls = r.classify("do it")
+    assert cls.skills == ["a"]            # 'deploy' is dormant -> dropped
+
+
+def test_router_prompt_omits_dormant_skill():
+    cat = [SkillMeta("visible", "v desc", model_invocable=True),
+           SkillMeta("hidden", "h desc", model_invocable=False)]
+    captured = {}
+    def stub(system, user):
+        captured["system"] = system
+        return json.dumps({"task_type": "code_fix", "skills": [], "confidence": 0.9,
+                           "reasoning": "x", "suggested_model": None})
+    Router(stub, catalog=cat).classify("x")
+    assert "visible" in captured["system"] and "hidden" not in captured["system"]

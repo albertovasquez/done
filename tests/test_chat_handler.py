@@ -79,10 +79,11 @@ def test_history_is_prepended_to_messages(monkeypatch):
 # ---- capability questions: answered from the catalog, not the model ----------
 
 from harness.chat_handler import is_capability_question  # noqa: E402
+from harness.skills import SkillMeta  # noqa: E402
 
 CAT = [
-    ("test-driven-development", "Write a failing test first, then minimal code."),
-    ("systematic-debugging", "Find the root cause before fixing."),
+    SkillMeta("test-driven-development", "Write a failing test first, then minimal code."),
+    SkillMeta("systematic-debugging", "Find the root cause before fixing."),
 ]
 
 

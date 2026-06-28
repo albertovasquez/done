@@ -13,6 +13,23 @@ Bodies were lightly edited (dangling cross-references and sibling-file links
 removed) to suit this harness's skill loader; the methodology content is
 unchanged.
 
+## Adapted skills (re-authored, not redistributed)
+
+The following bundled skills were written for this harness, inspired by the
+methodology of two public skill collections. They are original prose adapted to
+this harness's voice and loader — no text is copied from the sources:
+
+- `clarify-before-acting` — answer-vs-act discipline, after
+  **garrytan/gstack** `/office-hours` (forcing questions, reframe before code)
+  and **mattpocock/skills** `grill-with-docs` (interview before building).
+- `planning-before-coding` — architecture/edge-case/test-surface planning, after
+  **garrytan/gstack** `/plan-eng-review` ("diagrams force hidden assumptions into
+  the open").
+- `ask-done` — a user-invoked router over the harness's skills and flows, after
+  **mattpocock/skills** `ask-matt`.
+
+Sources: https://github.com/garrytan/gstack and https://github.com/mattpocock/skills
+
 ---
 
 MIT License

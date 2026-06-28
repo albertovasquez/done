@@ -56,7 +56,7 @@ def complete(system: str, user: str) -> str:
     return resp.choices[0].message.content or ""
 
 
-def _system_prompt(catalog: list[tuple[str, str]]) -> str:
+def _system_prompt(catalog: "list[skills.SkillMeta]") -> str:
     return (
         "You are a fast TRIAGE router for a coding agent harness. Read the user's "
         "request and classify it. You do NOT answer or chat; you only classify. "
@@ -77,7 +77,8 @@ def _system_prompt(catalog: list[tuple[str, str]]) -> str:
         "(title = the rephrased task, rationale = one short why). Omit options "
         "or use [] when the request is clear."
         "\n\nSkill catalog (name: description):\n"
-        + "\n".join(f"  {n}: {d}" for n, d in catalog)
+        + "\n".join(f"  {m.name}: {m.description}"
+                    for m in catalog if m.model_invocable)
     )
 
 
@@ -92,11 +93,14 @@ def _strip_fences(text: str) -> str:
 
 class Router:
     def __init__(self, complete_fn: Callable[[str, str], str], *,
-                 catalog: list[tuple[str, str]],
+                 catalog: "list[skills.SkillMeta]",
                  confidence_threshold: float = 0.6):
         self._complete = complete_fn
         self._catalog = catalog
-        self._catalog_names = {n for n, _ in catalog}
+        # Only model-invocable skills are selectable by the router — a
+        # disable-model-invocation skill must never be auto-picked, even if the
+        # cheap model names it.
+        self._catalog_names = {m.name for m in catalog if m.model_invocable}
         self._threshold = confidence_threshold
 
     @property

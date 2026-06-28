@@ -3,7 +3,8 @@ sys.path.insert(0, "upstream/src")
 sys.path.insert(0, ".")
 
 from pathlib import Path
-from harness.skills import SkillLoad, load_catalog, compose
+from harness.skills import (SkillLoad, SkillMeta, load_catalog, compose,
+                            _meta_from_frontmatter)
 
 
 def _write_skill(root: Path, name: str, description: str, body: str, *, dirname=None):
@@ -22,7 +23,8 @@ def test_load_catalog_parses_frontmatter_sorted_and_skips_bad(tmp_path, caplog):
     (bad / "SKILL.md").write_text("not: [valid", encoding="utf-8")  # malformed yaml -> skipped
     with caplog.at_level("WARNING", logger="harness.skills"):
         catalog = load_catalog([tmp_path])
-    assert catalog == [("git-pr-flow", "Make PRs"), ("python-testing", "Write pytest tests")]
+    assert [(m.name, m.description) for m in catalog] == [
+        ("git-pr-flow", "Make PRs"), ("python-testing", "Write pytest tests")]
     # the malformed skill must be NAMED in a warning — otherwise it just vanishes
     # from the catalog with no clue why it's unselectable.
     assert any("broken" in r.message for r in caplog.records), \
@@ -81,7 +83,7 @@ def test_load_catalog_merges_roots_user_overrides_bundled(tmp_path):
     (bundled / "a" / "SKILL.md").write_text("---\nname: a\ndescription: bundled A\n---\nbody\n")
     user = tmp_path / "user"; (user / "a").mkdir(parents=True)
     (user / "a" / "SKILL.md").write_text("---\nname: a\ndescription: user A\n---\nbody\n")
-    cat = dict(load_catalog([bundled, user]))   # later root wins
+    cat = {m.name: m.description for m in load_catalog([bundled, user])}   # later root wins
     assert cat["a"] == "user A"
 
 
@@ -90,5 +92,59 @@ def test_invalid_user_skill_does_not_shadow_bundled(tmp_path):
     (bundled / "a" / "SKILL.md").write_text("---\nname: a\ndescription: bundled A\n---\nbody\n")
     user = tmp_path / "user"; (user / "a").mkdir(parents=True)
     (user / "a" / "SKILL.md").write_text("not valid frontmatter")
-    cat = dict(load_catalog([bundled, user]))
+    cat = {m.name: m.description for m in load_catalog([bundled, user])}
     assert cat["a"] == "bundled A"     # invalid user skill ignored, bundled stays
+
+
+# --- Layer A: SkillMeta + invocation-model frontmatter -----------------------
+
+def test_meta_defaults_when_only_name_desc():
+    m = _meta_from_frontmatter({"name": "x", "description": "d"}, "x")
+    assert m == SkillMeta(name="x", description="d", model_invocable=True,
+                          user_invocable=True, flows=())
+
+
+def test_meta_disable_model_invocation_and_user_flag():
+    m = _meta_from_frontmatter(
+        {"name": "x", "description": "d",
+         "disable-model-invocation": True, "user-invocable": False}, "x")
+    assert m.model_invocable is False
+    assert m.user_invocable is False
+
+
+def test_meta_flow_scalar_and_list_and_garbage():
+    # a string flow == a single flow; a list == those flows (strings only)
+    assert _meta_from_frontmatter({"name": "x", "description": "d", "flow": "seo"}, "x").flows == ("seo",)
+    assert _meta_from_frontmatter({"name": "x", "description": "d", "flows": ["a", "b"]}, "x").flows == ("a", "b")
+    assert _meta_from_frontmatter({"name": "x", "description": "d", "flows": "one"}, "x").flows == ("one",)
+    # a non-str/non-list flow (e.g. a number) degrades to no flow, never raises;
+    # and only literal True disables model invocation (a truthy string does NOT).
+    g = _meta_from_frontmatter({"name": "x", "description": "d",
+                                "disable-model-invocation": "yes", "flows": 42}, "x")
+    assert g.model_invocable is True and g.flows == ()
+    # a list with non-string members keeps only the strings
+    assert _meta_from_frontmatter({"name": "x", "description": "d", "flows": ["a", 3, "b"]}, "x").flows == ("a", "b")
+
+
+def test_load_catalog_returns_skillmeta(tmp_path):
+    d = tmp_path / "alpha"; d.mkdir()
+    (d / "SKILL.md").write_text(
+        "---\nname: alpha\ndescription: A\ndisable-model-invocation: true\nflow: seo\n---\nbody\n")
+    cat = load_catalog([tmp_path])
+    assert cat == [SkillMeta(name="alpha", description="A",
+                             model_invocable=False, user_invocable=True, flows=("seo",))]
+
+
+# --- Layer B: lazy skill menu ------------------------------------------------
+
+def test_compose_menu_lists_names_not_bodies():
+    metas = [SkillMeta("a", "does A"), SkillMeta("b", "does B")]
+    from harness.skills import compose_menu
+    out = compose_menu(metas)
+    assert "does A" in out and "**a**" in out and "load_skill" in out
+    assert "# Skills" in out
+
+
+def test_compose_menu_empty_is_blank():
+    from harness.skills import compose_menu
+    assert compose_menu([]) == ""
