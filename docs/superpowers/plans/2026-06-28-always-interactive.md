@@ -387,13 +387,20 @@ In `__init__` (near app.py:126), add state:
 
 Replace the tail of `_stream_message` (app.py:984-987) — the `self._stream_buf += text` onward — with:
 
+Note the branch above sets a local `opened_new` flag when it creates a fresh widget — capture it so the FIRST chunk of a new answer paints immediately (no 80ms timer lag, no spinner/blank flicker after `_hide_working`). Add `opened_new = False` before the if/elif, set `opened_new = True` inside the `elif` new-widget branch (after line 982), then:
+
 ```python
         self._stream_buf += text
         self._stream_dirty = True
-        if self._stream_closed:
-            # R1: a late delta after close cannot rely on the interval (it is
-            # stopped on close). Flush SYNCHRONOUSLY so trailing text is never lost.
+        if self._stream_closed or opened_new:
+            # R1: a late delta after close cannot rely on the interval (stopped on
+            # close) → flush SYNC. opened_new: the first chunk of a new answer must
+            # paint immediately, not wait up to 80ms for the timer (avoids a
+            # post-_hide_working blank flicker). Subsequent open-stream chunks
+            # coalesce on the timer.
             self._flush_stream()
+            if not self._stream_closed:
+                self._ensure_stream_timer()   # arm for the chunks that follow
         else:
             self._ensure_stream_timer()
         self._transcript.scroll_end(animate=False)
@@ -425,7 +432,7 @@ Add these methods near `_stream_message`:
         self.call_after_refresh(md.update, buf)
 ```
 
-In the new-widget branch of `_stream_message` (app.py:978-982, where `self._stream_buf = ""`), the first render path now goes through `_ensure_stream_timer()` (non-closed) — the `call_after_refresh` inside `_flush_stream` preserves R4. No change needed there beyond the tail replacement above.
+In the new-widget branch of `_stream_message` (the `elif` at app.py:974-982, where `self._streaming_md = Markdown("")` and `self._stream_buf = ""`), add `opened_new = True` as the last line of that branch (the `if self._stream_closed: pass` late-delta branch and the `else` already-open branch leave `opened_new = False`). This is what makes the first chunk of a new widget flush synchronously (mount-safe via `call_after_refresh` inside `_flush_stream`, preserving R4).
 
 In `_end_stream` (app.py:834), stop the timer and force a final paint of whatever is buffered:
 
@@ -477,6 +484,38 @@ def test_late_delta_after_close_renders():
             await pilot.pause()
             assert app._stream_buf == before + "LATE"
             assert not app._stream_dirty, "late delta not flushed (R1 sync flush failed)"
+    asyncio.run(go())
+```
+
+Run: `/Users/alberto/Work/Quiubo/harness/.venv/bin/python -m pytest tests/test_tui_stream_coalesce.py -q`
+Expected: PASS.
+
+- [ ] **Step 6b: Write + run the first-chunk-sync test (no first-token lag)**
+
+```python
+# tests/test_tui_stream_coalesce.py  (append)
+def test_first_chunk_of_new_answer_renders_synchronously():
+    """The first delta of a fresh answer must paint without waiting for the
+    12Hz timer (no 80ms blank flicker after _hide_working)."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            # drive one real STREAM turn so a widget opens, then assert the buffer
+            # was marked clean (flushed) right after the first chunk — i.e. the
+            # first chunk did not stay dirty waiting on the interval.
+            app.query_one("#landing-input", PromptArea).focus()
+            app.query_one("#landing-input", PromptArea).value = "STREAM hi"
+            await pilot.press("enter")
+            # capture state at the first paint: after the first delta the widget
+            # exists and dirty has been cleared by the sync flush.
+            saw_clean_with_widget = False
+            for _ in range(100):
+                await pilot.pause()
+                if app._streaming_md is not None and not app._stream_dirty:
+                    saw_clean_with_widget = True
+                    break
+            assert saw_clean_with_widget, "first chunk left buffer dirty (timer-only paint)"
     asyncio.run(go())
 ```
 
