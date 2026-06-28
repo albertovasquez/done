@@ -153,7 +153,11 @@ PermissionModal #select-list { height: 2; margin-top: 1; }
     background: $surface; border: round $surface; padding: 0 1; margin-bottom: 1; height: 4;
 }
 #agent-rail .persona-card.active { border: round $accent; background: $accent 10%; }
-#agent-rail ListItem.--highlight .persona-card { border: round $accent; }
+/* keyboard highlight (↑↓ before enter): accent border + a stronger tint so the
+   focused row is unmistakable, not just bold text. The class lives on the
+   ListItem itself (.persona-card is added to the ListItem), and Textual's
+   highlight class is the single-dash `-highlight`. */
+#agent-rail ListItem.persona-card.-highlight { border: round $accent; background: $accent 20%; }
 #quick-keys {
     height: auto; padding: 1 1; background: $background; border-top: solid $surface;
 }
