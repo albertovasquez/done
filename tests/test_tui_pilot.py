@@ -168,7 +168,9 @@ def test_footer_click_copies_response_to_clipboard():
     async def go():
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
         copied = []
-        app.copy_to_clipboard = lambda text: copied.append(text)
+        # Patch the app's own clipboard seam so the test never touches the real OS
+        # clipboard or runs pbcopy; returns True ⇒ the label should flip.
+        app._copy_to_clipboard = lambda text: (copied.append(text) or True)
         async with app.run_test() as pilot:
             await pilot.pause()
             await app._enter_conversation()
@@ -192,7 +194,7 @@ def test_footer_copy_is_noop_when_no_response_rendered():
     async def go():
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
         copied = []
-        app.copy_to_clipboard = lambda text: copied.append(text)
+        app._copy_to_clipboard = lambda text: (copied.append(text) or True)
         async with app.run_test() as pilot:
             await pilot.pause()
             await app._enter_conversation()
@@ -204,6 +206,59 @@ def test_footer_copy_is_noop_when_no_response_rendered():
             await pilot.pause()
             assert copied == [], f"copied despite no response: {copied!r}"
             assert "(copy)" in str(foot.content) and "(copied)" not in str(foot.content)
+
+    asyncio.run(go())
+
+
+def test_footer_copy_native_first_then_flips(monkeypatch):
+    """The real _copy_to_clipboard path: when a native tool succeeds, OSC 52 is NOT
+    used and the label flips to (copied)."""
+    import harness.tui.clipboard as clip
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        native_calls, osc_calls = [], []
+        monkeypatch.setattr(clip, "native_copy", lambda t, **k: (native_calls.append(t) or True))
+        app.copy_to_clipboard = lambda t: osc_calls.append(t)   # OSC 52 should NOT fire
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await app._enter_conversation()
+            app._session_id = "fake-session"
+            app._stream_message("answer text")
+            await pilot.pause()
+            app._write_meta(0.4)
+            await pilot.pause()
+            foot = _footer(app)
+            app.on_click(NS(widget=foot))
+            await pilot.pause()
+            assert native_calls == ["answer text"], native_calls
+            assert osc_calls == [], "OSC 52 used despite native success"
+            assert "(copied)" in str(foot.content)
+
+    asyncio.run(go())
+
+
+def test_footer_copy_falls_back_to_osc52_when_no_native_tool(monkeypatch):
+    """When no native tool is present, fall back to OSC 52 (Textual) and still
+    flip to (copied)."""
+    import harness.tui.clipboard as clip
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        osc_calls = []
+        monkeypatch.setattr(clip, "native_copy", lambda t, **k: False)  # no native tool
+        app.copy_to_clipboard = lambda t: osc_calls.append(t)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await app._enter_conversation()
+            app._session_id = "fake-session"
+            app._stream_message("via osc52")
+            await pilot.pause()
+            app._write_meta(0.4)
+            await pilot.pause()
+            foot = _footer(app)
+            app.on_click(NS(widget=foot))
+            await pilot.pause()
+            assert osc_calls == ["via osc52"], osc_calls
+            assert "(copied)" in str(foot.content)
 
     asyncio.run(go())
 

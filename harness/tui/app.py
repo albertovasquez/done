@@ -474,8 +474,27 @@ class HarnessTui(App):
         text = (getattr(md, "source", None) or "") if md is not None else ""
         if not text:
             return
-        self.copy_to_clipboard(text)
-        footer.update(self._meta_markup(getattr(footer, "_elapsed", 0.0), copied=True))
+        if self._copy_to_clipboard(text):
+            footer.update(self._meta_markup(getattr(footer, "_elapsed", 0.0), copied=True))
+        else:
+            # No native tool AND no terminal to emit OSC 52 to — tell the user how
+            # to enable it, and leave the label as (copy) so they know it didn't take.
+            self._notify_line("clipboard unavailable — install xclip/wl-copy (Linux) "
+                              "or use a terminal that supports OSC 52")
+
+    def _copy_to_clipboard(self, text: str) -> bool:
+        """Put `text` on the clipboard. Native OS tool first (pbcopy/xclip/wl-copy
+        — a real success signal that also works in Terminal.app, which has no OSC
+        52 support); else fall back to Textual's OSC 52 escape (works over SSH and
+        in OSC-52 terminals like Ghostty/iTerm/kitty). Returns False only when
+        neither path is viable (no binary AND no terminal driver, e.g. headless)."""
+        from harness.tui.clipboard import native_copy
+        if native_copy(text):
+            return True
+        if getattr(self, "_driver", None) is None:
+            return False                  # OSC 52 has nowhere to write → real failure
+        self.copy_to_clipboard(text)      # OSC 52 (fire-and-forget; best effort)
+        return True
 
     # ---- presentation model (reducer) ----
 
