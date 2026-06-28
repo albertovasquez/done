@@ -32,6 +32,9 @@ event tracer, a request router, a skills layer, and the ACP interface.
   nothing until used. Conforms to the [Agent Skills](https://agentskills.io) open
   standard, so Done reads your project `.agents/skills` / `.claude/skills` too (see
   *Skills* below).
+- **Memory.** Each persona keeps a persistent, per-persona memory in plain Markdown
+  — a small index injected every turn plus a lazy `load_memory` tool, same shape as
+  skills. No database, no embeddings, no-op until used (see *Memory* below).
 - **Instructions.** Drop an `AGENTS.md` in your project (or persona, or `~/.config/harness/`)
   and it becomes standing policy in the agent's prompt (see [docs/agents-md.md](docs/agents-md.md)).
 - **You're in control.** The agent asks permission before running commands, and
@@ -189,6 +192,31 @@ restart and no `--persona` relaunch (the way mature agent harnesses do it). Pres
 **n** to **create** a new persona: name it, and the rail slugifies the name into a
 safe workspace id, seeds the inert templates, and switches to it.
 
+## Memory
+
+Each persona has a **persistent memory** in its workspace — plain Markdown files,
+no database, no embeddings, no external service, **per-persona isolated**, and a
+strict no-op until used. Memory mirrors the skills system: an **index** the agent
+sees every turn plus a **load-on-demand tool**.
+
+| Layer | What |
+|---|---|
+| `MEMORY.md` | the durable index — injected at the start of every turn (trimmed at 8 K chars) |
+| `memory/<date>.md` | daily notes — today's and yesterday's auto-injected |
+| `memory/<slug>.md` | typed facts — listed in the index, pulled on demand with `load_memory` |
+
+Facts carry frontmatter (`name` / `description` / `type` where `type` is one of
+`user` · `feedback` · `project` · `reference`). The agent writes memory itself via
+plain shell (or just tell it "remember that…"); you can hand-edit any file. Names
+are resolved strictly inside the active workspace, so one persona can never read
+another's memory.
+
+Memory deliberately has **no search index or semantic recall yet** — Done weighed
+adopting [QMD](https://github.com/tobi/qmd) (a Node sidecar with a ~2 GB model
+download, as OpenClaw uses) and chose to keep memory Python-only and dependency-free;
+because the files stay source of truth, FTS/QMD can be added later as an additive
+layer. See [docs/memory.md](docs/memory.md) for the full reference.
+
 ## Using the TUI
 
 - Type a prompt in the input box and press **Enter** to send. Input is disabled
@@ -273,6 +301,7 @@ vendored agent:
 | **Runner** | drives the engine against a real repository |
 | **Router** | classifies each request and decides how to handle it |
 | **Skills** | a lazy skill menu + `load_skill` tool (agent pulls bodies on demand); per-persona flows; `AGENTS.md` standing instructions |
+| **Memory** | per-persona Markdown memory: a startup index + lazy `load_memory` tool (same shape as skills) |
 | **ACP agent** | exposes the engine as an ACP server over stdio |
 | **TUI** | a Textual ACP client (`dn`) that drives the agent like an editor would |
 
@@ -286,7 +315,7 @@ vendored agent:
 | `upstream/` | vendored mini-swe-agent — never edited |
 | `harness/skills/` | the bundled maturity spine, lazily loaded via `load_skill` (+ `NOTICE.md` attribution) |
 | `examples/sample-repo/` | a tiny repo with one failing test, for demos |
-| `docs/` | reference docs (skills/flows, AGENTS.md, personas, debugging), specs, plans, learning log |
+| `docs/` | reference docs (skills/flows, AGENTS.md, personas, memory, debugging), specs, plans, learning log |
 
 ## Development
 
