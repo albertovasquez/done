@@ -223,6 +223,34 @@ def test_footer_click_copies_response_to_clipboard():
     asyncio.run(go())
 
 
+def test_footer_sits_below_a_late_draining_response():
+    """The run-caption footer must render BELOW the answer even when the response
+    drains AFTER the footer is appended (prompt() returns before the trailing
+    message deltas arrive — see _stream_message late-delivery). Reproduces the
+    real failure where the footer mounted first and the late answer landed under
+    it, so '▣ … (copy)' showed ABOVE the prose. The fix re-parents the footer
+    below the response when the late delta lands."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await app._enter_conversation()
+            app._session_id = "fake-session"
+            app._write_meta(0.5)                 # footer FIRST (turn end)…
+            await pilot.pause()
+            app._stream_message("the late answer")  # …response drains AFTER
+            await pilot.pause()
+            scroll = app.query_one("#transcript", VerticalScroll)
+            kids = list(scroll.children)
+            foot = _footer(app)
+            md = next(w for w in kids if isinstance(w, Markdown))
+            assert kids.index(md) < kids.index(foot), (
+                "footer rendered ABOVE the late-draining response — "
+                f"order: {[type(w).__name__ for w in kids]}")
+
+    asyncio.run(go())
+
+
 def test_footer_copy_is_noop_when_no_response_rendered():
     """A footer with no answer above it (e.g. a tool-only turn) copies nothing and
     does not flip — no crash, no empty clipboard write."""
