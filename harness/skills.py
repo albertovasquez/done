@@ -12,10 +12,12 @@ frontmatter missing name/description is recorded as 'skipped' with a reason.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import yaml
+
+from harness.paths import origin_for_root
 
 logger = logging.getLogger("harness.skills")
 
@@ -86,15 +88,18 @@ class CatalogLoad:
     shadowed: list[tuple[str, str]] = field(default_factory=list)  # (name, winning_root) — overridden across roots
 
 
-def load_catalog_with_skips(roots: list[Path]) -> CatalogLoad:
+def load_catalog_with_skips(roots: list[Path], project_cwd=None) -> CatalogLoad:
     """Scan each root's <name>/SKILL.md; later roots override earlier by name.
-    Returns the valid SkillMeta list, every dir DROPPED (with a human reason), and
-    every skill SHADOWED across roots (a later root won) so a name clash is visible
-    rather than silent. Never raises."""
+    Returns the valid SkillMeta list (each stamped with the origin of its WINNING
+    root), every dir DROPPED (with a human reason), and every skill SHADOWED across
+    roots (a later root won) so a name clash is visible rather than silent. Never
+    raises. project_cwd lets origin_for_root classify the two project roots; pass
+    the same cwd skills_dirs() was built with."""
     merged: dict[str, SkillMeta] = {}
     skipped: list[tuple[str, str]] = []
     shadowed: list[tuple[str, str]] = []
     for root in roots:
+        origin = origin_for_root(root, project_cwd)
         if not Path(root).is_dir():
             continue
         for child in sorted(Path(root).iterdir(), key=lambda p: p.name):
@@ -108,24 +113,22 @@ def load_catalog_with_skips(roots: list[Path]) -> CatalogLoad:
                 if name != child.name:
                     raise ValueError(f"name '{name}' does not match directory '{child.name}'")
             except (OSError, UnicodeDecodeError, yaml.YAMLError, ValueError) as e:
-                # Surface to the user (skipped), not just the log: a malformed skill
-                # vanishing with no clue why undercuts a skill-aware system.
                 logger.warning("skipping skill %s/SKILL.md: %s", child.name, e)
                 skipped.append((child.name, str(e)))
                 continue
             if name in merged:                       # an earlier root had this name
                 shadowed.append((name, str(root)))
-            merged[name] = _meta_from_frontmatter(data, name)   # later root wins
+            merged[name] = replace(_meta_from_frontmatter(data, name), origin=origin)
     return CatalogLoad(skills=[merged[k] for k in sorted(merged)],
                        skipped=skipped, shadowed=shadowed)
 
 
-def load_catalog(roots: list[Path]) -> list[SkillMeta]:
+def load_catalog(roots: list[Path], project_cwd=None) -> list[SkillMeta]:
     """Scan each root's <name>/SKILL.md; later roots override earlier by name.
     Invalid skill dirs are omitted (can't select what can't parse). Returns the
     flat SkillMeta list (the historical signature; use load_catalog_with_skips to
     also learn what was dropped)."""
-    return load_catalog_with_skips(roots).skills
+    return load_catalog_with_skips(roots, project_cwd).skills
 
 
 def compose(roots: list[Path], names: list[str]) -> SkillLoad:

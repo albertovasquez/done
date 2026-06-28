@@ -234,3 +234,40 @@ def test_native_outranks_compat_tie_break(tmp_path):
     # order mirrors skills_dirs: compat BEFORE native => native wins
     load = load_catalog_with_skips([compat, native])
     assert {m.name: m.description for m in load.skills}["tool"] == "deliberate copy"
+
+
+def test_origin_stamped_from_winning_root(tmp_path, monkeypatch):
+    # Point the bundled root at a temp dir we control, then verify a skill loaded
+    # from it gets origin="bundled" and one from a project root gets "project".
+    import harness.paths as paths
+    bundled = tmp_path / "bundled"; (bundled / "a").mkdir(parents=True)
+    (bundled / "a" / "SKILL.md").write_text(
+        "---\nname: a\ndescription: bundled A\n---\nbody\n")
+    proj = tmp_path / "proj" / ".agents" / "skills"; (proj / "b").mkdir(parents=True)
+    (proj / "b" / "SKILL.md").write_text(
+        "---\nname: b\ndescription: project B\n---\nbody\n")
+    monkeypatch.setattr(paths, "bundled_skills_dir", lambda: bundled)
+
+    from harness.skills import load_catalog_with_skips
+    cwd = tmp_path / "proj"
+    load = load_catalog_with_skips([bundled, proj], project_cwd=cwd)
+    by = {m.name: m.origin for m in load.skills}
+    assert by == {"a": "bundled", "b": "project"}
+
+
+def test_origin_uses_winning_root_when_shadowed(tmp_path, monkeypatch):
+    # A bundled skill overridden by a project copy reports origin="project".
+    import harness.paths as paths
+    bundled = tmp_path / "bundled"; (bundled / "a").mkdir(parents=True)
+    (bundled / "a" / "SKILL.md").write_text(
+        "---\nname: a\ndescription: bundled A\n---\nb\n")
+    proj = tmp_path / "proj" / ".agents" / "skills"; (proj / "a").mkdir(parents=True)
+    (proj / "a" / "SKILL.md").write_text(
+        "---\nname: a\ndescription: project A wins\n---\nb\n")
+    monkeypatch.setattr(paths, "bundled_skills_dir", lambda: bundled)
+
+    from harness.skills import load_catalog_with_skips
+    cwd = tmp_path / "proj"
+    load = load_catalog_with_skips([bundled, proj], project_cwd=cwd)
+    [m] = load.skills
+    assert m.origin == "project" and m.description == "project A wins"
