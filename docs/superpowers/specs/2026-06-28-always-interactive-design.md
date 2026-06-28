@@ -83,30 +83,65 @@ test is mocked — only the agent subprocess shape.
 - On each chunk: append to `self._stream_buf` (cheap); set a `_stream_dirty`
   flag; ensure a throttled flusher is scheduled at a fixed **12 Hz (~80ms)**
   via Textual `set_interval` (single concrete rate; tunable in one place).
-- The flusher, when `_stream_dirty`, calls `md.update(self._stream_buf)` once and
-  clears the flag — coalescing many chunks per frame into one render.
-- The **final** chunk / stream close forces a last flush so no text is lost.
-- Mount-timing guarantee preserved: first render still routed so it lands after
-  the widget mounts (today via `call_after_refresh`; the flusher inherits the
-  same "update is a no-op until mounted, re-render on next tick" property).
+- The flusher, when `_stream_dirty`, calls `md.update(buf)` once and clears the
+  flag — coalescing many chunks per frame into one render.
+
+**Review findings folded in (two independent reviews; Codex stalled, see Risks):**
+
+- **R1 (was 🔴 bug — late-delta loss).** `_end_stream` (app.py:819-836) closes a
+  stream by setting `_stream_closed=True` *without flushing*, and a **late delta
+  after close is a supported case** — the widget ref is deliberately kept
+  (app.py:821-824) so a lagging delta still renders. Therefore the flush must NOT
+  depend on the interval being alive: **when `_stream_message` runs with
+  `_stream_closed` true (or is the turn-final delta), it flushes SYNCHRONOUSLY**
+  in-line. The interval is an optimization for the open-stream burst only; a
+  closed stream never relies on it. This is the load-bearing correctness rule.
+- **R2 (interval lifecycle).** Do **not** free-run a session-wide 12Hz timer.
+  Start the interval on **stream-open** (first delta of a widget), stop it on
+  **stream close / `_end_stream` / reset / reload**. The flusher body is a guarded
+  no-op when `not _stream_dirty` OR `_streaming_md is None` (post-teardown). No
+  timer leaks across turns.
+- **R3 (buffer/widget capture).** `_stream_buf` is reset at app.py:980 (new
+  widget) and app.py:773 (conversation reset). The flusher must render the buffer
+  **for the widget it belongs to** — capture `(md, buf)` identity at schedule
+  time and have the flusher target that ref, OR clear `_stream_dirty` on every
+  reset path so a stale flush can't paint the old buffer into a new widget.
+- **R4 (mount timing — verify, don't assume).** The current code relies on
+  `call_after_refresh` so the first `md.update` lands after mount (app.py:957).
+  `set_interval` does **not** inherit this — its body can fire pre-mount. The
+  first flush must be explicitly mount-safe (keep `call_after_refresh` for the
+  first render of a new widget, or guard the flusher until the widget is mounted).
+  The plan MUST include a test that the first chunk renders exactly once, after
+  mount.
 
 Boundary: only *when* the buffer is painted changes; *what* is shown is identical.
 No change to the reducer or `on_session_update`. Widget-identity / late-delta /
-new-step routing (the `_boundary_after` logic) is untouched.
+new-step routing (the `_boundary_after` logic) is untouched — R1/R3 exist
+specifically to keep it that way.
 
 ### Component 3 — ESC always cancels (always-cancelable)
 
 `harness/tui/app.py::on_key` precedence + `action_cancel`.
 
-- When `self._turn_active`, ESC routes to `action_cancel` **first**, before the
-  clear-input-text (app.py:614) and rail-close (app.py:632) handlers consume it.
+**Explicit ESC precedence ladder (review finding R5).** The slash menu can be
+open *during* a turn, so cancel must not swallow its ESC. Order in `on_key`:
+
+1. **slash menu open** → close it (app.py:643-645). Highest priority.
+2. else **`_turn_active`** → `action_cancel` (NEW: this jumps ahead of clear-text
+   and rail-close).
+3. else **input has text** → clear it (app.py:614).
+4. else **rail focused** → close rail (app.py:632).
+
 - `action_cancel` already emits `tx.cancel` and calls `conn.cancel()` (sets
   `cancel_flag`, checked by the engine every step — acp_agent.py:550). Add a
   visible `— canceling… —` muted line so the action has immediate feedback.
-- When no turn is active, ESC keeps current behavior (clear text / close rail).
+- **R6 (documented behavior, not a bug):** while a turn is active, ESC cancels
+  the turn and **leaves any typed text in the box** (it no longer clears on the
+  first ESC). A second ESC then clears the text per step 3. This is intended.
 
-Boundary: a precedence tweak in `on_key` + one feedback line. The cancel wire
-itself is unchanged.
+Boundary: a precedence reorder in `on_key` + one feedback line. The cancel wire
+itself is unchanged. Tests cover all four ladder rungs (slash-open, turn-active,
+text-present, rail-focused).
 
 ### Component 4 — Phase-labeled liveness (#110 window, display only)
 
@@ -172,7 +207,11 @@ ESC during turn ─▶ on_key: _turn_active ⇒ action_cancel first   (C3)
 - **Invariant test** (Component 1) — the durable guarantee; must stay green.
 - **Render coalescing**: a unit/Pilot test that N rapid chunks produce a bounded
   number of `md.update` calls (assert coalescing) and the final buffer equals the
-  concatenation of all chunks (assert no loss).
+  concatenation of all chunks (assert no loss). PLUS the review-driven cases:
+  (R1) a **late delta after stream close** still renders (sync flush, no interval);
+  (R3) a flush scheduled before a widget reset does not paint the old buffer into
+  the new widget; (R4) the first chunk of a new widget renders exactly once, after
+  mount.
 - **ESC cancel**: Pilot test — during an active turn, ESC from the composer (with
   and without text in the box) results in a `cancel()` call / `tx.cancel` trace.
 - **Liveness label**: reducer test — `tx.prompt`→"Classifying…",
@@ -193,4 +232,17 @@ ESC during turn ─▶ on_key: _turn_active ⇒ action_cancel first   (C3)
   guard is wrong; tests cover both turn-active and idle ESC.
 - Pilot tests exercise event-loop logic, **not** real-terminal repaint; they
   cannot prove the perceived paint-lag is gone. The coalescing test bounds the
-  render count as the objective proxy.
+  render count as the objective proxy. A manual `dn --debug` observation (type
+  during a real slow agent turn over a large file) is the acceptance check for
+  the perceived-freeze fix during implementation.
+
+## Review provenance
+
+This spec was hardened by two independent adversarial reviews (an inline
+self-review and a caveman-review pass), which converged on the C2 late-delta
+flush bug (R1) and added R2/R3/R4 (interval lifecycle, buffer/widget capture,
+mount timing) and R5/R6 (ESC precedence ladder, ESC-leaves-text behavior). A
+third review via Codex was dispatched but **stalled mid-analysis** (the known
+codex-rescue hang pattern — resumed-from-transcript with no findings produced),
+so it contributed nothing and nothing from it was folded in. The R-findings
+above are the load-bearing corrections to the original draft.
