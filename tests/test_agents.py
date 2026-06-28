@@ -60,3 +60,15 @@ def test_only_project_tier(tmp_path):
     load = resolve_agents(persona_dir=None, project_cwd=tmp_path / "c", global_dir=None)
     assert "PROJECT ONLY" in load.block
     assert load.injected == ["Project"]
+
+
+def test_agents_md_from_project_cwd_reaches_base_block(tmp_path):
+    # The dispatch contract: an AGENTS.md in the project cwd lands in base_block,
+    # which both the agent runner and ChatHandler consume.
+    from harness import agents, base_prompt, paths
+    (tmp_path / "AGENTS.md").write_text("PROJECT POLICY XYZ", encoding="utf-8")
+    load = agents.resolve_agents(persona_dir=None, project_cwd=tmp_path,
+                                 global_dir=paths.config_dir())
+    bb = base_prompt.render_base_prompt(model_id="mock", cwd=str(tmp_path),
+                                        system_line="os", agents_block=load.block)
+    assert "PROJECT POLICY XYZ" in bb
