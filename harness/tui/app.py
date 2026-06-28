@@ -894,6 +894,20 @@ class HarnessTui(App):
         self._transcript.mount(widget)
         self._transcript.scroll_end(animate=False)
 
+    def _append_streaming_below_footer(self, widget) -> None:
+        """Mount a streaming answer widget, keeping any trailing run-caption footer
+        last. A late-draining response (deltas arrive after prompt() returned and
+        already mounted this turn's footer) must render ABOVE the footer, not under
+        it. If the last transcript child is a `_copyable` footer, mount before it;
+        otherwise append at the end."""
+        kids = self._transcript.children
+        footer = kids[-1] if kids else None
+        if footer is not None and getattr(footer, "_copyable", False):
+            self._transcript.mount(widget, before=footer)
+            self._transcript.scroll_end(animate=False)
+        else:
+            self._append(widget)
+
     def _append_line(self, markup: str, *, classes: str | None = None) -> None:
         """Append a discrete themed line (chips, user msg, tool calls, meta, errors).
 
@@ -1100,7 +1114,12 @@ class HarnessTui(App):
             # is now OPEN and the boundary has been consumed.
             self._hide_working()
             self._streaming_md = Markdown("")
-            self._append(self._streaming_md)
+            # Late-delivery ordering: prompt() can return (mounting THIS turn's
+            # footer) before the trailing message deltas arrive. If the run-caption
+            # footer is already the last child, mount the answer ABOVE it so the
+            # '… (copy)' caption stays BELOW the prose — otherwise the answer lands
+            # under the footer (footer-above-answer bug).
+            self._append_streaming_below_footer(self._streaming_md)
             self._stream_buf = ""
             self._stream_closed = False
             self._boundary_after = False
