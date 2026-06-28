@@ -161,8 +161,7 @@ dn   # the agent now answers in that persona, on chat and coding turns alike
 
 Until you edit a file, behavior is unchanged — no persona, no overhead. See
 [docs/personas.md](docs/personas.md) for the full reference (seeding, trimming,
-blank/inert-skip, the dev path, and what's coming in later phases: multiple
-personas, selection, memory, scheduling).
+blank/inert-skip, the dev path, selection, in-process switching, and creation).
 
 ### Selecting a persona
 
@@ -172,9 +171,10 @@ Run as a named persona workspace with `--persona <id>`:
 
 Without `--persona`, the built-in `default` persona is used. The id must be an
 existing workspace under `~/.config/harness/agents/<id>/` — an unknown id is a
-hard error (persona *creation* lands in a later phase). Each persona has its own
-sessions, memory, and model (persisted in `done.conf` under `[agents.<id>]`); a
-live `/models` swap is remembered per persona.
+hard error. (To make a new persona without leaving the TUI, press **n** in the
+agents rail; see below.) Each persona has its own sessions, memory, and model
+(persisted in `done.conf` under `[agents.<id>]`); a live `/models` swap is
+remembered per persona.
 
 ### The agents rail (TUI)
 
@@ -183,10 +183,11 @@ workspace under `~/.config/harness/agents/`, with the active one marked. Display
 names come from each workspace's `persona.toml` `name` (the id is used if unset).
 **Esc** closes the rail. The status bar also shows which persona you're on.
 
-The rail is a **view** today — it shows your personas and which one is live. To run
-a different persona, launch with `--persona <id>`. (In-app *switching* between
-personas — keeping one process alive and routing between sessions, the way mature
-agent harnesses do it — lands in a later phase.)
+Select a persona in the rail to **switch to it in-process** — the same long-lived
+agent process repoints to that persona's session, memory, and model, with no
+restart and no `--persona` relaunch (the way mature agent harnesses do it). Press
+**n** to **create** a new persona: name it, and the rail slugifies the name into a
+safe workspace id, seeds the inert templates, and switches to it.
 
 ## Using the TUI
 

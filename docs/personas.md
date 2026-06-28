@@ -105,9 +105,10 @@ Run as a named persona workspace with `--persona <id>`:
 
 Without `--persona`, the built-in `default` persona is used. The id must be an
 existing workspace under `~/.config/harness/agents/<id>/` — an unknown id is a
-hard error (persona *creation* lands in a later phase). Each persona has its own
-sessions, memory, and model (persisted in `done.conf` under `[agents.<id>]`); a
-live `/models` swap is remembered per persona.
+hard error. (To make a new persona from inside the TUI, press **n** in the agents
+rail; see below.) Each persona has its own sessions, memory, and model (persisted
+in `done.conf` under `[agents.<id>]`); a live `/models` swap is remembered per
+persona.
 
 A persona workspace may also declare extra skill directories in a `persona.toml`
 file at the workspace root:
@@ -132,26 +133,27 @@ Press **Tab** (or run `/persona`) to open the **agents rail** — a list of ever
 persona workspace, with the active one highlighted (and named via `persona.toml`).
 **Esc** closes it. The status-bar persona chip also shows the live persona.
 
-The rail is a **view** today: it shows your personas and which one is running. To
-run a different persona, launch with `--persona <id>`. In-app **switching** between
-personas is deliberately deferred to a later phase — the standard mature-harness
-approach (OpenClaw / OpenCode / Codex) keeps one process alive and routes between
-loaded sessions in-process, which needs the long-lived-process engine; doing it via
-process-restart leaks per-persona state. So switching ships with that engine, not as
-a TUI re-exec.
+From the rail you can:
+
+- **Switch personas** — select a persona to switch to it **in-process**: the same
+  long-lived agent process repoints to that persona's session, memory, and model
+  (no restart, no `--persona` relaunch). This follows the mature-harness approach
+  (OpenClaw / OpenCode / Codex): one process alive, routing between loaded sessions
+  in-process — process-restart was rejected because it leaks per-persona state.
+- **Create a persona** — press **n** to name a new persona; the name is slugified
+  into a safe workspace id, the workspace is seeded with the inert templates, and
+  the session switches to it. The typed name is kept as the display label.
 
 ## Not yet (later phases)
 
-Phase C1 added selection (`--persona`) and per-persona model persistence. What
-remains deferred:
+Selection (`--persona`), per-persona model persistence, in-process switching, and
+persona creation (the **n** key in the rail) have all shipped. What remains
+deferred:
 
 - **Guided onboarding.** First-run seeding drops editable templates (done), but
   there's no interactive `BOOTSTRAP.md` setup ritual or wiped-workspace
-  attestation yet. *(Phase D.)*
-- **Persona creation.** `--persona <id>` requires the workspace to already
-  exist; creating a new named persona is Phase D work.
+  attestation yet.
 - **Scheduling / proactive runs** (a persona acting without you present).
-  *(Phase E.)*
 
 For the design rationale behind these phases, see the dated specs under
 `docs/superpowers/specs/` (`*persona-fleet*`, `*phaseA-persona-contract*`).
