@@ -31,7 +31,8 @@ async def _reload(app, arg: str = "") -> None:
 
 
 async def _persona(app, arg: str = "") -> None:
-    # Rail is view-only (switching lands in C2c); /persona just opens the agents rail.
+    # /persona just opens the agents rail; selecting a row switches in-process
+    # (see app.on_persona_selected → harness/set_persona) and `n` creates one.
     app.action_toggle_rail()
 
 
