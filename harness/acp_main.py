@@ -40,18 +40,20 @@ def _stub_complete(system: str, user: str) -> str:
 
 
 def _model_factory(model_choice: str):
-    """Return a factory `make(current_model=None) -> Model`. The agent calls it
-    per turn with its current worker model so /models can hot-swap (the arg wins
-    over the env default). Mock ignores the arg."""
+    """Return a factory `make(current_model=None, project_cwd=None,
+    memory_root=None) -> Model`. The agent calls it per turn with its current
+    worker model so /models can hot-swap (the arg wins over the env default),
+    plus the project cwd (skill roots) and the session workspace (memory recall).
+    Mock ignores them all."""
     if model_choice == "mock":
         from harness.models_mock import build_mock_model
 
-        def make(current_model=None, project_cwd=None):
+        def make(current_model=None, project_cwd=None, memory_root=None):
             return build_mock_model()
         return make
     # vibeproxy path — api_base/api_key live in model_kwargs (LitellmModelConfig has
     # no top-level api_base/api_key fields); mirror run_traced.py's proven wiring.
-    def make(current_model=None, project_cwd=None):
+    def make(current_model=None, project_cwd=None, memory_root=None):
         from harness.streaming_model import StreamingLitellmModel
         from harness.tools.registry import build_registry
         from harness import vibeproxy, paths
@@ -61,8 +63,10 @@ def _model_factory(model_choice: str):
             model_kwargs=vibeproxy.model_kwargs(),
             cost_tracking="ignore_errors",
             # skill_roots (project-aware) => the load_skill tool can pull project
-            # .agents/.claude skill bodies, not just global ones.
-            registry=build_registry(skill_roots=paths.skills_dirs(project_cwd=project_cwd)),
+            # .agents/.claude skill bodies, not just global ones. memory_root (the
+            # session persona workspace) => the load_memory tool for fact recall.
+            registry=build_registry(skill_roots=paths.skills_dirs(project_cwd=project_cwd),
+                                    memory_root=memory_root),
         )
     return make
 

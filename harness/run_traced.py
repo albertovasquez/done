@@ -45,7 +45,7 @@ def _load_agent_config() -> dict:
     return cfg["agent"]
 
 
-def _build_vibeproxy_model(project_cwd=None):
+def _build_vibeproxy_model(project_cwd=None, memory_root=None):
     # StreamingLitellmModel (not bare LitellmModel) so the standalone CLI advertises
     # the full tool registry too; on_delta defaults None => byte-identical blocking path.
     from harness.streaming_model import StreamingLitellmModel
@@ -57,7 +57,9 @@ def _build_vibeproxy_model(project_cwd=None):
         cost_tracking="ignore_errors",
         # skill_roots => the agent gets a load_skill tool to pull bodies on demand;
         # project_cwd so it can resolve project .agents/.claude skills too.
-        registry=build_registry(skill_roots=_paths.skills_dirs(project_cwd=project_cwd)),
+        # memory_root => the load_memory tool for on-demand fact recall.
+        registry=build_registry(skill_roots=_paths.skills_dirs(project_cwd=project_cwd),
+                                memory_root=memory_root),
     )
 
 
@@ -150,7 +152,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.model == "mock":
         model = build_mock_model()
     else:
-        model = _build_vibeproxy_model(project_cwd=args.cwd)
+        # memory_root=workspace_dir so the standalone CLI also advertises the
+        # load_memory tool for the resolved persona (parity with the ACP path).
+        model = _build_vibeproxy_model(project_cwd=args.cwd, memory_root=workspace_dir)
     env = LocalEnvironment(cwd=args.cwd)
     agent_cfg = _load_agent_config()
     agent_cfg["output_path"] = str(run_dir / "traj.json")
