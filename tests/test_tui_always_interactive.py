@@ -65,6 +65,7 @@ def test_composer_interactive_in_every_phase():
                 await pilot.pause()
                 if not app._turn_active:
                     break
+            assert not app._turn_active, "ESC did not cancel the turn"
 
         # phase C: mid-burst render — separate run, MANYCHUNKS
         app2 = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
