@@ -188,7 +188,7 @@ def _is_done_sentinel(title: str) -> bool:
 
 def _reduce_agent(a: AgentSnapshot, event) -> AgentSnapshot:
     if isinstance(event, TurnStarted):
-        return replace(a, state=AgentState.THINKING, activity_label="Thinking",
+        return replace(a, state=AgentState.THINKING, activity_label="Classifying…",
                        tool=None, decision=None, tasks=(), tools=(), plan=(),
                        elapsed=0.0)
     if isinstance(event, TokensUpdated):

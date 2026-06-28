@@ -2,7 +2,7 @@ from harness.tui.state import (
     AgentState, ToolStatus, ToolView, TaskItem, ScheduleView, DecisionView,
     AgentSnapshot, FleetSnapshot, initial_snapshot,
     infer_subtype,
-    persona_from_meta, PersonaResolved, reduce,
+    persona_from_meta, PersonaResolved, reduce, _reduce_agent,
 )
 
 
@@ -515,3 +515,26 @@ def test_new_turn_after_done_still_responds():
     fs = reduce(fs, TurnStarted())                         # next turn
     fs = reduce(fs, ItemReceived(RenderedItem(kind="message", text="hi")))
     assert _active(fs).state == AgentState.RESPONDING
+
+
+# ---- Phase-labeled liveness tests (C4) ----
+
+from dataclasses import dataclass
+
+@dataclass
+class _FakeItem:
+    kind: str
+
+
+def test_turn_start_label_is_classifying():
+    a = AgentSnapshot(id="a", name="x")
+    a = _reduce_agent(a, TurnStarted())
+    assert a.activity_label == "Classifying…"
+    assert a.state == AgentState.THINKING
+
+
+def test_first_message_chunk_flips_to_responding():
+    a = _reduce_agent(AgentSnapshot(id="a", name="x"), TurnStarted())
+    a = _reduce_agent(a, ItemReceived(item=_FakeItem(kind="message")))
+    assert a.activity_label == "Responding"
+    assert a.state == AgentState.RESPONDING
