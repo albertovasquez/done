@@ -11,12 +11,12 @@ from __future__ import annotations
 from textual import on
 from textual.binding import Binding
 from textual.message import Message
-from textual.widgets import Label, ListItem, ListView
+from textual.widgets import ListItem, ListView, Static
 
 from harness.tui.roster import PersonaRow
-
-ACTIVE_GLYPH = "●"
-IDLE_GLYPH = "○"
+from harness.tui.state import AgentState
+from harness.tui.tokens import GLYPH, STATUS_LABEL
+from harness.tui.widgets.status_chip import _STATE_GLYPH, state_color_token
 
 
 class PersonaSelected(Message):
@@ -29,8 +29,33 @@ class NewPersonaRequested(Message):
     """Posted when the user presses `n` in the rail to create a new persona."""
 
 
-def _row_label(r: PersonaRow) -> str:
-    return f"{ACTIVE_GLYPH if r.active else IDLE_GLYPH} {r.name}"
+# AgentState → the STATUS_LABEL/colour vocabulary key (display only).
+_STATUS_KEY = {
+    AgentState.IDLE: "idle",
+    AgentState.THINKING: "running",
+    AgentState.RESPONDING: "running",
+    AgentState.RUNNING_TOOL: "running",
+    AgentState.AWAITING_PERMISSION: "scheduled",
+    AgentState.AWAITING_DECISION: "scheduled",
+    AgentState.SCHEDULED: "scheduled",
+    AgentState.DONE: "idle",
+    AgentState.FAILED: "idle",
+}
+
+
+def _status_label(state: AgentState) -> str:
+    return STATUS_LABEL.get(_STATUS_KEY.get(state, "idle"), "IDLE")
+
+
+def card_markup(row: PersonaRow, subline: str) -> str:
+    """Two-line card markup: name (left) + status label/dot (right), then a muted
+    sub-line. Active name is accent-bold; idle is plain foreground. Tokens only;
+    no icon tile."""
+    token = state_color_token(row.status)
+    dot = GLYPH[_STATE_GLYPH.get(row.status, "idle")]
+    name = f"[$accent][b]{row.name}[/b][/]" if row.active else f"[$foreground]{row.name}[/]"
+    status = f"[${token}]{_status_label(row.status)} {dot}[/]"
+    return f"{name}    {status}\n[$muted]{subline}[/]"
 
 
 class AgentRail(ListView):
@@ -43,17 +68,25 @@ class AgentRail(ListView):
         super().__init__(*args, **kwargs)
         self._rows: tuple[PersonaRow, ...] = ()
 
-    def set_rows(self, rows: tuple[PersonaRow, ...]) -> None:
+    def set_rows(self, rows: tuple[PersonaRow, ...], *, subline_of=None) -> None:
         self._rows = rows
         self.clear()
-        for r in rows:
-            item = ListItem(Label(_row_label(r), markup=False))
+        active_index = 0
+        for i, r in enumerate(rows):
+            subline = subline_of(r) if subline_of else "idle"
+            item = ListItem(Static(card_markup(r, subline), markup=True))
             item.data = r.id                 # carry the id for selection (select_modal pattern)
+            item.add_class("persona-card")
+            if r.active:
+                item.add_class("active")
+                active_index = i
             self.append(item)
+        if rows:
+            self.index = active_index        # pre-highlight the active persona on open
 
     def _rail_text(self) -> str:
-        """The rendered lines as one string (test helper)."""
-        return "\n".join(_row_label(r) for r in self._rows)
+        """The rendered card markup as one string (test helper)."""
+        return "\n".join(card_markup(r, "idle") for r in self._rows)
 
     def select_id(self, persona_id: str) -> None:
         """Programmatic selection entrypoint (used by tests + enter/click)."""

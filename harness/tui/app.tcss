@@ -143,5 +143,17 @@ PermissionModal #select-list { height: 2; margin-top: 1; }
 #decision-prompt { padding: 1 2; border-left: thick $accent; background: $surface; }
 #decision-question { text-style: bold; padding-bottom: 1; }
 
-/* ---- C2b: agent rail (persona switcher) ---- */
-#agent-rail { dock: right; width: 28; border-left: solid $surface; background: $background; }
+/* ---- prominent agents drawer (persona switcher) ---- */
+#agent-drawer {
+    dock: right; width: 34; border-left: solid $surface; background: $background;
+    layout: vertical;
+}
+#agent-rail { height: 1fr; background: $background; padding: 1 1; }
+#agent-rail .persona-card {
+    background: $surface; border: round $surface; padding: 0 1; margin-bottom: 1; height: 4;
+}
+#agent-rail .persona-card.active { border: round $accent; background: $accent 10%; }
+#agent-rail ListItem.--highlight .persona-card { border: round $accent; }
+#quick-keys {
+    height: auto; padding: 1 1; background: $background; border-top: solid $surface;
+}

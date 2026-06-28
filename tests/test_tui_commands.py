@@ -54,13 +54,13 @@ def test_persona_command_opens_rail():
     async def _run():
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
         async with app.run_test() as pilot:
-            rail = app.query_one("#agent-rail")
-            assert rail.display is False
+            drawer = app.query_one("#agent-drawer")
+            assert drawer.display is False
             from harness.tui.commands import build_registry, resolve_command
             cmd = resolve_command(build_registry(), "persona")
             await cmd.handler(app, "")
             await pilot.pause()
-            assert rail.display is True
+            assert drawer.display is True
     asyncio.run(_run())
 
 
