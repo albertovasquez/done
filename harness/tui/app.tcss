@@ -114,6 +114,10 @@ Screen { layout: vertical; background: $background; layers: base overlay; }
 SelectModal { align: center middle; }
 SelectModal #select-box { width: 72; height: auto; max-height: 80%;
     border: round $accent; background: $surface; padding: 1 2; }
+/* The header is a Vertical, which defaults to height: 1fr — that stretches the
+   auto box to its 80% cap and leaves a tall empty gap above the search/list.
+   Hug its content (title + optional body) so the box shrinks to fit. */
+SelectModal #select-header { height: auto; }
 /* DoneDone uses heavy section headers — bold the title to echo the brand's
    tracked-caps style (terminals can't load the brand font; weight is what we have). */
 SelectModal #select-title { padding-bottom: 1; text-style: bold; color: $accent; }
