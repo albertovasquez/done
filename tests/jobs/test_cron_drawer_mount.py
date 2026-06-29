@@ -161,3 +161,39 @@ def test_new_job_seeds_create_prompt_and_closes_drawer():
                 "drawer should close after requesting a new job"
 
     asyncio.run(go())
+
+
+def test_new_job_as_first_action_on_landing_does_not_crash():
+    """Pressing 'n' as the FIRST action (still on the landing screen, no
+    transcript yet) must transition into the conversation before submitting —
+    NOT crash with NoMatches on '#transcript'. Regression for the create-job
+    seed assuming conversation state was already established."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            # Fresh landing: no transcript exists yet, _started is False.
+            assert app._started is False
+            assert not app.query("#transcript")
+
+            # Do NOT stub _submit_text — exercise the real append path that
+            # touches #transcript. The only thing we stub is the network send,
+            # so no real prompt() runs.
+            sent = []
+
+            async def _fake_send(text):
+                sent.append(text)
+            app._send_prompt = _fake_send
+            app._turn_active = False
+
+            app.on_new_job_requested(NewJobRequested())
+            await pilot.pause()
+            await pilot.pause()
+
+            # Transitioned into the conversation; the transcript now exists and
+            # the seed message was appended without raising.
+            assert app._started is True
+            assert app.query("#transcript"), "transcript must be built before append"
+            assert sent and "create" in sent[0].lower()
+
+    asyncio.run(go())
