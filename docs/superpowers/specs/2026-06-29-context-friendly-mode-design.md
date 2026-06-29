@@ -110,14 +110,25 @@ For any `FOO.md`, an optional sibling `FOO.compressed.md`.
 - **Never on the hot path, never per-turn.** Cron is an optimization, not a
   correctness dependency — staleness already degrades to loading the original.
 
-## Compression engine
+## Compression engine — vendored into the harness
 
-Reuse the existing `caveman-compress` Python scripts
-(`detect → compress via Claude → validate → retry`). The engine is used for
-**input compression only** — it rewrites *files we send into context*, never the
-main agent's response. Its exact-preservation rules make it safe even on
-voice-bearing files (it keeps the substance; see "Voice bleed — watch, don't
-gate" under "Input vs output"). Its rules already:
+The engine is the `caveman-compress` Python scripts
+(`detect → compress via Claude → validate → retry`) plus the `caveman` style
+rules. **These are vendored (copied) into the harness as a bundled internal
+feature** — the `ask-done` pattern — not called from the global
+`~/.agents/skills/` install. The harness owns the code; there is **no external
+skill dependency** at runtime.
+
+Consequence (deferred cleanup): once this feature ships with the engine
+vendored, the standalone global skills `caveman`, `caveman-compress`, and
+`caveman-commit` can be removed from `~/.agents/skills/` (symlink + target).
+`caveman-review` stays — it is the user's actively-used review tool, unrelated
+to this engine. See "Skill cleanup (post-implementation)".
+
+The engine is used for **input compression only** — it rewrites *files we send
+into context*, never the main agent's response. Its exact-preservation rules
+make it safe even on voice-bearing files (it keeps the substance; see "Voice
+bleed — watch, don't gate" under "Input vs output"). Its rules already:
 
 - preserve code blocks, inline code, URLs, file paths, commands, env vars,
   dates, version numbers, and proper nouns **exactly**;
@@ -206,7 +217,11 @@ Two distinct tools — kept separate because they measure different things:
 
 ## Components (isolated units)
 
-1. **Compressor** — wraps the `caveman-compress` engine; prose-in →
+0. **Vendored engine** — the `caveman-compress` scripts + `caveman` style rules
+   copied into the harness (the `ask-done` bundled-feature pattern). No runtime
+   dependency on `~/.agents/skills/`. This is the foundation the Compressor
+   wraps.
+1. **Compressor** — wraps the vendored engine; prose-in →
    validated-compressed-out. One clear job; testable against fixture files.
 2. **Sibling I/O** — header read/write, sha256 of source, freshness verdict
    (`fresh | stale | missing`). No LLM, no network. Pure + testable.
@@ -221,7 +236,7 @@ Two distinct tools — kept separate because they measure different things:
 
 ```
 Authoring / cron:
-  source FOO.md --[dn compress]--> compressor (caveman-compress engine)
+  source FOO.md --[dn compress]--> compressor (vendored caveman engine)
                                   --> validate --> FOO.compressed.md (+ header: sha256, date)
 
 Memory write (destructive):
@@ -279,10 +294,30 @@ Per turn (read-only, no LLM) — INPUT side only, never touches response style:
   **sub-agent caveman returns** (prompt-level — distinct runtime mechanism; can
   ship independently of the shadow-file work).
 
+## Skill cleanup (post-implementation)
+
+Once the engine is vendored into the harness and Phase 1 has shipped, the
+standalone global caveman skills become redundant and are removed:
+
+- `~/.agents/skills/caveman` — vendored into the harness. **Remove** (symlink +
+  target).
+- `~/.agents/skills/caveman-compress` — vendored into the harness. **Remove**
+  (symlink + target).
+- `~/.agents/skills/caveman-commit` — not used by this feature (≈2 historical
+  uses). **Remove** (symlink + target).
+- `~/.agents/skills/caveman-review` — **KEEP.** Actively used (~36 runs); the
+  user's review tool; unrelated to the compression engine.
+
+Ordering is a hard requirement: **vendor first, verify the harness feature works
+without the global skills, then remove.** Removing before vendoring would break
+the engine.
+
 ## Open questions
 
 None at design time. All forks resolved during brainstorming:
-engine (reuse caveman-compress, input-only), home (bundled in harness),
+engine (vendor caveman-compress + caveman rules into the harness, input-only;
+remove standalone skills post-ship, keep caveman-review), home (bundled in
+harness),
 freshness (content hash), memory writes (destructive-at-write, accepted),
 toggle (YOLO-style chip, default ON), comparison tool (Phase 2/3, excludes
 memory). **Core principle: compress INPUT everywhere; never compress the main
