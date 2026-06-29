@@ -32,3 +32,19 @@ def test_url_trailing_period_not_part_of_url():
     original = "See https://example.com. Done."
     compressed = "see https://example.com done"
     assert validate(original, compressed).is_valid
+
+
+def test_url_matched_whole_including_tld_and_path():
+    # the validator must treat the FULL url as one token, not truncate at the first dot
+    original = "Go to https://example.com/a/b now"
+    compressed = "go https://example.com/a/b"
+    assert validate(original, compressed).is_valid
+    # and a corruption AFTER the first dot must be caught:
+    corrupted = "go https://example.org/a/b"
+    assert not validate(original, corrupted).is_valid
+
+
+def test_url_with_query_string_preserved():
+    original = "API https://api.example.com?q=1&x=2 here"
+    compressed = "api https://api.example.com?q=1&x=2"
+    assert validate(original, compressed).is_valid

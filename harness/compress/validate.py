@@ -2,9 +2,15 @@ import re
 from collections import Counter
 from dataclasses import dataclass, field
 
-_URL_RE = re.compile(r"https?://[^\s)\].,;:!?\"']+")
+_URL_RE = re.compile(r"https?://[^\s)\]]+")
+_TRAILING_PUNCT = ".,;:!?\"')]"
 _FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
 _HEADING_RE = re.compile(r"^#{1,6} .+$", re.MULTILINE)
+
+
+def _find_urls(text: str) -> list[str]:
+    """Extract URLs and strip trailing sentence punctuation from each."""
+    return [u.rstrip(_TRAILING_PUNCT) for u in _URL_RE.findall(text)]
 
 
 @dataclass
@@ -26,7 +32,7 @@ def _missing(items_a, items_b, label):
 def validate(original: str, compressed: str) -> ValidationResult:
     """Validate that URLs, fenced code blocks, and headings are exactly preserved."""
     errors: list[str] = []
-    errors += _missing(_URL_RE.findall(original), _URL_RE.findall(compressed), "URL")
+    errors += _missing(_find_urls(original), _find_urls(compressed), "URL")
     errors += _missing(_FENCE_RE.findall(original), _FENCE_RE.findall(compressed), "code block")
     errors += _missing(_HEADING_RE.findall(original), _HEADING_RE.findall(compressed), "heading")
     return ValidationResult(is_valid=not errors, errors=errors)
