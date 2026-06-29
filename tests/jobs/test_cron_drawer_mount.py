@@ -67,6 +67,32 @@ def test_ctrl_j_toggles_cron_drawer():
     asyncio.run(go())
 
 
+def test_daemon_status_header_row_mounted():
+    """The roster's first row is the daemon-status header: non-selectable
+    (disabled, no .data so action guards no-op) and color-rendered. With the
+    isolated empty tmp store the daemon never ran → 'not running' (red)."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            dash = app.query_one("#cron-dashboard", CronDashboard)
+            dash.set_rows([])                 # no jobs → header only
+            await pilot.pause()
+
+            header = dash.children[0]
+            assert header.disabled is True, "header must be non-selectable"
+            assert getattr(header, "data", None) is None, "header carries no job id"
+
+            static = header.children[0]
+            content = static.render()             # Rich Content from [color]…[/] markup
+            assert "not running" in content.plain and content.plain.startswith("✗")
+            # color travels with the text as a span (red = the 'stopped' status)
+            assert any("red" in str(span.style) for span in content.spans), \
+                "header text must carry the status color as a markup span"
+
+    asyncio.run(go())
+
+
 def test_new_job_seeds_create_prompt_and_closes_drawer():
     """Pressing 'n' (NewJobRequested) seeds the create-job skill prompt to the
     agent (not a modal / direct write) and closes the drawer."""

@@ -24,8 +24,18 @@ from textual.message import Message
 from textual.widgets import ListItem, ListView, Static
 
 from harness.jobs import model as m, ops
+from harness.jobs import heartbeat as _hb
+from harness.jobs import daemon as _daemon
 
 logger = logging.getLogger(__name__)
+
+_STATUS_COLOR = {"running": "green", "failing": "yellow", "stalled": "yellow", "stopped": "red"}
+
+
+def daemon_header(hb_age: float | None, ok_age: float | None, *, interval: float) -> tuple[str, str]:
+    """Pure: (header text, color name) for the current daemon liveness."""
+    status = _hb.daemon_status(hb_age, ok_age, interval=interval)
+    return _hb.status_line(status, hb_age), _STATUS_COLOR[status]
 
 
 # ── Pure render helpers (unit-tested) ─────────────────────────────────────────
@@ -127,9 +137,20 @@ class CronDashboard(ListView):
         self.border_title = "CRON JOBS"
 
     def set_rows(self, jobs: list[m.Job]) -> None:
-        """Re-render the list with a new job snapshot."""
+        """Re-render the list with a new job snapshot, daemon-status header first."""
         self._jobs = list(jobs)
         self.clear()
+        # Daemon-liveness header: a non-selectable row above the roster. Read on
+        # open (set_rows runs every time the drawer opens); no polling/timer.
+        text, color = daemon_header(
+            _hb.heartbeat_age(), _hb.success_age(), interval=_daemon.DEFAULT_INTERVAL
+        )
+        # Color travels with the text via Rich markup (testable, no CSS-per-status
+        # needed). Static carries no .data, so action guards treat it as no focus.
+        header = ListItem(Static(f"[{color}]{text}[/]", markup=True))
+        header.disabled = True           # non-selectable; ListView skips disabled on highlight
+        header.add_class("cron-daemon-status")
+        self.append(header)
         for row_text, job in zip(render_rows(jobs), jobs):
             item = ListItem(Static(row_text, markup=False))
             item.data = job.id           # carry job id (mirrors AgentRail pattern)

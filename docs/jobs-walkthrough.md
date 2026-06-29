@@ -114,6 +114,11 @@ Leave `harness-cron` running (in a terminal, a `launchd`/`systemd` unit, or a
 works. If you started `done` from a Claude Code session, you can launch the
 daemon here with `! harness-cron`.
 
+**How to tell it's working:** reopen the dashboard (`Ctrl+J`). The header line
+above the roster reads `✓ daemon running — jobs will fire` when the daemon is up,
+and `✗ daemon not running — scheduled jobs won't fire` when it isn't — so you
+never have to guess whether your jobs are armed.
+
 ## Recap
 
 | Action | How |
