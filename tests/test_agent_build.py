@@ -23,7 +23,13 @@ def test_step_and_walltime_override_applied(tmp_path):
     assert runner._agent_cfg["step_limit"] == 15
     assert runner._agent_cfg["wall_time_limit_seconds"] == 30
     # Original cfg dict not mutated (builder copies).
-    # (re-call with a fresh cfg and check independence)
+    orig = _agent_cfg()
+    build_persona_agent(
+        "default", model_name=None, agent_cfg=orig,
+        memory_root=tmp_path, step_limit=15, wall_time_limit=30,
+    )
+    assert orig["step_limit"] == 0          # builder must NOT mutate caller's dict
+    assert "wall_time_limit_seconds" not in orig or orig["wall_time_limit_seconds"] == 0
 
 
 def test_worker_registry_excludes_subagent(tmp_path):
