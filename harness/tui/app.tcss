@@ -174,3 +174,13 @@ PermissionModal #select-list { height: 2; margin-top: 1; }
 #quick-keys {
     height: auto; padding: 1 1; background: $background; border-top: solid $surface;
 }
+
+/* ---- cron jobs drawer (mirrors #agent-drawer) ---- */
+#cron-drawer {
+    dock: right; width: 50; border-left: solid $surface; background: $background;
+    layout: vertical;
+}
+#cron-dashboard { height: 1fr; background: $background; padding: 1 1; }
+#cron-detail {
+    height: 12; background: $background; border-top: solid $surface; padding: 1 1;
+}
