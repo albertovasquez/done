@@ -460,7 +460,7 @@ def test_seeded_default_workspace_injects_done_persona(monkeypatch, tmp_path):
     _prompt(agent, sid, "hi")
     assert captured["messages"][-1] == {"role": "user", "content": "hi"}
     assert captured["messages"][0]["role"] == "system"  # base_block present
-    assert "You're Done." in captured["messages"][0]["content"]  # persona injected
+    assert "You're Bob." in captured["messages"][0]["content"]  # persona injected
     assert "persona_load" in _meta_keys_in_order(agent)
 
 

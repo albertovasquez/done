@@ -232,6 +232,37 @@ restart and no `--persona` relaunch (the way mature agent harnesses do it). Pres
 **n** to **create** a new persona: name it, and the rail slugifies the name into a
 safe workspace id, seeds the inert templates, and switches to it.
 
+### Deleting a persona
+
+There is no delete command yet — removal is manual. A persona's state lives in up
+to three places, all under `~/.config/harness/`:
+
+1. **Its workspace directory** — `agents/<id>/`. This holds everything the persona
+   *is*: `SOUL.md`, `IDENTITY.md`, `USER.md`, `persona.toml`, **and its memory**
+   (`MEMORY.md` + the `memory/` folder live inside the workspace). Deleting the
+   directory removes the persona from the rail and erases its memory:
+
+   ```bash
+   rm -rf ~/.config/harness/agents/<id>
+   ```
+
+2. **Its model config** — the `[agents.<id>]` table in `done.conf` (backend, model,
+   yolo-pin). Deleting the directory leaves this behind. It's harmless — the rail
+   lists *directories*, not config entries, so an orphaned table is never read —
+   but to remove it cleanly, delete the `[agents.<id>]` section from
+   `~/.config/harness/done.conf`. (A persona you never set a custom model for has
+   no entry here.)
+
+3. **Any scheduled jobs** — entries in `cron/jobs.json` with `"agent_id": "<id>"`.
+   If you leave these, the next run auto-disables the job (it can no longer resolve
+   the persona) rather than crashing. To remove them up front, delete those entries
+   from `~/.config/harness/cron/jobs.json` (and optionally their logs under
+   `cron/runs/`).
+
+Sessions and debug traces are keyed by run, not by persona, so there's nothing
+else to clean up. You can't delete the built-in `default` persona this way — it's
+re-seeded on the next launch.
+
 ## Memory
 
 Each persona has a **persistent memory** in its workspace — plain Markdown files,
