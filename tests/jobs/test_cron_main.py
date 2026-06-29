@@ -4,6 +4,16 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _cron_dir(tmp_path, monkeypatch):
+    # Isolate the cron dir so lock.acquire() in main() never writes the real
+    # ~/.config/harness/cron/daemon.lock during tests.
+    monkeypatch.setattr("harness.paths.config_dir", lambda: tmp_path)
+    return tmp_path
+
 
 def test_once_calls_tick_and_returns_0(monkeypatch):
     """--once: tick(now) is called exactly once and main returns 0."""
@@ -115,3 +125,49 @@ def test_load_dotenv_called_on_run_forever(monkeypatch):
 
     cron_main.main([])
     assert len(load_dotenv_calls) >= 1, "load_dotenv must be called during main() startup"
+
+
+# ── single-instance lock ──────────────────────────────────────────────────────
+
+def test_main_exits_when_lock_held_by_live_owner(monkeypatch):
+    import os
+    from harness.jobs import cron_main, lock
+    # A genuinely-alive owner holds the lock: use THIS test process's pid so the
+    # real _pid_alive (os.kill(pid,0)) returns True without monkeypatching it.
+    # (acquire binds its pid_alive default at def-time, so patching the module
+    # attribute would not take effect — pre-seeding a live pid is the robust path.)
+    assert lock.acquire(pid=os.getpid()) is True
+    monkeypatch.setattr("harness.jobs.cron_main.load_dotenv", lambda *a, **kw: None)
+
+    ran = []
+    monkeypatch.setattr("harness.jobs.cron_main.run_forever", lambda **kw: ran.append("forever"))
+    monkeypatch.setattr(cron_main.asyncio, "run", lambda c: ran.append("asyncio"))
+
+    rc = cron_main.main([])
+    assert rc == 0
+    assert ran == []                      # loop NOT entered — single-instance working
+
+
+def test_main_runs_and_releases_lock_when_free(monkeypatch):
+    from harness.jobs import cron_main, lock
+    monkeypatch.setattr("harness.jobs.cron_main.load_dotenv", lambda *a, **kw: None)
+
+    calls = {}
+    async def fake_forever(**kw):
+        calls["ran"] = True
+    monkeypatch.setattr("harness.jobs.cron_main.run_forever", fake_forever)
+
+    rc = cron_main.main([])
+    assert rc == 0
+    assert calls.get("ran") is True
+    assert not lock.lock_file().exists()  # released in finally
+
+
+def test_once_does_not_acquire_lock(monkeypatch):
+    from harness.jobs import cron_main, lock
+    monkeypatch.setattr("harness.jobs.cron_main.load_dotenv", lambda *a, **kw: None)
+    monkeypatch.setattr("harness.jobs.cron_main.tick", lambda **kw: [])
+
+    rc = cron_main.main(["--once"])
+    assert rc == 0
+    assert not lock.lock_file().exists()  # --once never locks

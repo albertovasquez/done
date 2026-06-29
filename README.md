@@ -271,6 +271,10 @@ timeout, min-cadence, max-failures, and permissions — before writing it throug
 the single `harness/create_job` door. Schedules are 5-field cron (`0 2 * * *`), a
 fixed interval, or a one-shot timestamp.
 
+`done` **auto-starts the daemon on launch** (single-instance — several `done`
+windows still share one; it keeps running in the background after you close
+`done`). You only run it by hand for headless use or a custom cadence:
+
 ```sh
 harness-cron            # run the daemon (ticks every 30 s)
 harness-cron --once     # fire all due jobs once and exit

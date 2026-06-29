@@ -120,6 +120,13 @@ full LLM turn) or a **reminder** (a text-only notification — no inference).
 
 ## Running the daemon
 
+> **`done` starts the daemon for you.** When you launch `done`, it ensures one
+> `harness-cron` is running and **leaves it running in the background after you
+> close `done`** — so scheduled jobs keep firing. It's single-instance: opening
+> several `done` windows never starts more than one daemon. You only run
+> `harness-cron` by hand for **headless** use (no `done` TUI) or to control the
+> cadence with `--interval`.
+
 Jobs only fire while the `harness-cron` daemon is running. It is a separate
 process from the TUI.
 
@@ -164,9 +171,10 @@ skill and dashboard so the gates and locking are respected.
   schedules only; an over-frequent `Cron` expression isn't rejected yet.
 - **Job-list / management CLI.** Viewing and managing jobs is TUI-only in this
   phase.
-- **TUI-managed daemon.** The panel now *reports* whether the `harness-cron`
-  daemon is running (the status header above), but the TUI still doesn't *start
-  or stop* it — you launch the daemon yourself, and scheduled jobs only fire while
-  it's running ([#146](https://github.com/albertovasquez/done/issues/146)).
+- **Stopping the daemon from the TUI.** `done` now both *reports* (status header)
+  and *auto-starts* the daemon, but there's no in-TUI way to *stop* it — kill the
+  `harness-cron` process yourself. There's also no off-switch for auto-start yet
+  (relevant only for headless/server use)
+  ([#146](https://github.com/albertovasquez/done/issues/146)).
 - **Trace events.** `cron.fire` / `cron.tick` / `cron.error` are reserved in the
   debug-trace model but not yet emitted.
