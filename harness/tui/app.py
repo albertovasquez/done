@@ -365,7 +365,11 @@ class HarnessTui(App):
         """Decide how to ensure cron runs. Returns the branch taken (testable).
 
         1. OS service already installed → do nothing; the OS owns the lifecycle.
-        2. First run on a supported platform → show the opt-in prompt (once).
+        2. First run on a supported platform → show the opt-in prompt (once) AND
+           start a best-effort fallback daemon for this session. The modal governs
+           the *durable* OS service; whatever the user clicks, jobs created this
+           session still fire (the PID lock keeps a later OS-service daemon
+           single-instance, so the temporary spawn is safe). (#165)
         3. Otherwise (declined before, or unsupported platform) → best-effort
            fallback spawn so jobs still fire while this window is open.
         """
@@ -378,6 +382,7 @@ class HarnessTui(App):
             if not prompt_state.has_been_asked():
                 prompt_state.mark_asked()
                 show_prompt()
+                ensure_daemon_running()      # cover THIS session regardless of the modal choice (#165)
                 return "prompted"
         ensure_daemon_running()
         return "fallback-spawn"

@@ -25,8 +25,10 @@ def run(argv: list[str]) -> int:
     sub.add_parser("status", help="Show whether the OS autostart service is installed.")
     try:
         args = parser.parse_args(argv)
-    except SystemExit:
-        return 2
+    except SystemExit as e:
+        # argparse exits 0 for --help and 2 for a usage error. Propagate its code
+        # rather than flattening both to 2, so `dn cron --help` exits 0 (#164).
+        return e.code if isinstance(e.code, int) else 2
 
     if args.action == "install":
         res = service.install()
