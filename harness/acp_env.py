@@ -23,14 +23,14 @@ _POLL_INTERVAL_S = 0.1
 class AcpEnvironment(LocalEnvironment):
     def __init__(self, *,
                  on_command: Callable[[str, str, dict | None], None],
-                 request_permission: Callable[[str], bool] | None = None,
+                 check_permission=None,                # Callable[[PermissionRequest], bool] | None
                  cancel_flag: threading.Event | None = None,
                  client_terminal: Callable[[str], dict] | None = None,
                  on_plan: Callable[[list[tuple[str, str]]], None] | None = None,
                  **kwargs: Any):
         super().__init__(**kwargs)
         self._on_command = on_command
-        self._request_permission = request_permission
+        self._check_permission = check_permission
         self._cancel_flag = cancel_flag
         self._client_terminal = client_terminal
         self._on_plan = on_plan
@@ -48,9 +48,12 @@ class AcpEnvironment(LocalEnvironment):
                 self._on_plan(plan)
             return {"output": "(plan updated)", "returncode": 0, "exception_info": ""}
         self._on_command("start", command, None)
-        if self._request_permission is not None and not self._request_permission(command):
-            self._on_command("rejected", command, None)
-            return {"output": "", "returncode": -1, "exception_info": "permission denied"}
+        if self._check_permission is not None:
+            from harness.permcheck import PermissionRequest
+            req = PermissionRequest(kind="bash", command=command, is_exec=True)
+            if not self._check_permission(req):
+                self._on_command("rejected", command, None)
+                return {"output": "", "returncode": -1, "exception_info": "permission denied"}
         # The submit sentinel makes _check_finished raise Submitted. That raise sits
         # BETWEEN start and done, so without the finally below the submit command's
         # tool-call never closes — the TUI "Running shell…" spinner stays open
