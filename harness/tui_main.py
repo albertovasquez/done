@@ -81,7 +81,14 @@ def _relaunch_command(args, cwd) -> list[str]:
     return [sys.executable, "-m", "harness.tui_main", *flags]
 
 
-def main(argv=None) -> None:
+def main(argv=None) -> int | None:
+    raw = sys.argv[1:] if argv is None else argv
+    # `dn cron …` is a service-management subcommand, not a TUI launch. Intercept
+    # before argparse so the TUI's flags stay unchanged. Bare `dn` and `dn --cwd …`
+    # are NOT intercepted and proceed to the TUI as before.
+    if raw and raw[0] == "cron":
+        from harness.jobs import cli
+        return cli.run(raw[1:])
     parser = argparse.ArgumentParser(description="Harness Textual ACP client")
     parser.add_argument("--model", choices=["mock", "vibeproxy"], default=None)
     parser.add_argument("--cwd", default=None,
