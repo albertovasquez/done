@@ -25,17 +25,33 @@ def test_create_job_skill_has_required_content():
 
     body_lower = body.lower()
 
+    # The gate CONCEPTS are still documented (their values get defaulted, not
+    # interrogated), plus the create_job tool is the create path.
     required_substrings = [
         "timeout",
         "min-cadence",
         "consecutive",
-        "fail closed",
-        "create_job",          # the agent tool (replaces the old harness/create_job ext-method ref)
+        "create_job",          # the agent tool is the only create path
+        "default",             # guess-first: apply safe defaults
+        "when to ask",         # the focused-question section (schedule / risky permission)
     ]
 
     for substring in required_substrings:
         assert substring in body_lower, (
             f"Required substring '{substring}' not found in create-job skill body"
+        )
+
+    # The OLD rigid behavior must be GONE — "never create unless every gate is
+    # answered" manufactured the gate loop (re-asking all four instead of
+    # creating). Match the BEHAVIOR phrase, not a bare "fail closed" (which can
+    # legitimately appear when describing the tool's validation) to avoid a
+    # spurious failure.
+    for banned in ("never create a job unless every gate",
+                   "only when all four gates are answered",
+                   "if any gate is unanswered"):
+        assert banned not in body_lower, (
+            f"create-job skill must NOT reinstate rigid gate language "
+            f"({banned!r}); use guess-first defaults instead"
         )
 
 

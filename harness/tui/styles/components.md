@@ -373,9 +373,10 @@ as a `ListView` panel rather than a single row.
 - **Placement:** a right **drawer** toggled by `ctrl+j`, mirroring the `AgentRail`
   drawer chrome (rounded `$surface` border, accent `border-title` "CRON JOBS",
   `display:false` until toggled). Sits above `CronDetail` as a balanced two-box panel.
-- **Actions:** run-now / enable-toggle / remove (via `ops`); `n` posts
-  `NewJobRequested`, which the app turns into a prompt that runs the `create-job`
-  gate skill. Errors surface as `JobActionFailed`.
+- **Actions:** run-now / enable-toggle / remove (via `ops`). Errors surface as
+  `JobActionFailed`. Job **creation is agent-native** — there is no dashboard
+  create key; ask the agent in chat ("create a cron job that…") and the router
+  loads the `create-job` skill.
 - **When to use:** the dedicated crons panel. For an inline "happens later" hint
   next to a single task/agent, use `ScheduleBadge` (still designed-only, below).
 

@@ -97,9 +97,28 @@ focused question. There is no longer a fail-closed gate for it to loop on.
   (a defaulted permission is metadata with no runtime effect yet). The
   "ask before risky grant" trigger is the correct guard for when enforcement
   lands.
-- A friendly intake modal (collect "what" + "how often") is a possible *later*
-  enhancement on top of this, but is explicitly **out of scope** here — the skill
-  rigidity is the loop, and the text fix unblocks it without new UI.
+- A friendly intake modal was considered and **rejected**. Job creation is
+  agent-native: "create a cron job that…" in chat already routes to this skill
+  (it's global + model-invocable), and the skill now creates with defaults. No
+  new UI is needed; the modal would add surface for no benefit.
+
+## Also in scope: remove the `n` "new job" shortcut
+
+The cron dashboard's `n` key was only a shortcut that seeded the same chat prompt
+("I want to create a scheduled cron job.") the agent already handles — it was
+never a modal. Per the agent-native direction, **remove it entirely** so creation
+is purely conversational:
+
+- `harness/tui/widgets/cron_dashboard.py`: drop the `Binding("n", ...)`,
+  `action_new_job`, the `NewJobRequested` message class, and the docstring lines
+  referencing them.
+- `harness/tui/app.py`: drop the `NewJobRequested` import, `on_new_job_requested`,
+  and `_seed_create_job`.
+- The dashboard keeps `r` (run now), `t` (toggle), `Backspace` (remove). Creation
+  is "ask the agent in chat."
+- Tests: remove `test_new_job_seeds_create_prompt_and_closes_drawer` and
+  `test_new_job_as_first_action_on_landing_does_not_crash` (both exercise the
+  removed path) and the `NewJobRequested` import.
 
 ## Testing
 
@@ -115,6 +134,8 @@ focused question. There is no longer a fail-closed gate for it to loop on.
 
 ## Files
 
-- **Modify:** `harness/skills/create-job/SKILL.md` (the rewrite).
+- **Modify:** `harness/skills/create-job/SKILL.md` (the guess-first rewrite).
 - **Modify:** `tests/jobs/test_create_job_skill.py` (content assertions).
-- No other files.
+- **Modify:** `harness/tui/widgets/cron_dashboard.py` (remove `n`/`NewJobRequested`/`action_new_job`).
+- **Modify:** `harness/tui/app.py` (remove the import, `on_new_job_requested`, `_seed_create_job`).
+- **Modify:** `tests/jobs/test_cron_drawer_mount.py` (remove the two `n`-path tests + import).

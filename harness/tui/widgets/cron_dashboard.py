@@ -6,8 +6,7 @@ Actions:
   action_run_now(job_id)       — trigger an immediate run via ops.run
   action_toggle_enabled(job_id) — flip enabled flag via ops.update
   action_remove(job_id)        — delete job via ops.remove
-  action_new_job()             — post NewJobRequested so the app can invoke
-                                 the create-job skill
+(creation is agent-native: ask the agent in chat, no dashboard key)
 
 Pattern: mirrors AgentRail (agent_rail.py:61) — subclasses ListView, holds rows
 in a tuple, sets rows via set_rows(), carries row data on ListItem.data, posts
@@ -98,10 +97,6 @@ def render_rows(jobs: list[m.Job], now: float | None = None) -> list[str]:
 
 # ── Messages ──────────────────────────────────────────────────────────────────
 
-class NewJobRequested(Message):
-    """Posted when the user presses 'n' to create a new cron job."""
-
-
 class JobActionFailed(Message):
     """Posted when a job action raises (job gone, executor error, etc.)."""
     def __init__(self, job_id: str, action: str, error: str) -> None:
@@ -118,12 +113,12 @@ class CronDashboard(ListView):
     the job id on .data. Action bindings let the user run/toggle/remove jobs.
 
     Mirrors AgentRail (agent_rail.py:61): ListView subclass, ListItem per row,
-    item.data = job id. App-level wiring: handle NewJobRequested to invoke the
-    create-job skill; handle JobActionFailed to surface errors.
+    item.data = job id. App-level wiring: handle JobActionFailed to surface
+    errors. Job CREATION is agent-native — ask the agent in chat ("create a cron
+    job that…"); the router loads the create-job skill. No dashboard create key.
     """
 
     BINDINGS = [
-        Binding("n", "new_job", "New job"),
         Binding("r", "run_now", "Run now"),
         Binding("t", "toggle_enabled", "Toggle enabled"),
         Binding("backspace", "remove_job", "Remove job"),
@@ -164,9 +159,6 @@ class CronDashboard(ListView):
         return getattr(highlighted, "data", None)
 
     # ── actions ──────────────────────────────────────────────────────────────
-
-    def action_new_job(self) -> None:
-        self.post_message(NewJobRequested())
 
     def action_run_now(self) -> None:
         job_id = self._focused_job_id()
