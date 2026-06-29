@@ -119,8 +119,15 @@ does not sweep them into the gate.
 
 ## The gate decision
 
-`request_permission` (in `acp_agent.py`) changes signature from
-`(command: str) -> bool` to `(req: PermissionRequest) -> bool`:
+There is exactly ONE decision function, `check_permission(req: PermissionRequest)
+-> bool`, owned by `acp_agent.py` (it replaces the old `request_permission`
+closure). Both callers wrap their action into a `PermissionRequest` and call it:
+`AcpEnvironment.execute` wraps bash (`kind="bash"`); `tracing_agent` wraps file
+tools (`kind="file"`). `AcpEnvironment` is constructed with `check_permission=`
+instead of `request_permission=`; the ~3 env tests migrate from
+`lambda cmd: …` to `lambda req: …`. One door, no second shape.
+
+The decision logic:
 
 ```
 if yolo:                              return True      # _auto_allow, unchanged
@@ -133,9 +140,11 @@ if no elicitation channel:            return False     # #107 fail-CLOSED (was T
 else:                                 prompt the user  # AllowedOutcome → bool
 ```
 
-- `acp_env.execute` builds `PermissionRequest(kind="bash", …)` and calls the same
-  `check_permission`, so bash semantics are byte-identical: still prompts with
-  `$ <command>` (`acp_agent.py:624`), still YOLO-overridable.
+- `acp_env.execute` builds `PermissionRequest(kind="bash", command=command,
+  is_exec=True)` and calls the same `check_permission`, so bash semantics are
+  byte-identical: still prompts with `$ <command>` (`acp_agent.py:624`), still
+  YOLO-overridable. The `on_command("rejected", …)` branch (`acp_env.py:52`) is
+  unchanged.
 - The fail-closed flip is scoped to *risky* ops: an in-root read with no channel
   still returns True, so a no-elicitation client is not bricked.
 
@@ -163,11 +172,12 @@ else:                                 prompt the user  # AllowedOutcome → bool
 | `permcheck.py` | request shape, `classify_path`, `parent_escapes` | stdlib only |
 | `tracing_agent.execute_actions` | classify action, gate, dispatch | permcheck, env |
 | `acp_env.execute` | build bash request, call `check_permission` | permcheck |
-| `acp_agent.request_permission` | the decision (yolo / roots / fail-closed / prompt) | permcheck, client caps |
-| `read`/`write`/`edit` | receive resolved path; write re-checks parent | permcheck |
+| `acp_agent.check_permission` | the one decision (yolo / roots / fail-closed / prompt) | permcheck, client caps |
+| `read`/`write`/`edit` | receive resolved path; write/edit re-check parent | permcheck |
 
-`check_permission` is the env-side adapter the chokepoint calls; it forwards to
-the `request_permission` callback the env was constructed with.
+`check_permission(req: PermissionRequest) -> bool` is the single decision
+function (in `acp_agent`). `AcpEnvironment` is constructed with it and both it and
+`tracing_agent.execute_actions` call it with a wrapped request.
 
 ## Error handling
 
