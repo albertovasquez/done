@@ -131,6 +131,7 @@ class HarnessTui(App):
         self._stream_closed = True            # True => the next message delta starts a fresh widget
         self._boundary_after = False          # True => an in-turn boundary (tool/thought/stream_reset) closed the block; next prose opens a FRESH widget (vs. a late delta of the prior answer, which extends in place)
         self._tokens = 0                      # last-known token count from usage updates
+        self._compacted: dict | None = None   # context.compacted event for the current turn, if any
         self._persona_seen = False            # True after the first real PersonaResolved lands
         self._turn_active = False             # True while a prompt turn is in flight (used by Esc-rail guard)
         self._cancel_posted = False           # True after the first action_cancel this turn (de-dupe double BINDING fire)
@@ -627,6 +628,7 @@ class HarnessTui(App):
         # The input stays ENABLED during a turn so the user can type / queue the
         # next message (Enter while _turn_active enqueues — see on_prompt_area_submitted).
         self._turn_start = time.monotonic()
+        self._compacted = None
         self._turn_active = True
         self._cancel_posted = False           # reset per-turn so ESC is fresh again
         self._active_input().placeholder = "Type to queue your next message…"
@@ -1028,12 +1030,20 @@ class HarnessTui(App):
     def _meta_markup(self, elapsed: float, *, copied: bool = False) -> str:
         """The '▣ <persona> [bypass] · model · Ns · (copy)' run caption markup.
         The leading label is the active persona name (was 'Build'); the trailing
-        label is the copy affordance ('(copied)' once copied)."""
+        label is the copy affordance ('(copied)' once copied).
+        When context compaction fired this turn, appends a dim '↯ context compacted N→M msgs'."""
         model_label = _model_label(self.model, self._worker_model_id)
         yolo = f" {_c('error', 'bypass on')}" if self._yolo else ""   # records mode at turn time
         label = self._COPIED_LABEL if copied else self._COPY_LABEL
+        compact_note = ""
+        compacted = getattr(self, "_compacted", None)
+        if compacted:
+            bm = compacted.get("before_msgs", "?")
+            am = compacted.get("after_msgs", "?")
+            compact_note = _c("muted", f" ↯ context compacted {bm}→{am} msgs")
         return (f"{_c('accent', '▣ ' + self._mode_label())}{yolo} "
-                f"{_c('muted', f'· {model_label} · {elapsed:.1f}s · ')}{_c('muted', label)}")
+                f"{_c('muted', f'· {model_label} · {elapsed:.1f}s · ')}{_c('muted', label)}"
+                f"{compact_note}")
 
     def _apply_pending_persona(self) -> bool:
         """If a persona switch was requested mid-turn, apply it now (turn-end),
@@ -1202,6 +1212,8 @@ class HarnessTui(App):
                               kind=type(msg.update).__name__)
         # token usage, if the agent surfaced any under _meta
         self._maybe_update_tokens(getattr(msg.update, "field_meta", None))
+        # context compaction note for this turn's footer
+        self._maybe_update_compacted(getattr(msg.update, "field_meta", None))
         # an explicit per-step boundary signal: Task 4 emits an empty message_chunk
         # carrying _meta stream_reset (nested under "harness" by with_meta()). Close
         # the current block as an IN-TURN boundary so the next prose opens a fresh
@@ -1279,6 +1291,15 @@ class HarnessTui(App):
             self._tokens = usage["total"]
             self._apply(TokensUpdated(self._tokens))
             self._refresh_status()
+
+    def _maybe_update_compacted(self, field_meta) -> None:
+        """Record a context.compacted event for the current turn (shown in footer)."""
+        if not isinstance(field_meta, dict):
+            return
+        ev = (field_meta.get("harness") or {}).get("context_compacted") if isinstance(
+            field_meta.get("harness"), dict) else None
+        if isinstance(ev, dict):
+            self._compacted = ev
 
     # ---- permissions / cancel / teardown (unchanged plumbing) ----
 

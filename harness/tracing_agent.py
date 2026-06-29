@@ -29,6 +29,7 @@ from minisweagent.agents.default import DefaultAgent
 from minisweagent.exceptions import (FormatError, InterruptAgentFlow,
                                       LimitsExceeded, Submitted, TimeExceeded)
 
+from harness import compaction as _compaction
 from harness.events import Emitter
 
 
@@ -37,6 +38,13 @@ class TracingAgent(DefaultAgent):
                  persona_block: str = "", memory_block: str = "",
                  base_block: str = "", registry=None,
                  cancel_flag: threading.Event | None = None, **kwargs):
+        # C1: AgentConfig (Pydantic) silently drops unknown keys via extra="ignore",
+        # so a "compaction" key passed in kwargs would be swallowed and lost.
+        # Pop it BEFORE super().__init__ so we own it.
+        self._compaction_cfg = kwargs.pop("compaction", None)
+        # C2: adapter is NOT built here — building it calls _render_template which
+        # renders {{task}} (mini.yaml:5), only set in run(). Built in Task 5 instead.
+        self._compaction: _compaction.Compaction | None = None
         super().__init__(model, env, **kwargs)
         # ESC sets this flag (from the async loop thread); the step loop checks it
         # between steps to end the turn promptly. None => never cancelled (CLI/mock).
@@ -85,6 +93,24 @@ class TracingAgent(DefaultAgent):
             # ONLY divergence from upstream: `prior` injected between the fresh
             # system message and the fresh instance message.
             self.extra_template_vars |= {"task": task, **kwargs}
+            # C2: rebuild the compaction adapter every turn, AFTER {{task}} is set,
+            # so _render_template (StrictUndefined) does not raise on the instance
+            # template used to estimate fixed_overhead_tokens.  Rebuilt per-turn so
+            # persona/skill/memory changes (and per-session model swaps) are reflected
+            # in the fixed_overhead_tokens estimate and model reference.
+            self._compaction = None
+            if self._compaction_cfg:
+                rendered_system = self._render_template(self.config.system_template)
+                rendered_instance = self._render_template(self.config.instance_template)
+                fixed_overhead_tokens = _compaction.estimate_tokens(
+                    rendered_system + rendered_instance
+                )
+                self._compaction = _compaction.build_compaction(
+                    self._compaction_cfg,
+                    model=self.model,
+                    fixed_overhead_tokens=fixed_overhead_tokens,
+                    add_cost=lambda c: setattr(self, "cost", self.cost + c),
+                )
             # load_skill / load_memory dedup is per-turn: a fresh set each run so
             # a long-lived ACP session can re-pull a skill/fact on a later turn
             # (and so one loaded once isn't re-injected mid-turn).
@@ -96,7 +122,20 @@ class TracingAgent(DefaultAgent):
             self.messages = []
             self.add_messages(self.model.format_message(
                 role="system", content=self._render_template(self.config.system_template)))
-            self.add_messages(*(prior or []))
+            prior = prior or []
+            if self._compaction is not None and self._compaction.enabled:
+                result = _compaction.compress(prior, **self._compaction.params())
+                prior = result.messages
+                if result.compressed:
+                    self._emitter.emit(
+                        "context.compacted",
+                        method=result.method,
+                        before_tokens=result.before_tokens,
+                        after_tokens=result.after_tokens,
+                        before_msgs=result.before_msgs,
+                        after_msgs=result.after_msgs,
+                    )
+            self.add_messages(*prior)
             self.add_messages(self.model.format_message(
                 role="user", content=self._render_template(self.config.instance_template)))
             while True:
