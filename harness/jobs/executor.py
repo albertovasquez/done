@@ -30,6 +30,28 @@ from harness.jobs.model import AgentTurn, Reminder
 logger = logging.getLogger(__name__)
 
 
+def stamp_headless_gate(env, *roots: Path) -> None:
+    """Stamp the file-tool permission gate onto a headless env, confined to `roots`.
+    Shared by the cron executor (roots = [workspace]) and the dev-CLI runner
+    (roots = [cwd, workspace_dir]) — #168.
+
+    Headless paths have no elicitation channel, so the policy is deny-by-default:
+    decide_permission(..., has_elicitation=False) → out-of-root file ops are DENIED.
+    The dispatch chokepoint (tracing_agent._dispatch_tool) and the write/edit tools
+    read `_check_permission` + `_allowed_roots` exactly as the ACP path does — same
+    machinery, no parallel policy.
+
+    SCOPE: this gates only the FILE tools (read/write/edit), which is #168's scope
+    ("file tools run ungated"). Bash is NOT routed through this gate — it runs via
+    LocalEnvironment.execute(), which has no permission hook — so bash on the cron
+    path is unchanged by this stamp (ungated, as before). Confining/sandboxing bash
+    for headless jobs is the separate grant-enforcement concern (#141)."""
+    from harness.permcheck import decide_permission
+    env._allowed_roots = [Path(r) for r in roots]
+    env._check_permission = lambda req: decide_permission(
+        req, yolo=False, has_elicitation=False) == "allow"
+
+
 class OrphanPersona(Exception):
     """job.agent_id no longer resolves to a persona dir — caller auto-disables the job."""
 
@@ -138,6 +160,10 @@ def _default_deps() -> Deps:
         # run_traced.py:158 — LocalEnvironment import.
         from minisweagent.environments.local import LocalEnvironment  # noqa: E402
         env = LocalEnvironment(cwd=str(workspace))
+        # #168: this is a HEADLESS path (no elicitation channel), so file tools must
+        # be gated + confined to the job's workspace — risky/out-of-root ops fail
+        # CLOSED. Same chokepoint machinery as the ACP path, deny-by-default policy.
+        stamp_headless_gate(env, workspace)
 
         # agent cfg re-read per run — negligible at cron cadence, keeps run_turn self-contained
         agent_cfg = _load_agent_cfg()

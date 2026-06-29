@@ -30,23 +30,17 @@ from harness.acp_env import AcpEnvironment
 from harness.acp_session import SessionStore
 from harness.router import Router, Classification
 from harness.chat_handler import ChatHandler
-from harness.permcheck import PermissionRequest
+from harness.permcheck import PermissionRequest, decide_permission
 from harness.transcript import flatten_agent_messages
 from minisweagent.exceptions import UserInterruption
 
 logger = logging.getLogger("harness.acp_agent")
 
 
-def decide_permission(req, *, yolo: bool, has_elicitation: bool) -> str:
-    """Pure policy: 'allow' (run, no prompt), 'deny' (block), or 'ask' (prompt the
-    client). yolo overrides to allow. In-root file ops (read OR write) are free.
-    Everything else is risky (bash, out-of-root, exec): ask if there is a prompt
-    channel, otherwise fail CLOSED -> deny (#107)."""
-    if yolo:
-        return "allow"
-    if req.kind == "file" and not req.outside_roots:
-        return "allow"                       # in-root read & write are free
-    return "ask" if has_elicitation else "deny"
+# decide_permission now lives in harness/permcheck.py (the import-light leaf) so the
+# headless cron-executor + dev-CLI paths can reuse it without a cycle (#168). Imported
+# above; re-exported here implicitly for any caller that did `from acp_agent import
+# decide_permission`.
 
 
 # Answer-only instance template for code_explain turns. The engine's default

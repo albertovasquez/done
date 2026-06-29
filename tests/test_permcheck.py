@@ -70,3 +70,11 @@ def test_parent_escapes_true_when_parent_outside(tmp_path):
 def test_parent_escapes_false_when_parent_inside(tmp_path):
     resolved = tmp_path / "a" / "b.txt"
     assert parent_escapes(resolved, [tmp_path]) is False
+
+
+def test_classify_path_empty_roots_is_outside_not_indexerror():
+    # #168 hardening: with no roots, a relative path must not IndexError on
+    # roots[0]; treat as outside-everything (deny path) rather than crash.
+    from harness.permcheck import classify_path
+    resolved, outside = classify_path("foo.txt", [])
+    assert outside is True

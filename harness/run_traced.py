@@ -156,6 +156,11 @@ def main(argv: list[str] | None = None) -> int:
         # load_memory tool for the resolved persona (parity with the ACP path).
         model = _build_vibeproxy_model(project_cwd=args.cwd, memory_root=workspace_dir)
     env = LocalEnvironment(cwd=args.cwd)
+    # #168: the dev CLI is also a headless path (no elicitation channel). Gate +
+    # confine file tools to the CLI cwd plus the persona workspace (memory writes
+    # land outside cwd). Deny-by-default for risky/out-of-root ops.
+    from harness.jobs.executor import stamp_headless_gate
+    stamp_headless_gate(env, args.cwd, workspace_dir)
     agent_cfg = _load_agent_config()
     agent_cfg["output_path"] = str(run_dir / "traj.json")
     emitter = Emitter(run_dir / "events.jsonl", clock=lambda: 0.0, console=True)
