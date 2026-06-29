@@ -36,8 +36,18 @@ from harness import memory as _memory  # noqa: E402
 from harness import base_prompt  # noqa: E402
 from harness.chat_handler import ChatHandler  # noqa: E402
 from harness import vibeproxy  # noqa: E402
+from harness.instance_templates import _instance_template_for  # noqa: E402
 
 DEFAULT_TASK = "Fix the failing test in examples/sample-repo so that add(2, 3) == 5."
+
+
+def _instance_template_cfg(agent_cfg: dict, task_type: str) -> dict:
+    """Return a COPY of agent_cfg with instance_template chosen for this task_type.
+    Mirrors the ACP path (acp_agent.py:716) so the dev CLI doesn't fall through to the
+    raw mini.yaml work-order on read-only ops_task requests (#177). Never mutates the
+    caller's dict — agent_cfg is built once at module scope and reused."""
+    return {**agent_cfg, "instance_template":
+            _instance_template_for(task_type, agent_cfg.get("instance_template", ""))}
 
 
 def _load_agent_config() -> dict:
@@ -113,7 +123,7 @@ def route_and_dispatch(prompt, *, router, emitter, make_chat_handler, run_agent,
     if cls.skills:
         echo(f"skills: injected {load.injected}, skipped {load.skipped}")
     try:
-        run_agent(prompt, skill_block=load.block)
+        run_agent(prompt, skill_block=load.block, task_type=cls.task_type)
     except Exception as e:  # noqa: BLE001 — record the crash in the trace, then re-raise
         emitter.emit("run.failed", error=str(e))
         raise
@@ -194,8 +204,9 @@ def main(argv: list[str] | None = None) -> int:
         skills_menu=skills.compose_menu(_menu_metas),
         agents_block=_agents_block)
 
-    def run_agent(prompt, skill_block=""):
-        runner = MiniSweAgentRunner(model, env, agent_cfg=agent_cfg)
+    def run_agent(prompt, skill_block="", task_type=""):
+        runner = MiniSweAgentRunner(model, env,
+                                    agent_cfg=_instance_template_cfg(agent_cfg, task_type))
         try:
             for event in runner.run(prompt, skill_block=skill_block,
                                     persona_block=persona_block,

@@ -53,3 +53,21 @@ def test_no_dangling_superpowers_refs_in_bodies():
     for name in IMPORTED:
         body = (_bundled() / name / "SKILL.md").read_text(encoding="utf-8")
         assert "superpowers:" not in body, f"{name} still has a superpowers: ref"
+
+
+def test_systematic_debugging_has_observe_only_offramp():
+    """The skill must NOT force a fix-workflow on read-only checks: an explicit
+    precondition gates it on a *reported* failure, and the description no longer
+    invites attachment to any 'unexpected behavior' (#177)."""
+    from pathlib import Path
+    import harness  # to locate the package root
+
+    root = Path(harness.__file__).resolve().parent
+    text = (root / "skills" / "systematic-debugging" / "SKILL.md").read_text()
+    low = text.lower()
+
+    # off-ramp precondition present in the body
+    assert "reported" in low and "observe" in low
+    assert "do not run the test suite" in low
+    # description tightened: no longer the broad "any ... unexpected behavior" hook
+    assert "unexpected behavior" not in low.split("# systematic debugging")[0]

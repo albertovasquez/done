@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Callable
 
 from harness import persona_select
+from harness.instance_templates import OBSERVE_FIRST_INSTANCE
 from harness.jobs.model import AgentTurn, Reminder
 
 logger = logging.getLogger(__name__)
@@ -82,6 +83,14 @@ def _accepts_kwarg(fn: Callable, name: str) -> bool:
     return False
 
 
+def _observe_or_default_cfg(cfg: dict, mode: str | None) -> dict:
+    """If the job opted into observe mode, return a COPY with the observe-first
+    instance_template; otherwise return cfg untouched (default work-order). (#177)"""
+    if mode == "observe":
+        return {**cfg, "instance_template": OBSERVE_FIRST_INSTANCE}
+    return cfg
+
+
 @dataclass
 class Deps:
     """Injectable bundle of factory functions for unit-testing without a real engine."""
@@ -134,7 +143,8 @@ def _default_deps() -> Deps:
         return pb, mb, ws
 
     def run_turn(*, model_id: str | None, workspace: Path, persona_block: str,
-                 memory_block: str, message: str, wall_budget: int | None = None) -> None:
+                 memory_block: str, message: str, wall_budget: int | None = None,
+                 mode: str | None = None) -> None:
         # Compose skills + base block IDENTICALLY to run_traced.py:171-190 so the
         # cron turn is indistinguishable from the persona typing live (spec §6).
         skills_roots = _paths.skills_dirs(project_cwd=str(workspace))
@@ -166,7 +176,7 @@ def _default_deps() -> Deps:
             model_name=(None if model_id is None else model_id),
             skill_roots=skills_roots,
             memory_root=workspace,
-            agent_cfg=_load_agent_cfg(),
+            agent_cfg=_observe_or_default_cfg(_load_agent_cfg(), mode),
             cwd=str(workspace),
         )
         # #168: this is a HEADLESS path (no elicitation channel), so file tools must
@@ -255,4 +265,7 @@ def run_headless_turn(job, *, deps: Deps | None = None) -> None:
     )
     if _wall_budget is not None and _accepts_kwarg(deps.run_turn, "wall_budget"):
         _turn_kwargs["wall_budget"] = _wall_budget
+    _mode = job.payload.agent_options.get("mode")  # AgentTurn only; e.g. "observe"
+    if _mode is not None and _accepts_kwarg(deps.run_turn, "mode"):
+        _turn_kwargs["mode"] = _mode
     deps.run_turn(**_turn_kwargs)

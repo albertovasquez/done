@@ -1,6 +1,6 @@
 ---
 name: systematic-debugging
-description: Use when encountering any bug, test failure, or unexpected behavior, before proposing fixes
+description: Use when there is a REPORTED failing behavior to fix — a bug, failing test, or error. NOT for read-only status checks ("is X working", "did Y fire") — those are observe requests, inspect and answer directly.
 ---
 
 # Systematic Debugging
@@ -12,6 +12,19 @@ Random fixes waste time and create new bugs. Quick patches mask underlying issue
 **Core principle:** ALWAYS find root cause before attempting fixes. Symptom fixes are failure.
 
 **Violating the letter of this process is violating the spirit of debugging.**
+
+## Precondition: only for a reported failure
+
+This workflow applies ONLY when there is a **reported failing behavior** — an error,
+a failing test, or broken output the user pointed at. The four phases below assume a
+confirmed failure exists.
+
+**If the request is to observe / check / report status with no reported failure**
+(e.g. "check if the cron is firing", "is X working", "show me the status of Y"):
+do NOT enter this workflow. Inspect the relevant state and answer directly. Do NOT
+manufacture a reproduction — in particular, **do not run the test suite to find a
+failing test that wasn't reported.** There is nothing to fix until a failure is
+reported.
 
 ## The Iron Law
 
