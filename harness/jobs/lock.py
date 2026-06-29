@@ -1,10 +1,13 @@
-"""Single-instance lock for the harness-cron daemon.
+"""Single-instance lock for the harness-cron daemon — a SECONDARY guard.
 
-The daemon claims cron/daemon.lock atomically (O_CREAT|O_EXCL) at startup and
-holds it for its lifetime — so `harness-cron` run twice (by hand, by launchd, by
-two `done` windows) yields exactly one live daemon. A crash leaves a stale lock
-(dead pid) which the next daemon reclaims. Paths computed at call time via
-cron_dir() so tests redirect via the config_dir patch (mirrors heartbeat.py).
+Primary single-instance is now the OS service manager (launchd KeepAlive /
+systemd Restart=always — see harness/jobs/service.py), which supervises exactly
+one daemon. This lock remains as defense-in-depth for the paths the OS does NOT
+cover: a user running `harness-cron` by hand, or the TUI fallback spawn
+(supervisor.ensure_daemon_running) on a machine where the service is not
+installed. The daemon claims cron/daemon.lock atomically (O_CREAT|O_EXCL) at
+startup; a crash leaves a stale lock (dead pid) which the next daemon reclaims.
+Paths computed at call time via cron_dir() so tests redirect via config_dir.
 """
 from __future__ import annotations
 

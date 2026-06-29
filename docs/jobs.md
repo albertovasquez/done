@@ -122,21 +122,50 @@ full LLM turn) or a **reminder** (a text-only notification — no inference).
 
 ## Running the daemon
 
-> **`done` starts the daemon for you.** When you launch `done`, it ensures one
-> `harness-cron` is running and **leaves it running in the background after you
-> close `done`** — so scheduled jobs keep firing. It's single-instance: opening
-> several `done` windows never starts more than one daemon. You only run
-> `harness-cron` by hand for **headless** use (no `done` TUI) or to control the
-> cadence with `--interval`.
-
 Jobs only fire while the `harness-cron` daemon is running. It is a separate
 process from the TUI.
+
+### OS service (durable — survives reboot)
+
+The primary way to keep the daemon running is to register it as an OS service:
+
+```sh
+dn cron install      # macOS: launchd LaunchAgent; Linux: systemd user service
+dn cron status       # show whether the service is installed/active
+dn cron uninstall    # remove it
+```
+
+On macOS, `install` writes a LaunchAgent plist at
+`~/Library/LaunchAgents/com.quiubo.done.cron.plist` with `RunAtLoad` and
+`KeepAlive`, then loads it immediately via `launchctl bootstrap`. The daemon
+starts at login and is restarted on crash.
+
+On Linux, `install` writes a systemd user unit at
+`~/.config/systemd/user/harness-cron.service` (`Restart=always`,
+`RestartSec=5`), enables it with `systemctl --user enable --now`, and calls
+`loginctl enable-linger` so the service survives logout and reboot.
+
+The **first time you launch `dn`** it offers to install the service for you.
+
+### TUI fallback spawn (best-effort — no reboot survival)
+
+If you decline the first-run prompt, or if you're on an unsupported platform,
+`dn` falls back to spawning `harness-cron` as a background process when you open
+a window. The daemon is single-instance (several `dn` windows share one), but it
+**will not** survive a reboot or fire when all windows are closed. Run
+`dn cron install` any time to make it permanent.
+
+### Manual / headless invocation
+
+For headless use or a custom tick cadence, run the daemon directly:
 
 ```sh
 harness-cron               # run forever, ticking every 30 s
 harness-cron --interval 60 # tick every 60 s instead
 harness-cron --once        # fire one tick (all due jobs) and exit
 ```
+
+The Ctrl+J panel's daemon-status header shows whether ticks are actively firing.
 
 On each tick the daemon selects every enabled job whose next run time has passed,
 runs it as its persona, records the outcome, recomputes the next run time, and
@@ -173,10 +202,10 @@ skill and dashboard so the gates and locking are respected.
   schedules only; an over-frequent `Cron` expression isn't rejected yet.
 - **Job-list / management CLI.** Viewing and managing jobs is TUI-only in this
   phase.
-- **Stopping the daemon from the TUI.** `done` now both *reports* (status header)
-  and *auto-starts* the daemon, but there's no in-TUI way to *stop* it — kill the
-  `harness-cron` process yourself. There's also no off-switch for auto-start yet
-  (relevant only for headless/server use)
+- **Stopping the daemon from the TUI.** `done` reports daemon status in the Ctrl+J
+  header and may spawn `harness-cron` as a fallback background process, but
+  there's no in-TUI way to *stop* it — kill the `harness-cron` process yourself,
+  or run `dn cron uninstall` to remove the OS service
   ([#146](https://github.com/albertovasquez/done/issues/146)).
 - **Trace events.** `cron.fire` / `cron.tick` / `cron.error` are reserved in the
   debug-trace model but not yet emitted.

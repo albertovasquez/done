@@ -304,9 +304,30 @@ unclear or a risky permission (shell, network, writes outside the project) is
 needed. It writes through the single `create_job` tool. Schedules can be a 5-field
 cron (`0 2 * * *`), a fixed interval, or a one-shot timestamp.
 
-`done` **auto-starts the daemon on launch** (single-instance — several `done`
-windows still share one; it keeps running in the background after you close
-`done`). You only run it by hand for headless use or a custom cadence:
+### Keeping scheduled jobs running
+
+For jobs to fire after a reboot — or when no `dn` window is open — register the
+daemon as an OS service:
+
+```sh
+dn cron install      # macOS: launchd LaunchAgent; Linux: systemd user service
+dn cron status       # show whether the service is installed/active
+dn cron uninstall    # remove it
+```
+
+On macOS this writes a LaunchAgent plist
+(`~/Library/LaunchAgents/com.quiubo.done.cron.plist`) with RunAtLoad + KeepAlive,
+so the daemon starts at login and restarts on crash. On Linux it writes a systemd
+**user** unit (`~/.config/systemd/user/harness-cron.service`, `Restart=always`)
+and enables lingering so it survives logout and reboot.
+
+The **first time you launch `dn`**, it offers to run `dn cron install` for you.
+If you decline (or you're on an unsupported platform), jobs still fire while a
+`dn` window is open via a best-effort background spawn — but they won't survive a
+reboot or fire with all windows closed. Run `dn cron install` any time to make it
+permanent.
+
+For headless use or a custom tick cadence, you can also run the daemon directly:
 
 ```sh
 harness-cron            # run the daemon (ticks every 30 s)
@@ -314,8 +335,9 @@ harness-cron --once     # fire all due jobs once and exit
 ```
 
 In the TUI, **Ctrl+J** toggles the cron dashboard (status per job + a run-duration
-chart); `r`/`t`/`Backspace` run-now, toggle, and remove (creation is in chat, as
-above). Jobs live in `~/.config/harness/cron/`.
+chart); the header shows whether ticks are firing. `r`/`t`/`Backspace` run-now,
+toggle, and remove (creation is in chat, as above). Jobs live in
+`~/.config/harness/cron/`.
 
 > Phase 1: the permission `grant` is **recorded but not yet enforced at runtime** —
 > a job can currently do whatever its persona could. Prefer narrow, low-privilege

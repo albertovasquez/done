@@ -24,8 +24,11 @@ FAKE_CMD = [__import__("sys").executable, str(REPO / "tests/fake_agent.py")]
 
 @pytest.fixture(autouse=True)
 def _no_real_daemon_spawn(monkeypatch):
-    # on_mount now auto-starts the cron daemon. Stub the detached spawn so the
-    # mount tests never fork a real `python -m harness.jobs.cron_main` subprocess.
+    # on_mount calls _decide_cron_autostart. Default all tests to the fallback-spawn
+    # path by reporting "unsupported" backend (so service checks are skipped) and
+    # stubbing the detached spawn so no real subprocess is forked.
+    import harness.jobs.service as svc
+    monkeypatch.setattr(svc, "current_backend", lambda: "unsupported")
     monkeypatch.setattr("harness.jobs.supervisor._spawn_detached", lambda: None)
 
 
@@ -100,27 +103,47 @@ def test_daemon_status_header_row_mounted():
     asyncio.run(go())
 
 
-def test_on_mount_calls_ensure_daemon_running(monkeypatch):
-    """Boot auto-starts the cron daemon exactly once per window."""
+def test_on_mount_falls_back_to_spawn_when_service_absent(monkeypatch):
+    """With no OS service installed and the prompt already answered, boot falls
+    back to the best-effort detached spawn."""
+    import harness.jobs.service as svc
+    import harness.jobs.prompt_state as ps
     import harness.jobs.supervisor as sup
+    from harness.jobs.service import ServiceResult
+    monkeypatch.setattr(svc, "current_backend", lambda: "launchd")
+    monkeypatch.setattr(svc, "service_status",
+                        lambda: ServiceResult(True, "launchd", "not-installed", ""))
+    monkeypatch.setattr(ps, "has_been_asked", lambda: True)
     called = []
     monkeypatch.setattr(sup, "ensure_daemon_running",
-                        lambda *a, **k: called.append(True) or "spawned")
+                        lambda **k: called.append(True) or "spawned")
 
     async def go():
         app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
         async with app.run_test() as pilot:
             await pilot.pause()
-            assert called == [True]    # autostart attempted exactly once
+            assert called == [True]    # fallback spawn attempted exactly once
 
     asyncio.run(go())
 
 
 def test_on_mount_survives_autostart_failure(monkeypatch):
-    """A raising ensure_daemon_running must not break boot."""
-    import harness.jobs.supervisor as sup
+    """A raising ensure_daemon_running must not break boot.
 
-    def boom(*a, **k):
+    Force the fallback branch (service not installed, prompt already answered)
+    so the spawn is actually reached — then confirm the exception is swallowed
+    and the app stays functional.
+    """
+    import harness.jobs.service as svc
+    import harness.jobs.prompt_state as ps
+    import harness.jobs.supervisor as sup
+    from harness.jobs.service import ServiceResult
+    monkeypatch.setattr(svc, "current_backend", lambda: "launchd")
+    monkeypatch.setattr(svc, "service_status",
+                        lambda: ServiceResult(True, "launchd", "not-installed", ""))
+    monkeypatch.setattr(ps, "has_been_asked", lambda: True)
+
+    def boom(**k):
         raise RuntimeError("spawn exploded")
     monkeypatch.setattr(sup, "ensure_daemon_running", boom)
 
