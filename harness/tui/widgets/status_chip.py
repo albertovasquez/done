@@ -78,6 +78,18 @@ class StatusChip(Static):
         suffix = " · pinned" if pinned else ""
         return cls(f"{glyph} bypass permissions on{suffix}", "error")
 
+    @classmethod
+    def for_compress_aware(cls, active: bool, pinned: bool) -> "StatusChip":
+        """Context-compression mode chip in the footer. Compress-aware is a safe,
+        positive feature (it reduces context bloat rather than bypassing security),
+        so it uses the calm 'accent' token when active — not the danger 'error' red.
+        off → muted 'compress-aware off'; on → accent 'compress-aware on'
+        (+ ' · pinned' when persisted)."""
+        if not active:
+            return cls("compress-aware off", "muted")
+        suffix = " · pinned" if pinned else ""
+        return cls(f"compress-aware on{suffix}", "accent")
+
 
 class StateDot(Static):
     def __init__(self, state: AgentState) -> None:

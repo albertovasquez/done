@@ -45,6 +45,24 @@ def test_status_chip_for_yolo_pinned_shows_pinned_marker():
     assert "$error" in chip._Static__content
 
 
+def test_status_chip_compress_aware_off_is_muted():
+    chip = StatusChip.for_compress_aware(active=False, pinned=False)
+    assert "compress-aware off" in chip._label
+    assert "$muted" in chip._Static__content
+
+
+def test_status_chip_compress_aware_on():
+    chip = StatusChip.for_compress_aware(active=True, pinned=False)
+    assert "compress-aware on" in chip._label
+    assert "pinned" not in chip._label
+    assert "$error" not in chip._Static__content    # NOT the danger color
+
+
+def test_status_chip_compress_aware_pinned_marker():
+    chip = StatusChip.for_compress_aware(active=True, pinned=True)
+    assert "compress-aware on" in chip._label and "pinned" in chip._label
+
+
 def test_activity_glyph_reduced_motion_is_static():
     # Attribute-level assertion is the unit-test ceiling here: on_mount (which
     # sets up the timer and initial display) only runs inside a mounted Textual
