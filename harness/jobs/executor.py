@@ -19,6 +19,7 @@ Payload dispatch:
 
 from __future__ import annotations
 
+import inspect
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -58,6 +59,27 @@ class OrphanPersona(Exception):
 
 def _default_notify(*, text: str, agent_id: str) -> None:
     logger.info("cron reminder [%s]: %s", agent_id, text)
+
+
+def _accepts_kwarg(fn: Callable, name: str) -> bool:
+    """True if `fn` can be called with keyword `name` (has the param or **kwargs).
+
+    Keeps Task 8 additive: a positive job timeout is only handed to run_turn
+    callables that can receive `wall_budget`. Test doubles with a fixed signature
+    (no wall_budget, no **kwargs) are never broken by the new kwarg."""
+    try:
+        sig = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return True  # builtins / un-introspectable: assume it tolerates the kwarg
+    for p in sig.parameters.values():
+        if p.kind is inspect.Parameter.VAR_KEYWORD:
+            return True
+        if p.name == name and p.kind in (
+            inspect.Parameter.KEYWORD_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        ):
+            return True
+    return False
 
 
 @dataclass
@@ -112,7 +134,7 @@ def _default_deps() -> Deps:
         return pb, mb, ws
 
     def run_turn(*, model_id: str | None, workspace: Path, persona_block: str,
-                 memory_block: str, message: str) -> None:
+                 memory_block: str, message: str, wall_budget: int | None = None) -> None:
         # Compose skills + base block IDENTICALLY to run_traced.py:171-190 so the
         # cron turn is indistinguishable from the persona typing live (spec §6).
         skills_roots = _paths.skills_dirs(project_cwd=str(workspace))
@@ -152,6 +174,13 @@ def _default_deps() -> Deps:
         # CLOSED. Same chokepoint machinery as the ACP path, deny-by-default policy.
         # Applied to the env the builder constructed (runner._env).
         stamp_headless_gate(runner._env, workspace)
+        # Cron budget (Task 8): stamp the job's configured timeout onto the env so
+        # any subagent worker the turn spawns caps its wall-time at this budget
+        # (subagent.py reads env._remaining_secs). Static upper bound, not a live
+        # countdown, in v1. The interactive path never passes wall_budget, so it
+        # leaves _remaining_secs unset (None) — behavior-preserving.
+        if wall_budget:
+            runner._env._remaining_secs = wall_budget
         # Pass the REAL skill_block + base_block (run_traced.py:195-198 parity).
         for _ in runner.run(message, skill_block=ctx.skill_block,
                             persona_block=ctx.persona_block,
@@ -212,10 +241,18 @@ def run_headless_turn(job, *, deps: Deps | None = None) -> None:
     persona_block, memory_block, ws = deps.compose(ws)
 
     # Rule #4: fresh model + env + runner inside run_turn; os.environ never mutated.
-    deps.run_turn(
+    # Task 8: hand the job's configured timeout to run_turn so a subagent worker
+    # the turn spawns caps its wall-time at this budget. Only a positive timeout
+    # counts; only passed to run_turn callables that accept the kwarg (keeps the
+    # fixed-signature parity doubles green).
+    _wall_budget = job.cost.timeout_s if job.cost.timeout_s and job.cost.timeout_s > 0 else None
+    _turn_kwargs = dict(
         model_id=model_id,
         workspace=ws,
         persona_block=persona_block,
         memory_block=memory_block,
         message=job.payload.message,
     )
+    if _wall_budget is not None and _accepts_kwarg(deps.run_turn, "wall_budget"):
+        _turn_kwargs["wall_budget"] = _wall_budget
+    deps.run_turn(**_turn_kwargs)
