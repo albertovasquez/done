@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import threading
 import time
+from pathlib import Path
 
 from minisweagent.agents.default import DefaultAgent
 from minisweagent.exceptions import (FormatError, InterruptAgentFlow,
@@ -31,6 +32,7 @@ from minisweagent.exceptions import (FormatError, InterruptAgentFlow,
 
 from harness import compaction as _compaction
 from harness.events import Emitter
+from harness.permcheck import PermissionRequest, classify_path
 
 
 class TracingAgent(DefaultAgent):
@@ -239,7 +241,7 @@ class TracingAgent(DefaultAgent):
                     self._emitter.emit("action.done", returncode=0, output_bytes=0)
                     raise
             else:
-                output = tool.execute(action.get("args", {}), self.env)
+                output = self._dispatch_tool(name, tool, action.get("args", {}))
             outputs.append(output)
             self._emitter.emit("action.done",
                                returncode=output.get("returncode", -1),
@@ -247,3 +249,24 @@ class TracingAgent(DefaultAgent):
         return self.add_messages(
             *self.model.format_observation_messages(message, outputs, self.get_template_vars())
         )
+
+    # File tools (read/write/edit) are gated here at the ONE chokepoint; internal
+    # tools (create_job/load_skill/load_memory) are not arbitrary-filesystem and
+    # run ungated. Path is resolved ONCE and the resolved path is both gated and
+    # handed to the tool, so approved-path == written-path (no TOCTOU divergence).
+    _FILE_TOOLS = {"read", "write", "edit"}
+
+    def _dispatch_tool(self, name: str, tool, args: dict) -> dict:
+        check = getattr(self.env, "_check_permission", None)
+        if name in self._FILE_TOOLS and check is not None:
+            roots = getattr(self.env, "_allowed_roots", None)
+            if roots is None:
+                roots = [Path(self.env.config.cwd)]
+            resolved, outside = classify_path(args.get("path", ""), roots)
+            req = PermissionRequest(kind="file", path=resolved,
+                                    is_write=name in ("write", "edit"),
+                                    outside_roots=outside)
+            if not check(req):
+                return {"output": "permission denied", "returncode": -1, "exception_info": ""}
+            args = {**args, "__resolved_path": resolved}
+        return tool.execute(args, self.env)

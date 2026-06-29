@@ -78,7 +78,7 @@ def test_permission_reject_skips_execution(tmp_path):
     calls = []
     env = _env(tmp_path,
                on_command=lambda phase, cmd, out: calls.append(phase),
-               request_permission=lambda cmd: False)    # deny
+               check_permission=lambda req: False)    # deny
     result = env.execute({"command": "printf 'denied'"})
     assert result["returncode"] == -1
     assert "denied" not in result.get("output", "")     # the command did NOT run
@@ -86,8 +86,17 @@ def test_permission_reject_skips_execution(tmp_path):
 
 
 def test_permission_allow_runs(tmp_path):
-    env = _env(tmp_path, on_command=lambda *a: None, request_permission=lambda cmd: True)
+    env = _env(tmp_path, on_command=lambda *a: None, check_permission=lambda req: True)
     assert "ok" in env.execute({"command": "printf 'ok'"})["output"]
+
+
+def test_permission_request_carries_bash_kind(tmp_path):
+    seen = []
+    env = _env(tmp_path, on_command=lambda *a: None,
+               check_permission=lambda req: (seen.append(req) or True))
+    env.execute({"command": "printf 'ok'"})
+    assert seen and seen[0].kind == "bash"
+    assert seen[0].command == "printf 'ok'" and seen[0].is_exec is True
 
 
 # ---------------------------------------------------------------------------
@@ -140,7 +149,7 @@ def test_plan_command_intercepted_not_executed(tmp_path):
     plans, cmd_calls = [], []
     env = _env(tmp_path,
                on_command=lambda phase, cmd, out: cmd_calls.append(phase),
-               request_permission=lambda cmd: (_ for _ in ()).throw(AssertionError("asked perm")),
+               check_permission=lambda req: (_ for _ in ()).throw(AssertionError("asked perm")),
                on_plan=lambda entries: plans.append(entries))
     result = env.execute({"command": 'plan "Push + PR:in_progress" "CI + merge:pending"'})
     # the plan callback got the parsed entries

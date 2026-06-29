@@ -30,9 +30,11 @@ class ReadTool:
         return f"read {args.get('path', '')}"
 
     def execute(self, args: dict, env) -> dict:
-        p = Path(args["path"])
-        if not p.is_absolute():
-            p = Path(env.config.cwd) / p
+        p = args.get("__resolved_path")
+        if p is None:
+            p = Path(args["path"])
+            if not p.is_absolute():
+                p = Path(env.config.cwd) / p
         try:
             return {"output": p.read_text(), "returncode": 0, "exception_info": None}
         except Exception as e:

@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from harness.permcheck import parent_escapes
+
 EDIT_TOOL = {
     "type": "function",
     "function": {
@@ -32,9 +34,11 @@ class EditTool:
         return f"edit {args.get('path', '')}"
 
     def execute(self, args: dict, env) -> dict:
-        p = Path(args["path"])
-        if not p.is_absolute():
-            p = Path(env.config.cwd) / p
+        p = args.get("__resolved_path")
+        if p is None:
+            p = Path(args["path"])
+            if not p.is_absolute():
+                p = Path(env.config.cwd) / p
         try:
             text = p.read_text()
         except Exception as e:
@@ -44,6 +48,10 @@ class EditTool:
             return {"output": "edit failed: old_string not found", "returncode": 1, "exception_info": None}
         if count > 1:
             return {"output": f"edit failed: old_string appears {count} times; add surrounding context to make it unique",
+                    "returncode": 1, "exception_info": None}
+        roots = getattr(env, "_allowed_roots", None)
+        if roots is not None and parent_escapes(p, roots):
+            return {"output": f"edit failed: path resolves outside allowed roots: {p}",
                     "returncode": 1, "exception_info": None}
         p.write_text(text.replace(args["old_string"], args["new_string"]))
         return {"output": f"edited {p}", "returncode": 0, "exception_info": None}
