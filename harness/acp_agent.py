@@ -656,7 +656,6 @@ class HarnessAgent(acp.Agent):
 
         def run_engine() -> dict:
             from harness.tracing_agent import TracingAgent
-            from harness.events import Emitter
             from harness.relay_emitter import RelayEmitter
             # ACP carries the user-facing stream; the engine's own event stream
             # (llm.call/llm.return/action/action.done/run.*) is normally discarded.
