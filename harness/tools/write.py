@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from harness.permcheck import parent_escapes
+
 WRITE_TOOL = {
     "type": "function",
     "function": {
@@ -31,7 +33,6 @@ class WriteTool:
         return f"write {args.get('path', '')}"
 
     def execute(self, args: dict, env) -> dict:
-        from harness.permcheck import parent_escapes
         p = args.get("__resolved_path")
         if p is None:
             p = Path(args["path"])

@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from harness.permcheck import parent_escapes
+
 EDIT_TOOL = {
     "type": "function",
     "function": {
@@ -32,7 +34,6 @@ class EditTool:
         return f"edit {args.get('path', '')}"
 
     def execute(self, args: dict, env) -> dict:
-        from harness.permcheck import parent_escapes
         p = args.get("__resolved_path")
         if p is None:
             p = Path(args["path"])

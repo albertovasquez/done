@@ -103,3 +103,15 @@ def test_read_uses_resolved_path_override(tmp_path):
     env = _Env(tmp_path, roots=[tmp_path])
     out = ReadTool().execute({"path": "ignored", "__resolved_path": target}, env)
     assert out["returncode"] == 0 and out["output"] == "payload"
+
+
+def test_edit_aborts_when_parent_escapes_roots(tmp_path):
+    root = tmp_path / "proj"; root.mkdir()
+    target = tmp_path / "victim.txt"; target.write_text("original")
+    # target is outside root
+    env = _Env(root, roots=[root])
+    out = EditTool().execute({"path": "x", "old_string": "original",
+                              "new_string": "pwned", "__resolved_path": target}, env)
+    assert out["returncode"] == 1
+    assert "outside" in out["output"].lower()
+    assert target.read_text() == "original"  # file must be unchanged
