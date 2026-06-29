@@ -67,11 +67,20 @@ Functions:
 
 - `record_heartbeat(success: bool = False) -> None`
   Atomically writes the current epoch to `ticker_heartbeat`; if `success`, also
-  to `ticker_success`. tmpfile-in-`cron_dir` + `os.replace`. **Best-effort:** all
-  exceptions swallowed — a heartbeat write must never break the caller.
+  to `ticker_success`. **Must ensure `cron_dir()` exists first** — on a fresh
+  install the daemon's first heartbeat runs before any job save has created the
+  dir, so without an `_ensure_dirs()`/`mkdir(parents=True, exist_ok=True)` call
+  the write raises, gets swallowed (best-effort), and the panel reads `stopped`
+  forever. Reuse `store._ensure_dirs()` (or the same `mkdir`) at the top.
+  Atomic-write pattern **mirrors `store._save`**: `path.with_suffix(".tmp")` +
+  `write_text` + `os.replace` (already atomic for a one-line epoch — no `mkstemp`
+  fd dance). **Best-effort:** all exceptions swallowed — a heartbeat write must
+  never break the caller.
 - `heartbeat_age() -> float | None`
-  Seconds since `ticker_heartbeat`, or `None` if missing/unreadable (never ran /
-  old build).
+  Seconds since `ticker_heartbeat`, or `None` if missing/unreadable. **The reader
+  parses the epoch from the file contents** (not file mtime — mtime lies across
+  copies/restores) and returns `None` on any read/`float()` parse failure, so a
+  partial/empty file caught mid-write reads as unknown rather than raising.
 - `success_age() -> float | None`
   Same for `ticker_success`.
 - `daemon_status(hb_age: float | None, ok_age: float | None, *, interval: float) -> str`
@@ -102,17 +111,17 @@ Functions:
   so the helper stays pure and testable.)
 
 `daemon_status` takes `interval` as a parameter (no module-level coupling, keeps
-it pure). Callers pass the real cadence: the panel passes the daemon's default
-`30.0` — sourced as `harness.jobs.daemon.run_forever`'s default rather than a
-fresh literal — so the staleness threshold tracks the loop. A single named
-constant for the default avoids a magic number drifting between the two sites.
+it pure). Callers pass the real cadence. To avoid a magic `30.0` drifting between
+sites, introduce **`daemon.DEFAULT_INTERVAL = 30.0`** (new named constant) and
+reference it from `run_forever`'s default arg, `cron_main`'s argparse default,
+and the panel's `daemon_status(..., interval=...)` call — one source of truth.
 
 ### 2. Daemon writes the signal — `harness/jobs/daemon.py`, `cron_main.py`
 
 `run_forever` (daemon.py) — minimal additions to the existing loop:
 
 ```
-record_heartbeat()                      # once, before first sleep → status fresh immediately
+record_heartbeat(success=True)          # once, before first sleep — see startup note
 while True:
     now = clock()
     try:
@@ -123,6 +132,17 @@ while True:
         record_heartbeat(success=False) # alive but this tick failed
     await sleep(interval)
 ```
+
+**Startup-window decision (review finding).** The pre-loop write uses
+`success=True`, seeding *both* `ticker_heartbeat` and `ticker_success`. If it
+seeded only the plain heartbeat, then for up to one `interval` (until the first
+tick completes) `ok_age` would be `None` and the classifier would report
+`failing` on a daemon that just started cleanly — a false alarm every launch.
+Seeding success at startup means a freshly-started daemon reads `running`
+immediately; a *genuinely* failing daemon flips to `failing` only once
+`ticker_success` goes stale (`> STALE_AFTER`), which is the correct signal. The
+empty-job-roster case is unaffected — a tick with no due jobs still counts as a
+clean (`success=True`) tick.
 
 `cron_main.main` — the `--once` path writes `record_heartbeat(success=True)` after
 its single `tick()` (so `harness-cron --once` also leaves a fresh signal).
@@ -166,11 +186,16 @@ user presses Ctrl+J ──▶ set_rows() ──reads ages──▶ daemon_status
   `ok_age is None` (never-succeeded) edge.
 - `status_line()` — one assertion per status, incl. `{n}` interpolation for stalled.
 - `record_heartbeat` + `heartbeat_age`/`success_age` — round-trip in a tmp
-  `cron_dir`; stale case by writing a backdated epoch; best-effort case by pointing
-  at an unwritable dir and asserting no raise.
+  `cron_dir`; **fresh-install case: `cron_dir` does not exist yet → first
+  `record_heartbeat` creates it and the file is written** (guards the swallowed-
+  mkdir-failure regression); stale case by writing a backdated epoch; partial-file
+  case by writing a non-numeric/empty file → age is `None`, no raise; best-effort
+  case by pointing at an unwritable dir and asserting no raise.
 - Daemon — assert `run_forever` writes a heartbeat on the clean-tick path and a
-  (non-success) heartbeat on the failing-tick path; extends existing injected
-  clock/sleep daemon tests.
+  (non-success) heartbeat on the failing-tick path; **assert the pre-loop write
+  seeds `ticker_success` so a just-started daemon classifies as `running`, not
+  `failing`** (startup-window regression); extends existing injected clock/sleep
+  daemon tests.
 - Panel — inject ages and assert the rendered header matches the expected status
   line (mirrors existing `render_rows` tests; no live daemon needed).
 
