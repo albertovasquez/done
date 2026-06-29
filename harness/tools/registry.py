@@ -31,7 +31,10 @@ def build_registry(skill_roots: list[Path] | None = None,
     # CreateJobTool is always present (needs no roots/context) — it is the agent's
     # ONLY way to actually create a cron job after the create-job gates; without it
     # the model loops re-asking the gates.
-    tools: list[Tool] = [BashTool(), ReadTool(), WriteTool(), EditTool(), CreateJobTool()]
+    # Local import breaks the cycle: subagent → agent_build → registry → subagent.
+    from harness.tools.subagent import SubagentTool  # noqa: PLC0415
+    tools: list[Tool] = [BashTool(), ReadTool(), WriteTool(), EditTool(), CreateJobTool(),
+                         SubagentTool()]
     if skill_roots:
         tools.append(LoadSkillTool(skill_roots))
     # Gate load_memory on the workspace actually HAVING recall content — an empty

@@ -21,3 +21,11 @@ def test_worker_denies_subagent_even_if_requested():
     reg = build_registry(toolset={"read", "bash", "subagent"}, is_worker=True)
     assert "subagent" not in _names(reg)
     assert {"read", "bash"} <= _names(reg)
+
+
+def test_normal_agent_has_subagent_tool():
+    assert "subagent" in _names(build_registry())
+
+
+def test_worker_never_has_subagent_tool():
+    assert "subagent" not in _names(build_registry(is_worker=True))
