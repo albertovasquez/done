@@ -185,3 +185,14 @@ def test_router_prompt_omits_dormant_skill():
                            "reasoning": "x", "suggested_model": None})
     Router(stub, catalog=cat).classify("x")
     assert "visible" in captured["system"] and "hidden" not in captured["system"]
+
+
+def test_system_prompt_teaches_observe_vs_fix():
+    """The router prompt must steer observe-intent ('check', 'is X working') away
+    from debugging skills, so read-only requests don't pull in systematic-debugging
+    (#177). Advisory text check, not a model-output check."""
+    from harness.router import _system_prompt
+    prompt = _system_prompt([]).lower()
+    assert "observe" in prompt
+    assert "check" in prompt
+    assert "do not" in prompt or "don't" in prompt
