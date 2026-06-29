@@ -176,16 +176,26 @@ Registry placement:
 A worker runs **as the persona** (`env._active_persona` = parent's agent_id, so memory
 writes land in the correct workspace) but with a **fresh, minimal conversation**.
 
-`context_mode="worker"` assembles the prompt from exactly these pieces:
+> **AS-SHIPPED DEVIATION (v1) — tracked in [issue #172](https://github.com/albertovasquez/done/issues/172).**
+> The shipped v1 worker is trimmed **further** than the table below: `_run_one_worker`
+> calls `runner.run(task_str)` with **no** `base_block` and **no** `agents_block` either —
+> the worker's only prompt content is `goal` + `context` + the structured-summary contract
+> (the bare upstream `mini.yaml` system line). This was a deliberate "maximally cheap
+> context" choice surfaced by the whole-branch review. Whether to add `base_block` +
+> AGENTS.md back (so write-capable / shell-running workers obey operating standards) is an
+> **open product decision** in #172. The table below is the *original* design intent; the
+> code currently implements the "Drop everything but the task" end of that spectrum.
 
-| Piece                                   | Worker gets                                            |
-|-----------------------------------------|--------------------------------------------------------|
-| `base_block` (policy + cwd/model/OS)    | **Include** — small and necessary                      |
-| `agents_block` (3-tier AGENTS.md)       | **Include for ALL workers** — operating standards apply even to read-only workers running `git`/`gh` |
-| persona soul (`persona_block`)          | **Drop** — the persona voice is applied by the *parent* when it synthesizes returned summaries, not inside the worker |
-| memory block (auto-injected)            | **Drop** — but keep the `load_memory` tool if the workspace has memory, so a worker can pull a fact on demand without prepaying the whole block |
-| skills menu (auto-injected)             | **Drop** — keep `load_skill` only if the task's `tools` grants it |
-| `goal` + `context` (from parent)        | **Include** — this is the worker's instance prompt     |
+Original design intent — `context_mode="worker"` assembles the prompt from these pieces:
+
+| Piece                                   | Worker gets (design intent)                            | v1 as-shipped |
+|-----------------------------------------|--------------------------------------------------------|---------------|
+| `base_block` (policy + cwd/model/OS)    | **Include** — small and necessary                      | **Dropped** (#172) |
+| `agents_block` (3-tier AGENTS.md)       | **Include for ALL workers** — operating standards apply even to read-only workers running `git`/`gh` | **Dropped** (#172) |
+| persona soul (`persona_block`)          | **Drop** — the persona voice is applied by the *parent* when it synthesizes returned summaries, not inside the worker | Dropped ✓ |
+| memory block (auto-injected)            | **Drop** — but keep the `load_memory` tool if the workspace has memory, so a worker can pull a fact on demand without prepaying the whole block | Dropped ✓ |
+| skills menu (auto-injected)             | **Drop** — keep `load_skill` only if the task's `tools` grants it | Dropped ✓ |
+| `goal` + `context` (from parent)        | **Include** — this is the worker's instance prompt     | Included ✓ |
 
 ### Structured-summary return contract (instance template)
 
