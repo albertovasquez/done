@@ -53,6 +53,11 @@ def test_rejects_over_hard_cap(monkeypatch):
     assert "too many" in out["output"].lower()
 
 
+def test_empty_tasks_returns_error():
+    out = SubagentTool().execute({"tasks": []}, _FakeEnv())
+    assert out["returncode"] == 1
+
+
 def test_concurrency_isolation_no_crosstalk(monkeypatch):
     # N concurrent mock workers must each return their OWN goal (no shared state).
     def fake(task, env, *, agent_id):

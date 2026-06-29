@@ -69,6 +69,12 @@ def _run_one_worker(task: dict, env, *, agent_id: str):
     agent_cfg = yaml.safe_load(
         (_root / "upstream/src/minisweagent/config/mini.yaml").read_text())["agent"]
 
+    if remaining is not None:
+        _default_wt = agent_cfg.get("wall_time_limit_seconds", 0) or remaining
+        wall_time = min(_default_wt, remaining)
+    else:
+        wall_time = None
+
     workspace_cwd = getattr(env, "config", None)
     cwd = getattr(workspace_cwd, "cwd", None) or os.getcwd()
 
@@ -82,12 +88,8 @@ def _run_one_worker(task: dict, env, *, agent_id: str):
         toolset=toolset,
         is_worker=True,
         step_limit=step_limit,
-        wall_time_limit=remaining,   # min handled below
+        wall_time_limit=wall_time,
     )
-    if remaining is not None:
-        # Cap wall-time at the parent's remaining budget (cron).
-        default_wt = agent_cfg.get("wall_time_limit_seconds", 0) or remaining
-        runner._agent_cfg["wall_time_limit_seconds"] = min(default_wt, remaining)
 
     task_str = build_worker_task(task["goal"], task["context"])
     for _ in runner.run(task_str):
