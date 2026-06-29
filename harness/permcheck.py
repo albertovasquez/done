@@ -33,9 +33,14 @@ def classify_path(raw: str, roots: Sequence[Path]) -> tuple[Path, bool]:
     """Resolve `raw` (expanduser, anchor relative paths to the first root, collapse
     `..`/symlinks via realpath) and report whether it lands outside every root.
     For a non-existent leaf, realpath resolves the existing parent prefix and
-    appends the rest literally — correct for fresh writes."""
+    appends the rest literally — correct for fresh writes.
+
+    With no roots, there is nothing to be inside: a relative path can't be anchored,
+    so report it outside (the deny path) rather than IndexError on roots[0]."""
     p = Path(raw).expanduser()
     if not p.is_absolute():
+        if not roots:
+            return p, True               # no root to anchor to → outside-everything
         p = Path(roots[0]) / p
     resolved = Path(os.path.realpath(str(p)))
     return resolved, not _inside(resolved, _real_roots(roots))
@@ -48,3 +53,19 @@ def parent_escapes(resolved: Path, roots: Sequence[Path]) -> bool:
     caught. Same boundary the gate enforced, re-validated at write time."""
     parent = Path(os.path.realpath(str(resolved.parent)))
     return not _inside(parent, _real_roots(roots))
+
+
+def decide_permission(req: PermissionRequest, *, yolo: bool, has_elicitation: bool) -> str:
+    """Pure policy: 'allow' (run, no prompt), 'deny' (block), or 'ask' (prompt the
+    client). yolo overrides to allow. In-root file ops (read OR write) are free.
+    Everything else is risky (bash, out-of-root, exec): ask if there is a prompt
+    channel, otherwise fail CLOSED -> deny (#107).
+
+    Lives in this import-light leaf (not acp_agent) so the headless cron-executor
+    and dev-CLI paths can reuse the SAME policy without pulling acp_agent's heavy
+    deps or creating an import cycle (#168)."""
+    if yolo:
+        return "allow"
+    if req.kind == "file" and not req.outside_roots:
+        return "allow"                       # in-root read & write are free
+    return "ask" if has_elicitation else "deny"
