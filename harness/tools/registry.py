@@ -24,7 +24,10 @@ from harness.tools.write import WriteTool
 
 
 def build_registry(skill_roots: list[Path] | None = None,
-                   memory_root: Path | None = None) -> list[Tool]:
+                   memory_root: Path | None = None,
+                   *,
+                   toolset: set[str] | None = None,
+                   is_worker: bool = False) -> list[Tool]:
     # CreateJobTool is always present (needs no roots/context) — it is the agent's
     # ONLY way to actually create a cron job after the create-job gates; without it
     # the model loops re-asking the gates.
@@ -35,4 +38,12 @@ def build_registry(skill_roots: list[Path] | None = None,
     # workspace must not advertise a dead tool (byte-identical no-op).
     if memory_root and memory_mod.has_memory(memory_root):
         tools.append(LoadMemoryTool(memory_root))
+    # Depth-1 enforcement: a worker can NEVER call subagent (explicit deny, not a
+    # side effect of the toolset — a task could name it in `tools`).
+    if is_worker:
+        tools = [t for t in tools if t.name != "subagent"]
+    # Restricted toolset: keep only the named tools (model schemas AND agent
+    # dispatch use this one list, so they always agree).
+    if toolset is not None:
+        tools = [t for t in tools if t.name in toolset]
     return tools
