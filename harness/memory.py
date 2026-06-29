@@ -17,6 +17,8 @@ from pathlib import Path
 
 import yaml
 
+from harness import config as _config
+from harness.compress import loader as _compress_loader
 from harness.textgate import _meaningful, _trim
 
 MEMORY_FILE = "MEMORY.md"
@@ -26,6 +28,12 @@ MAX_MEMORY_CHARS = 8000
 # Daily notes are YYYY-MM-DD[.-slug].md; typed facts are arbitrary slugs. The
 # manifest lists facts only, so daily notes are excluded by this shape.
 _DAILY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}")
+
+
+def _compress_on(workspace_dir) -> bool:
+    """Return whether compress-aware mode is active for the given workspace."""
+    persona_id = workspace_dir.name if workspace_dir else "default"
+    return _config.compress_aware_pinned(persona_id)
 
 
 @dataclass
@@ -209,12 +217,13 @@ def _protocol(workspace: Path) -> str:
 
 
 def _read_section(workspace: Path, rel: str, label: str,
-                  load: MemoryLoad) -> str | None:
+                  load: MemoryLoad, *, mode_on: bool = False) -> str | None:
     """Read one memory file; return its '## label\\nbody' section, or None when
     missing/blank/inert/unreadable (recording skips). Never raises."""
     path = workspace / rel
     try:
-        raw = path.read_text(encoding="utf-8")
+        path.read_bytes().decode("utf-8")            # raises UnicodeDecodeError on binary
+        raw = _compress_loader.load_context_file(path, mode_on=mode_on)
     except FileNotFoundError:
         return None
     except (OSError, UnicodeDecodeError) as e:
@@ -246,7 +255,9 @@ def resolve_memory(workspace_dir: Path | None, *, today: date) -> MemoryLoad:
         (f"{MEMORY_DIR}/{today.isoformat()}.md", f"memory/{today.isoformat()}"),
         (f"{MEMORY_DIR}/{yesterday.isoformat()}.md", f"memory/{yesterday.isoformat()}"),
     ]:
-        section = _read_section(workspace, rel, label, load)
+        is_memory_file = rel == MEMORY_FILE
+        section = _read_section(workspace, rel, label, load,
+                                mode_on=_compress_on(workspace) if is_memory_file else False)
         if section is not None:
             sections.append(section)
     # The typed-fact MENU makes per-fact files DISCOVERABLE — without it the agent
