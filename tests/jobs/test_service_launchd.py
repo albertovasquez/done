@@ -46,3 +46,34 @@ def test_uninstall_is_idempotent_when_absent(monkeypatch, tmp_path):
     monkeypatch.setattr(L, "_run", lambda argv: (0, ""))
     res = L.uninstall()                                  # nothing installed
     assert res.ok is True and res.state == "not-installed"
+
+
+def test_service_status_not_installed_when_no_plist(monkeypatch, tmp_path):
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    res = L.service_status()                             # no plist on disk
+    assert res.state == "not-installed"
+
+
+def test_service_status_installed_when_plist_loaded(monkeypatch, tmp_path):
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    L.plist_path().parent.mkdir(parents=True, exist_ok=True)
+    L.plist_path().write_bytes(b"<plist/>")
+    monkeypatch.setattr(L, "_run", lambda argv: (0, ""))  # launchctl print succeeds
+    res = L.service_status()
+    assert res.state == "installed"
+
+
+def test_service_status_orphaned_plist_is_not_installed(monkeypatch, tmp_path):
+    # Plist on disk but `launchctl print` fails (orphaned — file present, not loaded).
+    # service_status MUST NOT report "installed" here: _decide_cron_autostart treats
+    # only "installed" as "OS owns the daemon, do nothing", so a false "installed"
+    # would silently skip autostart and jobs would never fire. Return "not-installed"
+    # so the boot path falls through to the prompt/fallback-spawn; the orphaned
+    # nuance is preserved in the detail string.
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    L.plist_path().parent.mkdir(parents=True, exist_ok=True)
+    L.plist_path().write_bytes(b"<plist/>")
+    monkeypatch.setattr(L, "_run", lambda argv: (1, "Could not find service"))
+    res = L.service_status()
+    assert res.state == "not-installed", res
+    assert "not loaded" in res.detail
