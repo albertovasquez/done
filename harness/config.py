@@ -163,8 +163,42 @@ def _serialize(
                         lines.append(f"{k} = {_quote(v)}")
                     elif isinstance(v, int):
                         lines.append(f"{k} = {v}")
+                    elif isinstance(v, list):
+                        # Emit as a TOML array; elements must be scalars.
+                        elems = []
+                        for elem in v:
+                            if isinstance(elem, bool):
+                                elems.append("true" if elem else "false")
+                            elif isinstance(elem, str):
+                                elems.append(_quote(elem))
+                            elif isinstance(elem, int):
+                                elems.append(str(elem))
+                            else:
+                                raise ValueError(
+                                    f"cannot serialize preserved key {k!r}: "
+                                    f"list element {elem!r} is not a scalar"
+                                )
+                        lines.append(f"{k} = [{', '.join(elems)}]")
+                    elif isinstance(v, dict):
+                        # Nested dict: emit as a sub-table [top_key.k]
+                        lines.append(f"[{top_key}.{k}]")
+                        for sk, sv in sorted(v.items()):
+                            if isinstance(sv, bool):
+                                lines.append(f"{sk} = {'true' if sv else 'false'}")
+                            elif isinstance(sv, str):
+                                lines.append(f"{sk} = {_quote(sv)}")
+                            elif isinstance(sv, int):
+                                lines.append(f"{sk} = {sv}")
+                            else:
+                                raise ValueError(
+                                    f"cannot serialize preserved key {k!r}.{sk!r}: "
+                                    f"value {sv!r} is not a scalar"
+                                )
                     else:
-                        lines.append(f"{k} = {_quote(str(v))}")
+                        raise ValueError(
+                            f"cannot serialize preserved key {k!r}: "
+                            f"value {v!r} has unsupported type {type(v).__name__!r}"
+                        )
                 lines.append("")
             else:
                 # Top-level scalar key (not schema_version or agents)
@@ -322,8 +356,24 @@ def set_compress_aware(persona_id: str, on: bool) -> None:
         existing_raw = None
     # Route through _serialize to avoid duplicating serialization logic.
     # agents already contains all complete tables from load() above.
-    # The partial table for persona_id is emitted via the partial= argument.
-    text = _serialize(agents, preserve=existing_raw, partial={persona_id: {"compress_aware": on}})
+    # Build partial= from ALL pre-existing partial agent tables (those without
+    # backend+model in the complete set) plus the target persona's new entry,
+    # so touching one persona never drops another persona's partial table.
+    partial: dict[str, dict] = {}
+    if existing_raw:
+        agents_raw_all = existing_raw.get("agents")
+        if isinstance(agents_raw_all, dict):
+            for ak, at in agents_raw_all.items():
+                if ak not in agents and ak != persona_id and isinstance(at, dict):
+                    # Carry forward only scalar fields we can safely round-trip.
+                    carried: dict = {}
+                    for fk, fv in at.items():
+                        if isinstance(fv, (bool, str, int)):
+                            carried[fk] = fv
+                    if carried:
+                        partial[ak] = carried
+    partial[persona_id] = {"compress_aware": on}
+    text = _serialize(agents, preserve=existing_raw, partial=partial)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(text, encoding="utf-8")
