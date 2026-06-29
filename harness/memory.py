@@ -222,8 +222,7 @@ def _read_section(workspace: Path, rel: str, label: str,
     missing/blank/inert/unreadable (recording skips). Never raises."""
     path = workspace / rel
     try:
-        path.read_bytes().decode("utf-8")            # raises UnicodeDecodeError on binary
-        raw = _compress_loader.load_context_file(path, mode_on=mode_on)
+        raw = _compress_loader.load_context_file(path, mode_on=mode_on, strict_encoding=True)
     except FileNotFoundError:
         return None
     except (OSError, UnicodeDecodeError) as e:

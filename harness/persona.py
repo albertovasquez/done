@@ -261,8 +261,7 @@ def compose_persona(workspace_dir: Path) -> PersonaLoad:
     for name in PERSONA_FILES:
         path = workspace_dir / name
         try:
-            path.read_bytes().decode("utf-8")        # raises UnicodeDecodeError on binary
-            raw = _compress_loader.load_context_file(path, mode_on=_compress_on(workspace_dir))
+            raw = _compress_loader.load_context_file(path, mode_on=_compress_on(workspace_dir), strict_encoding=True)
         except FileNotFoundError:
             continue                                  # missing file is silent (like skills)
         except (OSError, UnicodeDecodeError) as e:

@@ -44,8 +44,7 @@ def _read_tier(dir_: Path | None, label: str, load: AgentsLoad) -> str | None:
         return None
     path = Path(dir_) / AGENTS_FILE
     try:
-        path.read_bytes().decode("utf-8")            # raises UnicodeDecodeError on binary
-        raw = _compress_loader.load_context_file(path, mode_on=_compress_on_dir(dir_))
+        raw = _compress_loader.load_context_file(path, mode_on=_compress_on_dir(dir_), strict_encoding=True)
     except FileNotFoundError:
         return None
     except (OSError, UnicodeDecodeError) as e:
