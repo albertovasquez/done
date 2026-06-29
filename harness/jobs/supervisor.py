@@ -1,12 +1,16 @@
-"""Ensure a single harness-cron daemon is running — called from the TUI on boot.
+"""Best-effort FALLBACK daemon spawn — used only when the OS service is absent.
 
-DELIBERATE BEHAVIOR: this spawns a DETACHED background process that OUTLIVES the
-`done` window that started it (and every other window). Always-on, no config
-switch — documented here and in the README. If a headless/server use-case appears
-(running `done` on a box where a per-user background daemon is unwanted), that is
-the first thing to revisit (a [jobs] autostart config key). The daemon itself is
-single-instance via harness/jobs/lock.py, so a race between two windows can never
-produce two daemons.
+PRIMARY autostart is the OS service manager (harness/jobs/service.py): launchd on
+macOS, systemd-user on Linux, registered via `dn cron install`. When that service
+is installed, the OS owns the daemon's lifecycle (autostart-at-boot, restart-on-
+crash, single-instance) and this module is NOT used.
+
+This fallback exists for users who declined the service (or are on an unsupported
+platform): the TUI calls ensure_daemon_running() on boot to spawn a DETACHED
+background daemon that outlives the window. It is single-instance via
+harness/jobs/lock.py, so it can never produce two daemons. Unlike the OS service,
+it does NOT survive a reboot or restart on crash — that is the gap `dn cron
+install` closes.
 """
 from __future__ import annotations
 
