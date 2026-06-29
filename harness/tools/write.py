@@ -31,9 +31,16 @@ class WriteTool:
         return f"write {args.get('path', '')}"
 
     def execute(self, args: dict, env) -> dict:
-        p = Path(args["path"])
-        if not p.is_absolute():
-            p = Path(env.config.cwd) / p
+        from harness.permcheck import parent_escapes
+        p = args.get("__resolved_path")
+        if p is None:
+            p = Path(args["path"])
+            if not p.is_absolute():
+                p = Path(env.config.cwd) / p
+        roots = getattr(env, "_allowed_roots", None)
+        if roots is not None and parent_escapes(p, roots):
+            return {"output": f"write failed: path resolves outside allowed roots: {p}",
+                    "returncode": 1, "exception_info": None}
         try:
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(args["content"])
