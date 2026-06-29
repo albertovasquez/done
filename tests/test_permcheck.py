@@ -1,7 +1,5 @@
 from pathlib import Path
 
-import pytest
-
 from harness.permcheck import PermissionRequest, classify_path, parent_escapes
 
 

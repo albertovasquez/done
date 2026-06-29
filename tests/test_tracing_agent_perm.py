@@ -61,3 +61,37 @@ def test_bash_still_routes_through_env(tmp_path):
     msg = {"extra": {"actions": [{"command": "echo hi", "tool_call_id": "c3"}]}}
     out = agent.execute_actions(msg)
     assert "hi" in out[0]["content"]       # bash path unchanged
+
+
+def test_file_tool_runs_when_no_check_permission(tmp_path):
+    # A plain env with NO _check_permission stamped: file tools execute ungated
+    # (backward compat — the gate only engages when an env opts in).
+    root = tmp_path / "proj"; root.mkdir()
+    target = root / "f.txt"
+    agent = _agent(tmp_path, root, allow=lambda req: False, roots=[root])
+    # remove the gate that _agent stamped, to simulate an ungated env
+    delattr(agent.env, "_check_permission")
+    msg = {"extra": {"actions": [
+        {"tool_name": "write", "args": {"path": "f.txt", "content": "hi"},
+         "tool_call_id": "n0"}]}}
+    agent.execute_actions(msg)
+    assert target.read_text() == "hi"   # ran despite allow=False, because no gate stamped
+
+
+def test_internal_tool_not_gated(tmp_path):
+    # An internal (non-file) tool name must bypass the file-tool gate entirely:
+    # _dispatch_tool should call tool.execute without consulting _check_permission.
+    root = tmp_path / "proj"; root.mkdir()
+    called = {}
+    class _FakeInternalTool:
+        name = "load_memory"
+        def display_label(self, args): return "load_memory"
+        def execute(self, args, env):
+            called["ran"] = True
+            return {"output": "mem", "returncode": 0, "exception_info": None}
+    agent = _agent(tmp_path, root, allow=lambda req: False, roots=[root])
+    agent._tools_by_name["load_memory"] = _FakeInternalTool()
+    msg = {"extra": {"actions": [
+        {"tool_name": "load_memory", "args": {}, "tool_call_id": "i0"}]}}
+    agent.execute_actions(msg)
+    assert called.get("ran") is True   # ran even though allow=False (not gated)

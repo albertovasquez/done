@@ -30,6 +30,7 @@ from harness.acp_env import AcpEnvironment
 from harness.acp_session import SessionStore
 from harness.router import Router, Classification
 from harness.chat_handler import ChatHandler
+from harness.permcheck import PermissionRequest
 from harness.transcript import flatten_agent_messages
 from minisweagent.exceptions import UserInterruption
 
@@ -615,7 +616,7 @@ class HarnessAgent(acp.Agent):
             asyncio.run_coroutine_threadsafe(
                 self._conn.session_update(session_id, plan_update(entries)), loop).result()
 
-        def check_permission(req) -> bool:
+        def check_permission(req: PermissionRequest) -> bool:
             yolo = self._auto_allow()
             has_elicitation = not (
                 self._client_caps is None
@@ -689,8 +690,7 @@ class HarnessAgent(acp.Agent):
         # (which lives OUTSIDE cwd — config_dir()/agents/<id> — so memory writes
         # must not be classified outside-root). Consumed by permcheck + file tools.
         from pathlib import Path as _Path
-        env._allowed_roots = [_Path(state.cwd)] + (
-            [state.workspace_dir] if state.workspace_dir else [])
+        env._allowed_roots = [_Path(state.cwd)] + ([_Path(state.workspace_dir)] if state.workspace_dir else [])
 
         def run_engine() -> dict:
             from harness.tracing_agent import TracingAgent

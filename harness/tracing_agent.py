@@ -32,6 +32,7 @@ from minisweagent.exceptions import (FormatError, InterruptAgentFlow,
 
 from harness import compaction as _compaction
 from harness.events import Emitter
+from harness.permcheck import PermissionRequest, classify_path
 
 
 class TracingAgent(DefaultAgent):
@@ -258,8 +259,9 @@ class TracingAgent(DefaultAgent):
     def _dispatch_tool(self, name: str, tool, args: dict) -> dict:
         check = getattr(self.env, "_check_permission", None)
         if name in self._FILE_TOOLS and check is not None:
-            from harness.permcheck import PermissionRequest, classify_path
-            roots = getattr(self.env, "_allowed_roots", None) or [Path(self.env.config.cwd)]
+            roots = getattr(self.env, "_allowed_roots", None)
+            if roots is None:
+                roots = [Path(self.env.config.cwd)]
             resolved, outside = classify_path(args.get("path", ""), roots)
             req = PermissionRequest(kind="file", path=resolved,
                                     is_write=name in ("write", "edit"),
