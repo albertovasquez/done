@@ -6,6 +6,11 @@ CONTENT-GATED: it is empty unless at least one memory file has real content, so 
 seeded-but-unused default persona stays byte-identical (the Phase A no-op). When
 non-empty, the block carries a protocol preamble teaching the agent how to write
 to its memory via plain shell.
+
+``compress_on_write`` is the SANCTIONED helper for writing memory files with
+optional compression. It is intentionally exposed but NOT wired into any
+Write/Edit tool dispatch path — routing the agent's memory writes through it is
+a deferred follow-up (tracked in issue #186).
 """
 
 from __future__ import annotations
@@ -18,6 +23,7 @@ from pathlib import Path
 import yaml
 
 from harness import config as _config
+from harness.compress import engine as _compress_engine
 from harness.compress import loader as _compress_loader
 from harness.textgate import _meaningful, _trim
 
@@ -34,6 +40,27 @@ def _compress_on(workspace_dir) -> bool:
     """Return whether compress-aware mode is active for the given workspace."""
     persona_id = workspace_dir.name if workspace_dir else "default"
     return _config.compress_aware_pinned(persona_id)
+
+
+def compress_on_write(path: Path, text: str, *, call_model) -> None:
+    """Write ``text`` to ``path``, compressing first when compress-aware mode is ON.
+
+    Safety invariant: if compression raises ``CompressionError`` (e.g. the model
+    dropped a URL), the original verbose ``text`` is written instead — content is
+    never lost on failure.  When mode is OFF, ``text`` is written verbatim.
+
+    This is the SANCTIONED helper for memory file writes.  Routing the agent's
+    own Write/Edit tool calls through this helper is deferred (issue #186).
+    """
+    path = Path(path)
+    if not _compress_on(path):
+        path.write_text(text)
+        return
+    try:
+        out = _compress_engine.compress_text(text, call_model=call_model)
+    except _compress_engine.CompressionError:
+        out = text  # fallback: never lose content on failure
+    path.write_text(out)
 
 
 @dataclass
