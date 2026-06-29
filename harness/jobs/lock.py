@@ -55,8 +55,14 @@ def acquire(*, pid: int | None = None, pid_alive=_pid_alive) -> bool:
             owner = None
         if owner is not None and pid_alive(owner):
             return False
+        # Reclaim. _write_pid is atomic (os.replace), but two daemons recovering
+        # from the SAME crash can both reach here and both write — so confirm we
+        # won by re-reading: exactly one pid survives as the last writer.
         _write_pid(path, pid)     # stale or unparseable → reclaim
-        return True
+        try:
+            return int(path.read_text(encoding="utf-8").strip()) == pid
+        except (ValueError, OSError):
+            return False
     else:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(f"{pid}\n")

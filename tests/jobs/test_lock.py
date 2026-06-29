@@ -41,3 +41,19 @@ def test_garbled_lock_treated_as_reclaimable(_cron_dir):
     lock.lock_file().write_text("not-a-pid")
     assert lock.acquire(pid=7777, pid_alive=lambda p: True) is True    # unparseable → reclaim
     assert lock.lock_file().read_text().strip() == "7777"
+
+
+def test_reclaim_confirms_ownership_after_write(_cron_dir, monkeypatch):
+    # Simulate a concurrent reclaim: after WE write our pid, another daemon's
+    # write lands (the file ends up holding a different pid). We must lose.
+    lock.acquire(pid=1111, pid_alive=lambda p: False)     # seed a stale lock
+
+    real_write = lock._write_pid
+    def write_then_get_clobbered(path, pid):
+        real_write(path, pid)                              # our write
+        real_write(path, 9999)                             # a racing daemon overwrites
+    monkeypatch.setattr(lock, "_write_pid", write_then_get_clobbered)
+
+    # we tried to claim 2222 but 9999 won the last write → we must return False
+    assert lock.acquire(pid=2222, pid_alive=lambda p: False) is False
+    assert lock.lock_file().read_text().strip() == "9999"

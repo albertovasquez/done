@@ -58,8 +58,12 @@ The stored-pid read lives **inside** `acquire`'s stale check — there is no pub
 
 `O_CREAT|O_EXCL` is atomic at the OS level: when two processes race the create,
 exactly one wins and the other gets `EEXIST`. This is a true lock, not a
-check-then-act. The stale-reclaim path uses `os.replace` (atomic) of a tmp file
-so a concurrent reader never sees a torn pid.
+check-then-act. The stale-reclaim path (only reached when a prior owner crashed)
+writes via `os.replace` (atomic) so a reader never sees a torn pid, then
+**re-reads and confirms our pid is the stored one** — so if two daemons recover
+from the same crash simultaneously, the last `os.replace` wins and the other's
+re-read returns False. This closes the post-crash double-reclaim window noted in
+review; the fast (uncontended) path was already atomic via `O_EXCL`.
 
 `_pid_alive(pid)`: `os.kill(pid, 0)` → `True`; `ProcessLookupError` → `False`;
 `PermissionError` → `True` (pid exists, owned by another user — treat as alive).
