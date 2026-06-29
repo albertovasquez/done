@@ -22,6 +22,7 @@ from typing import Any
 import pytest
 import acp
 from acp.schema import (
+    AllowedOutcome,
     ClientCapabilities,
     DeniedOutcome,
     ElicitationCapabilities,
@@ -113,6 +114,13 @@ class _RejectingClient(_CollectingClient):
         return RequestPermissionResponse(outcome=DeniedOutcome(outcome="cancelled"))
 
 
+class _AllowingClient(_CollectingClient):
+    """Allows every permission request (fail-closed bash needs an explicit allow)."""
+    async def request_permission(self, options, session_id, tool_call, **kwargs):
+        return RequestPermissionResponse(
+            outcome=AllowedOutcome(option_id="allow_once", outcome="selected"))
+
+
 class _TerminalRecordingClient(_CollectingClient):
     """Records create_terminal calls and executes commands locally (simulates client terminal)."""
 
@@ -149,6 +157,14 @@ class _TerminalRecordingClient(_CollectingClient):
 
     async def release_terminal(self, session_id: str, terminal_id: str, **kwargs: Any) -> Any:
         self._terminals.pop(terminal_id, None)
+
+
+class _AllowingTerminalClient(_TerminalRecordingClient):
+    """Records terminals AND allows every permission request (so fail-closed
+    bash gating, which now denies without an elicitation answer, still runs)."""
+    async def request_permission(self, options, session_id, tool_call, **kwargs):
+        return RequestPermissionResponse(
+            outcome=AllowedOutcome(option_id="allow_once", outcome="selected"))
 
 
 # ---------------------------------------------------------------------------
@@ -370,11 +386,11 @@ def test_terminal_delegation_uses_client_terminal(tmp_path):
     assert "return a - b" in (repo / "calculator.py").read_text(), "fixture sanity"
 
     async def go():
-        client = _TerminalRecordingClient()
+        client = _AllowingTerminalClient()
         async with acp.spawn_agent_process(client, AGENT_CMD[0], *AGENT_CMD[1:]) as (conn, _proc):
             await conn.initialize(
                 protocol_version=acp.PROTOCOL_VERSION,
-                client_capabilities=ClientCapabilities(terminal=True),
+                client_capabilities=ClientCapabilities(terminal=True, elicitation=ElicitationCapabilities()),
             )
             new = await conn.new_session(cwd=str(repo), mcp_servers=[])
             await conn.prompt(
@@ -486,10 +502,13 @@ def test_terminal_fallback_uses_local_environment(tmp_path):
     assert "return a - b" in target.read_text(), "fixture sanity"
 
     async def go():
-        client = _CollectingClient()
+        client = _AllowingClient()
         async with acp.spawn_agent_process(client, AGENT_CMD[0], *AGENT_CMD[1:]) as (conn, _proc):
             # No terminal capability advertised → LocalEnvironment fallback
-            await conn.initialize(protocol_version=acp.PROTOCOL_VERSION)
+            await conn.initialize(
+                protocol_version=acp.PROTOCOL_VERSION,
+                client_capabilities=ClientCapabilities(elicitation=ElicitationCapabilities()),
+            )
             new = await conn.new_session(cwd=str(repo), mcp_servers=[])
             await conn.prompt(
                 prompt=[acp.text_block(
