@@ -1,7 +1,8 @@
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 
-_URL_RE = re.compile(r"https?://[^\s)\]]+")
+_URL_RE = re.compile(r"https?://[^\s)\].,;:!?\"']+")
 _FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
 _HEADING_RE = re.compile(r"^#{1,6} .+$", re.MULTILINE)
 
@@ -14,13 +15,16 @@ class ValidationResult:
 
 def _missing(items_a, items_b, label):
     errs = []
-    for it in items_a:
-        if it not in items_b:
+    counts_a = Counter(items_a)
+    counts_b = Counter(items_b)
+    for it, count_a in counts_a.items():
+        if counts_b[it] < count_a:
             errs.append(f"{label} not preserved: {it[:60]}")
     return errs
 
 
 def validate(original: str, compressed: str) -> ValidationResult:
+    """Validate that URLs, fenced code blocks, and headings are exactly preserved."""
     errors: list[str] = []
     errors += _missing(_URL_RE.findall(original), _URL_RE.findall(compressed), "URL")
     errors += _missing(_FENCE_RE.findall(original), _FENCE_RE.findall(compressed), "code block")
