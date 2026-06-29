@@ -93,7 +93,8 @@ specify:
 - The tool returns `Created job <id> …` on success, or `Could not create job:
   <reason>` if something is genuinely invalid — in which case fix it (or ask the
   user for the one missing piece) and call again. **Once it returns "Created
-  job", you are done — report the job id; do NOT re-ask anything.**
+  job", the turn is complete; do NOT re-ask anything, do NOT call filler tools,
+  and do NOT create the job again.**
 
 ## Examples
 
@@ -130,5 +131,7 @@ command if they want one; everyone else just describes what they want.
 - **Guess, don't interrogate.** Apply the defaults table. Ask only for an unclear
   schedule or a risky permission.
 - **Translate phrases to schedules** yourself ("weekdays at 9" → `0 9 * * 1-5`).
-- **One way to create:** the `create_job` tool. No direct `ops.add`, no bash.
-- **Stop after success.** "Created job …" means done — report it, don't re-ask.
+- **One way to create:** the `create_job` tool. No direct `ops.add`; do not use
+  bash to create jobs.
+- **Stop after success.** "Created job …" means done. Do not re-announce it,
+  do not call harmless/filler tools, and do not create it again.

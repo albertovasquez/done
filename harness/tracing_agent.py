@@ -222,6 +222,7 @@ class TracingAgent(DefaultAgent):
     # --- seam 3: tool dispatch (bash via env.execute; file tools via Tool.execute) ---
     def execute_actions(self, message: dict) -> list[dict]:
         outputs = []
+        terminal_submission = ""
         for action in message.get("extra", {}).get("actions", []):
             name = action.get("tool_name", "bash")   # missing => bash (mock back-compat)
             tool = self._tools_by_name.get(name)
@@ -246,9 +247,18 @@ class TracingAgent(DefaultAgent):
             self._emitter.emit("action.done",
                                returncode=output.get("returncode", -1),
                                output_bytes=len(str(output.get("output", "")).encode("utf-8")))
-        return self.add_messages(
+            if name == "create_job" and output.get("returncode", -1) == 0:
+                terminal_submission = str(output.get("output", "")).strip()
+        observations = self.add_messages(
             *self.model.format_observation_messages(message, outputs, self.get_template_vars())
         )
+        if terminal_submission:
+            self.add_messages({
+                "role": "exit",
+                "content": terminal_submission,
+                "extra": {"exit_status": "Submitted", "submission": terminal_submission},
+            })
+        return observations
 
     # File tools (read/write/edit) are gated here at the ONE chokepoint; internal
     # tools (create_job/load_skill/load_memory) are not arbitrary-filesystem and
