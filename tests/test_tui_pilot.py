@@ -1197,6 +1197,36 @@ def test_run_caption_shows_persona_name():
     assert "Build" not in markup
 
 
+def test_meta_markup_compaction_note_present():
+    """When _compacted is set for the turn, _meta_markup includes the compaction
+    note with '→' and 'context compacted'."""
+    app = HarnessTui.__new__(HarnessTui)
+    app.model = "mock"
+    app._worker_model_id = None
+    app._yolo = False
+    app._mode_label = lambda: "Build"
+    # Simulate a compaction event having been recorded for this turn.
+    app._compacted = {"before_msgs": 40, "after_msgs": 15}
+    markup = app._meta_markup(2.5)
+    assert "context compacted" in markup
+    assert "→" in markup
+    assert "40" in markup
+    assert "15" in markup
+
+
+def test_meta_markup_no_compaction_by_default():
+    """When _compacted is None (no compaction this turn), the footer is silent."""
+    app = HarnessTui.__new__(HarnessTui)
+    app.model = "mock"
+    app._worker_model_id = None
+    app._yolo = False
+    app._mode_label = lambda: "Build"
+    app._compacted = None
+    markup = app._meta_markup(1.0)
+    assert "context compacted" not in markup
+    assert "↯" not in markup
+
+
 def test_landing_placeholder_persona_aware():
     """default persona keeps the original placeholder (with the ›-prefix and the
     example quote); a non-default persona swaps to 'Ask <name> anything…' (no

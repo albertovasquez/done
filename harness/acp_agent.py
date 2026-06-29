@@ -535,6 +535,7 @@ class HarnessAgent(acp.Agent):
         streamed = {"buf": ""}
         agent_ref = {"agent": None}     # bound to the TracingAgent in run_engine
         last_step = {"n": -1}
+        compacted = {"event": None}     # set if context.compacted fired this turn
 
         def emit_step_boundary() -> None:
             # tell the TUI: a NEW prose block begins (close any open one).
@@ -656,23 +657,27 @@ class HarnessAgent(acp.Agent):
         def run_engine() -> dict:
             from harness.tracing_agent import TracingAgent
             from harness.events import Emitter
+            from harness.relay_emitter import RelayEmitter
             # ACP carries the user-facing stream; the engine's own event stream
             # (llm.call/llm.return/action/action.done/run.*) is normally discarded.
             # Under --debug, relay each event to the TUI sole-writer over the same
             # with_meta channel instead of dropping it to /dev/null.
+            # In all modes, capture context.compacted so the TUI can show a note.
             if self._debug:
-                from harness.relay_emitter import RelayEmitter
-
                 def _relay(ev: dict) -> None:
+                    if ev["type"] == "context.compacted":
+                        compacted["event"] = ev["data"]
                     upd = with_meta(message_chunk(""),
                                     {"trace": {"type": ev["type"],
                                                "data": {"sid": session_id, **ev["data"]}}})
                     asyncio.run_coroutine_threadsafe(
                         self._conn.session_update(session_id, upd), loop).result()
-
-                emitter = RelayEmitter("/dev/null", clock=lambda: 0.0, relay=_relay)
             else:
-                emitter = Emitter("/dev/null", clock=lambda: 0.0, console=False)
+                def _relay(ev: dict) -> None:  # type: ignore[misc]
+                    if ev["type"] == "context.compacted":
+                        compacted["event"] = ev["data"]
+
+            emitter = RelayEmitter("/dev/null", clock=lambda: 0.0, relay=_relay)
             cfg = dict(self._agent_cfg)
             # Clarify-before-acting, enforced where the model actually obeys: an
             # explain turn runs with an answer-only instance_template instead of
@@ -705,7 +710,8 @@ class HarnessAgent(acp.Agent):
                     return {"stop_reason": "end_turn",
                             "exit_status": result.get("exit_status", "end_turn"),
                             "assistant": flatten_agent_messages(agent.messages),
-                            "streamed": streamed["buf"]}
+                            "streamed": streamed["buf"],
+                            "compacted": compacted["event"]}
                 finally:
                     # never marshal a delta to a dead loop after the turn ends.
                     if hasattr(model, "on_delta"):
@@ -725,13 +731,19 @@ class HarnessAgent(acp.Agent):
                                  self._worker_model_id, self._persona_key())
                 return {"stop_reason": "refusal", "exit_status": "refusal",
                         "assistant": flatten_agent_messages(getattr(agent, "messages", [])),
-                        "streamed": streamed["buf"]}
+                        "streamed": streamed["buf"],
+                        "compacted": compacted["event"]}
 
         if state.cancel_flag.is_set():
             return {"stop_reason": "cancelled", "exit_status": "cancelled", "assistant": ""}
         engine = await loop.run_in_executor(None, run_engine)
         if state.cancel_flag.is_set():
             return {"stop_reason": "cancelled", "exit_status": "cancelled", "assistant": ""}
+        # Surface context compaction to the TUI via the with_meta channel so the
+        # turn footer can show a dim note.  Emitted only when compaction fired.
+        if engine.get("compacted"):
+            await self._conn.session_update(session_id,
+                with_meta(message_chunk(""), {"context_compacted": engine["compacted"]}))
         return engine
 
 
