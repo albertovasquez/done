@@ -35,6 +35,7 @@ class AgentConfig:
     model: str              # model string, e.g. "gpt-5.4"
     name: str | None = None  # None for the reserved default; set for uuid agents
     yolo_pinned: bool = False  # persisted "always launch in YOLO" (default only)
+    compress_aware: bool = True  # persisted compress-aware mode flag (default ON)
 
 
 def conf_path() -> Path:
@@ -75,11 +76,13 @@ def load() -> dict[str, AgentConfig]:
             continue
         name = table.get("name")
         pinned = table.get("yolo_pinned")
+        ca = table.get("compress_aware")
         out[key] = AgentConfig(
             backend=backend,
             model=model,
             name=name if isinstance(name, str) else None,
             yolo_pinned=pinned if isinstance(pinned, bool) else False,
+            compress_aware=ca if isinstance(ca, bool) else True,
         )
     return out
 
@@ -117,6 +120,8 @@ def _serialize(agents: dict[str, AgentConfig]) -> str:
         lines.append(f"model = {_quote(cfg.model)}")
         if cfg.yolo_pinned:
             lines.append("yolo_pinned = true")
+        if not cfg.compress_aware:
+            lines.append("compress_aware = false")
         lines.append("")
     return "\n".join(lines)
 
@@ -127,6 +132,7 @@ def update_agent(
     backend: str | None = None,
     model: str | None = None,
     yolo_pinned: bool | None = None,
+    compress_aware: bool | None = None,
 ) -> None:
     """Upsert [agents.<persona_id>], overlaying ONLY the kwargs passed (None =
     leave unchanged). Preserves untouched fields and every other agent table.
@@ -144,6 +150,7 @@ def update_agent(
     base_backend = cur.backend if cur is not None else ""
     base_model = cur.model if cur is not None else ""
     base_pinned = cur.yolo_pinned if cur is not None else False
+    base_compress_aware = cur.compress_aware if cur is not None else True
     base_name = cur.name if cur is not None else None
     merged_backend = base_backend if backend is None else backend
     merged_model = base_model if model is None else model
@@ -154,6 +161,7 @@ def update_agent(
         model=merged_model,
         name=base_name,
         yolo_pinned=base_pinned if yolo_pinned is None else yolo_pinned,
+        compress_aware=base_compress_aware if compress_aware is None else compress_aware,
     )
     text = _serialize(agents)
 
@@ -169,9 +177,16 @@ def update_default(
     backend: str | None = None,
     model: str | None = None,
     yolo_pinned: bool | None = None,
+    compress_aware: bool | None = None,
 ) -> None:
     """Upsert [agents.default]. Thin wrapper over update_agent("default", ...)."""
-    update_agent(RESERVED_KEY, backend=backend, model=model, yolo_pinned=yolo_pinned)
+    update_agent(
+        RESERVED_KEY,
+        backend=backend,
+        model=model,
+        yolo_pinned=yolo_pinned,
+        compress_aware=compress_aware,
+    )
 
 
 def save_agent(persona_id: str, cfg: AgentConfig) -> None:
@@ -191,6 +206,89 @@ def yolo_pinned(persona_id: str = "default") -> bool:
     table is absent or the file is unreadable."""
     cur = load_agent(persona_id)
     return cur.yolo_pinned if cur is not None else False
+
+
+def compress_aware_pinned(persona_id: str = "default") -> bool:
+    """Whether compress-aware mode is persisted ON for this persona. Returns True
+    when the table is absent, file is unreadable, or the key is missing (default ON).
+    Reads raw TOML so it works even when the agent table has no backend/model."""
+    try:
+        raw = conf_path().read_bytes()
+    except OSError:
+        return True
+    if not raw.strip():
+        return True
+    try:
+        data = tomllib.loads(raw.decode("utf-8"))
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError):
+        return True
+    agents_raw = data.get("agents")
+    if not isinstance(agents_raw, dict):
+        return True
+    table = agents_raw.get(persona_id)
+    if not isinstance(table, dict):
+        return True
+    ca = table.get("compress_aware")
+    return ca if isinstance(ca, bool) else True
+
+
+def set_compress_aware(persona_id: str, on: bool) -> None:
+    """Persist compress_aware=on for persona_id. When a complete agent table (with
+    backend+model) exists, overlays via update_agent (preserving all other fields).
+    When no complete table exists yet, writes the raw TOML key directly so the value
+    survives until a full config row is written."""
+    agents = load()
+    if persona_id in agents:
+        # Full table exists — overlay compress_aware, preserve all other fields.
+        update_agent(persona_id, compress_aware=on)
+        return
+    # No complete table yet — upsert the key directly in the raw TOML.
+    path = conf_path()
+    try:
+        text = path.read_bytes().decode("utf-8")
+    except OSError:
+        text = f"schema_version = {SCHEMA_VERSION}\n"
+    try:
+        existing = tomllib.loads(text)
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError):
+        existing = {"schema_version": SCHEMA_VERSION}
+    # Build minimal TOML that adds [agents.<persona_id>] with compress_aware.
+    # Preserve unrelated top-level keys (schema_version, [harness], etc.) by
+    # re-emitting them verbatim ahead of the agents section we control.
+    if not isinstance(existing.get("agents"), dict):
+        existing["agents"] = {}
+    if not isinstance(existing["agents"].get(persona_id), dict):
+        existing["agents"][persona_id] = {}
+    existing["agents"][persona_id]["compress_aware"] = on
+    # Serialize: emit schema_version + one partial agents table.
+    ca_str = "true" if on else "false"
+    lines = [f"schema_version = {SCHEMA_VERSION}", ""]
+    # Emit any existing complete-agent tables preserved by the full serializer.
+    full_agents = {k: v for k, v in agents.items()}  # from load() above (complete rows)
+    ordered = ([RESERVED_KEY] if RESERVED_KEY in full_agents else []) + sorted(
+        k for k in full_agents if k != RESERVED_KEY
+    )
+    for key in ordered:
+        cfg = full_agents[key]
+        lines.append(f"[agents.{key}]")
+        if cfg.name is not None:
+            lines.append(f"name = {_quote(cfg.name)}")
+        lines.append(f"backend = {_quote(cfg.backend)}")
+        lines.append(f"model = {_quote(cfg.model)}")
+        if cfg.yolo_pinned:
+            lines.append("yolo_pinned = true")
+        if not cfg.compress_aware:
+            lines.append("compress_aware = false")
+        lines.append("")
+    # Emit the partial table for persona_id (no backend/model).
+    lines.append(f"[agents.{persona_id}]")
+    lines.append(f"compress_aware = {ca_str}")
+    lines.append("")
+    text = "\n".join(lines)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def harness_debug() -> bool | None:

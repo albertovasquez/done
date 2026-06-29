@@ -310,3 +310,18 @@ def test_yolo_pinned_per_persona(isolated_config):
 def test_update_agent_refuses_incomplete_create(isolated_config):
     config.update_agent("fred", yolo_pinned=True)   # no backend/model yet
     assert config.load_agent("fred") is None         # nothing written
+
+
+# --- compress_aware: read, write, helper ---
+
+def test_compress_aware_defaults_on_when_unset(tmp_path):
+    # autouse isolated_config already redirects config; no file → default True
+    assert config.compress_aware_pinned("default") is True
+
+
+def test_compress_aware_roundtrip(tmp_path):
+    # set False, confirm, then set True, confirm
+    config.set_compress_aware("default", False)
+    assert config.compress_aware_pinned("default") is False
+    config.set_compress_aware("default", True)
+    assert config.compress_aware_pinned("default") is True
