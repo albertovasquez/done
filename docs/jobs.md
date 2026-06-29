@@ -6,6 +6,10 @@ hourly health check, a Monday-morning reminder. A small background daemon
 persona that owns it**: same model, same workspace, same memory, same AGENTS.md
 as if that persona had typed the prompt live.
 
+> **New to jobs?** Start with the hands-on
+> [first-job walkthrough](jobs-walkthrough.md) — create and run one end-to-end
+> inside `done` in a few minutes. This page is the reference behind it.
+
 > This document describes what ships today (Phase 1). The "Not yet" section at the
 > end lists what's deferred so you don't expect it — most importantly, the
 > permission `grant` fields are **recorded but not yet enforced at runtime**.
@@ -151,5 +155,8 @@ skill and dashboard so the gates and locking are respected.
   schedules only; an over-frequent `Cron` expression isn't rejected yet.
 - **Job-list / management CLI.** Viewing and managing jobs is TUI-only in this
   phase.
+- **TUI-managed daemon.** The `harness-cron` daemon must be started separately;
+  the TUI neither launches it nor reports whether it's running, so scheduled jobs
+  only fire if you've started the daemon yourself ([#146](https://github.com/albertovasquez/done/issues/146)).
 - **Trace events.** `cron.fire` / `cron.tick` / `cron.error` are reserved in the
   debug-trace model but not yet emitted.
