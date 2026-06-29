@@ -145,10 +145,11 @@ class CronDashboard(ListView):
         text, color = daemon_header(
             _hb.heartbeat_age(), _hb.success_age(), interval=_daemon.DEFAULT_INTERVAL
         )
-        header = ListItem(Static(text, markup=False))
-        header.disabled = True           # non-selectable; has no .data, so action guards no-op
+        # Color travels with the text via Rich markup (testable, no CSS-per-status
+        # needed). Static carries no .data, so action guards treat it as no focus.
+        header = ListItem(Static(f"[{color}]{text}[/]", markup=True))
+        header.disabled = True           # non-selectable; ListView skips disabled on highlight
         header.add_class("cron-daemon-status")
-        header.styles.color = color
         self.append(header)
         for row_text, job in zip(render_rows(jobs), jobs):
             item = ListItem(Static(row_text, markup=False))
