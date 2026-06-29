@@ -57,6 +57,44 @@ chosen by the user over pure observe-only):
 ternary, so the three special cases (`code_explain` → answer-only, `ops_task` →
 observe-first, everything else → default) are readable at a glance.
 
+#### L1 must cover every routed run path, not just ACP (review finding)
+
+`_instance_template_for` today has **one** call site — `acp_agent.py:716` inside
+`_run_agent_turn` (the interactive TUI). Both other *routed* run paths bypass it and
+fall through to the raw `mini.yaml` "Please solve this issue" work-order. Verified:
+
+| Path | Routes? | Reaches `_instance_template_for` today? | Action |
+|---|---|---|---|
+| ACP interactive (`acp_agent.py:716`) | yes | yes | L1 as written |
+| Chat (`chat_handler.py:151-157`) | yes | no — sends raw prompt, no template | nothing (correct already) |
+| Dev CLI (`run_traced.py:197-203`) | yes — **has `cls.task_type`** at `:80` but drops it | no | **thread `task_type` through** (see below) |
+| Cron executor (`jobs/executor.py:185`) | no router | no | **explicit decision** (see below) |
+| Subagent worker (`tools/subagent.py:98`) | no — runs an assigned task | no | out of scope (intentional work-order) |
+
+To avoid three divergent copies, **lift the template selection into one shared seam**
+rather than re-deriving it at each caller. Concretely: move `_instance_template_for`
+(and the `ANSWER_ONLY_INSTANCE` / `OBSERVE_FIRST_INSTANCE` constants) into a small
+leaf module (e.g. `harness/instance_templates.py`) importable by `acp_agent.py`,
+`run_traced.py`, and `jobs/executor.py` without an import cycle — mirroring how
+`textgate.py` / `permcheck.py` were extracted. Then:
+
+- **ACP:** unchanged behavior, now importing from the leaf.
+- **Dev CLI (`run_traced.py`):** thread `cls.task_type` into `run_agent` and set
+  `agent_cfg["instance_template"] = _instance_template_for(task_type, default)` before
+  building the runner. (It already classifies; it just discards the result.)
+- **Cron executor:** has no router, so it cannot classify intent. **Decision (default,
+  revisitable): leave cron on the work-order template for now** — a cron job is a
+  predetermined instruction the user wrote, and many are genuine "do X" jobs. Record
+  this as a known limitation; a follow-up can add a per-job `mode: observe|work`
+  field (`jobs/model.py`) if observe-style cron jobs become common. *(If the user
+  prefers, the alternative is to default cron ops to observe-first too — flagged in
+  the open question below.)*
+- **Subagent worker:** out of scope — a worker is dispatched a concrete assigned task
+  by its parent, so the work-order framing is correct; do not change it.
+
+This makes the L1 fix real for **all interactive + dev-CLI routed turns**, with cron
+and workers explicitly scoped rather than silently missed.
+
 ### L2 — Router learns observe-vs-fix intent
 
 In `router.py` `_system_prompt`, add guidance: within `ops_task`, distinguish
@@ -83,15 +121,35 @@ guidance is sufficient and keeps `TASK_TYPES` stable.)
    suite to find a failing test that wasn't reported). The four phases assume a
    confirmed failure exists.
 
+### Residual completeness limit (review finding, accepted)
+
+L1 keys off `task_type`. If the cheap router **misclassifies** a read-only "check X"
+as `code_fix` / `code_refactor` / `code_feature`, it still gets the work-order — L1
+can't see intent the classifier got wrong. We accept this rather than chase it,
+because **L3 is the cross-cutting backstop**: the `systematic-debugging` off-ramp
+fires on "no reported failure" regardless of which task_type attached the skill, and
+the tightened description steers the classifier away from debugging on observe-intent.
+The remaining exposure is "misclassified as code_fix *and* no debugging skill loaded"
+— rare, and the worst case is the agent over-eagerly acts, which is the pre-existing
+behavior, not a regression. Noted, not fixed.
+
 ## Files touched
 
-- `harness/acp_agent.py` — add `OBSERVE_FIRST_INSTANCE`, update `_instance_template_for`
-- `harness/router.py` — extend `_system_prompt` with observe-vs-fix guidance
-- `harness/skills/systematic-debugging/SKILL.md` — tighten `description`, add precondition off-ramp
+- **`harness/instance_templates.py` (new leaf)** — `ANSWER_ONLY_INSTANCE`,
+  `OBSERVE_FIRST_INSTANCE`, `_instance_template_for`; moved out of `acp_agent.py`
+  so all routed run paths can import without a cycle.
+- `harness/acp_agent.py` — import the three symbols from the leaf; `:716` unchanged.
+- `harness/run_traced.py` — thread `cls.task_type` into `run_agent`; set
+  `agent_cfg["instance_template"] = _instance_template_for(task_type, default)`.
+- `harness/router.py` — extend `_system_prompt` with observe-vs-fix guidance.
+- `harness/skills/systematic-debugging/SKILL.md` — tighten `description`, add precondition off-ramp.
 - `tests/test_acp_agent.py` — **update** `test_work_order_turn_keeps_engine_instance_template`
-  (line 65 currently asserts `ops_task` keeps the default — drop `"ops_task"` from that
-  loop) and add a new `test_ops_task_turn_gets_observe_first_template` + a content test
-  for `OBSERVE_FIRST_INSTANCE` mirroring `test_answer_only_template_*`.
+  (line 65 asserts `ops_task` keeps the default — drop `"ops_task"`); add
+  `test_ops_task_turn_gets_observe_first_template` + an `OBSERVE_FIRST_INSTANCE` content
+  test mirroring `test_answer_only_template_*`. (Import path moves to the leaf module —
+  update the existing imports at `test_acp_agent.py:52,62,72`.)
+- `tests/test_run_traced.py` — new: an `ops_task` run sets the observe-first template
+  on the runner config (guards the dev-CLI path that the review found unprotected).
 - `tests/test_router.py` — assert an observe-intent prompt does not attach `systematic-debugging`
   (extend with a stubbed-classification case).
 
@@ -117,11 +175,30 @@ guidance is sufficient and keeps `TASK_TYPES` stable.)
 - New `ops_check` task type (not needed; would touch `TASK_TYPES`, flows, tests).
 - The upstream `mini.yaml` default template is left as-is (it is correct for the
   SWE-bench `code_fix` lane); we override per task type in the harness, not upstream.
+- **Cron-executor and subagent-worker paths** keep the work-order template (cron =
+  predetermined instruction with no router intent; worker = parent-assigned task).
+  A per-job `mode` field for cron is a possible follow-up, not this PR.
+- Chasing classifier *misclassification* of read-only intent into `code_fix`/etc.
+  (L3 off-ramp is the backstop; see "Residual completeness limit").
 - #176 (create_job re-announce loop) — separate turn-termination bug.
+
+## Open questions for the user
+
+1. **Cron ops jobs:** default the cron path to the work-order template (current spec
+   decision) or to observe-first? Work-order is safer for "do X nightly" jobs; some
+   "check X and alert" jobs would prefer observe. Recommendation: keep work-order now,
+   add a per-job `mode` later.
+2. **`OBSERVE_FIRST_INSTANCE` escalation wording:** "find a real failure → describe it
+   and ask before fixing" vs. stricter "always report only, never act." (Earlier
+   answer chose observe-first-with-consent; confirm that still holds.)
 
 ## Risks
 
-- **Lowest-risk class of change** (prompt text). Blast radius bounded by the four
-  named test modules.
-- The router change is advisory (the cheap model may still occasionally mis-attach);
-  L1 + L3 are the real safety net and make the agent behave correctly even then.
+- **Low-risk class of change** — mostly prompt text plus one leaf-module extraction
+  (`instance_templates.py`) and one thread-through in `run_traced.py`. Blast radius
+  bounded by the named test modules; the extraction is a move, not a rewrite.
+- The router change (L2) is advisory (the cheap model may still occasionally
+  mis-attach); **L1 (now covering ACP + dev CLI) and L3 are the real safety net** and
+  make the agent behave correctly even when L2 mis-fires.
+- New import seam: `instance_templates.py` must stay leaf (no `acp_agent`/`router`
+  imports) to avoid a cycle — same discipline as `textgate.py`/`permcheck.py`.
