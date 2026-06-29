@@ -7,8 +7,13 @@ import logging
 from harness.jobs import ops
 from harness.jobs import model as m
 from harness.jobs.executor import OrphanPersona, run_headless_turn
+from harness.jobs.heartbeat import record_heartbeat
 
 logger = logging.getLogger(__name__)
+
+# Single source for the daemon tick cadence — referenced by run_forever's default,
+# cron_main's argparse default, and the panel's staleness threshold.
+DEFAULT_INTERVAL = 30.0
 
 
 def due_jobs(jobs: list[m.Job], *, now: float) -> list[m.Job]:
@@ -44,7 +49,7 @@ def tick(now: float, *, executor=None) -> list[str]:
 
 async def run_forever(
     *,
-    interval: float = 30.0,
+    interval: float = DEFAULT_INTERVAL,
     clock,
     sleep,
     executor=None,
@@ -56,6 +61,9 @@ async def run_forever(
     """
     if executor is None:
         executor = run_headless_turn
+    # Seed BOTH heartbeat files so a freshly-started daemon reads "running", not
+    # "failing", during the first-tick window (before any tick has succeeded).
+    record_heartbeat(success=True)
     while True:
         now = clock()
         try:
@@ -64,4 +72,7 @@ async def run_forever(
             # KeyboardInterrupt / CancelledError are NOT Exception, so they still
             # propagate and the loop stays stoppable.
             logger.exception("cron tick failed at %s; continuing to next interval", now)
+            record_heartbeat(success=False)  # alive but this tick failed
+        else:
+            record_heartbeat(success=True)   # clean tick
         await sleep(interval)

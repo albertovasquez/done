@@ -19,7 +19,8 @@ import time
 from dotenv import load_dotenv
 
 from harness import paths
-from harness.jobs.daemon import run_forever, tick
+from harness.jobs.daemon import run_forever, tick, DEFAULT_INTERVAL
+from harness.jobs.heartbeat import record_heartbeat
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -35,7 +36,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--interval",
         type=float,
-        default=30.0,
+        default=DEFAULT_INTERVAL,
         metavar="SECONDS",
         help="Seconds between ticks in continuous mode (default: 30).",
     )
@@ -59,6 +60,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.once:
         tick(now=time.time())
+        record_heartbeat(success=True)
         return 0
 
     asyncio.run(

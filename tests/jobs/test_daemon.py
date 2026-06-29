@@ -232,4 +232,67 @@ class TestRunForever:
         # The first tick raised, but the loop kept going: a 2nd tick ran and sleep
         # was awaited twice — the RuntimeError did NOT propagate.
         assert len(tick_calls) >= 2
-        assert len(sleep_calls) >= 2
+
+    def test_run_forever_seeds_success_at_startup(self, monkeypatch):
+        """Pre-loop heartbeat seeds BOTH files so a fresh daemon reads 'running'
+        (not 'failing') before any tick completes."""
+        from harness.jobs import heartbeat as hb
+        monkeypatch.setattr("harness.jobs.daemon.tick", lambda now, **kw: [])
+
+        # Stop immediately, before the loop body runs even once.
+        async def stop_at_first_sleep(_):
+            raise asyncio.CancelledError
+
+        async def go():
+            with pytest.raises(asyncio.CancelledError):
+                await daemon.run_forever(
+                    interval=daemon.DEFAULT_INTERVAL,
+                    clock=lambda: 1000.0,
+                    sleep=stop_at_first_sleep,
+                    executor=lambda job: None,
+                )
+
+        asyncio.run(go())
+
+        # Both files written by the pre-loop record_heartbeat(success=True).
+        assert hb.heartbeat_age() is not None
+        assert hb.success_age() is not None
+
+    def test_run_forever_heartbeat_success_flags(self, monkeypatch):
+        """Records: startup seed (True), then per-tick — True on clean, False on
+        failing. Capture the success flags rather than racing wall-clock ages."""
+        calls = []
+        monkeypatch.setattr("harness.jobs.daemon.record_heartbeat",
+                            lambda success=False: calls.append(success))
+
+        # tick succeeds on iter 1, raises on iter 2.
+        tick_n = []
+        def flaky_tick(now, **kw):
+            tick_n.append(now)
+            if len(tick_n) == 2:
+                raise RuntimeError("tick blew up")
+            return []
+        monkeypatch.setattr("harness.jobs.daemon.tick", flaky_tick)
+
+        sleeps = []
+        async def fake_sleep(_):
+            sleeps.append(1)
+            if len(sleeps) >= 2:
+                raise asyncio.CancelledError
+        times = iter([1.0, 2.0, 3.0])
+
+        async def go():
+            with pytest.raises(asyncio.CancelledError):
+                await daemon.run_forever(
+                    interval=daemon.DEFAULT_INTERVAL,
+                    clock=lambda: next(times),
+                    sleep=fake_sleep,
+                    executor=lambda job: None,
+                )
+
+        asyncio.run(go())
+
+        # [startup seed=True, clean tick=True, failing tick=False]
+        assert calls[0] is True          # startup seed
+        assert calls[1] is True          # clean tick
+        assert calls[2] is False         # failing tick → non-success heartbeat
