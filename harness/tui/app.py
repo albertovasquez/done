@@ -54,7 +54,7 @@ from harness.tui.widgets.decision_prompt import DecisionPrompt, TYPE_SOMETHING, 
 from harness.tui.widgets.status_chip import StatusChip
 from harness.tui.header import icon_markup, header_text_markup
 from harness import config as _config
-from harness.compaction import CONTEXT_WINDOWS, DEFAULT_CONTEXT_WINDOW
+from harness.compaction import resolve_ctx_window
 
 
 def _c(name: str, text: str) -> str:
@@ -74,11 +74,6 @@ def _model_label(model: str, worker_model_id: str | None) -> str:
         return "mock model"
     # vibeproxy with no model chosen yet — avoid the redundant "vibeproxy Vibeproxy".
     return "default model"
-
-
-def _context_window_for_model(model: str) -> int:
-    name = (model or "").split("/", 1)[-1]
-    return CONTEXT_WINDOWS.get(name, DEFAULT_CONTEXT_WINDOW)
 
 
 def extract_agent_trace(tracer, update) -> None:
@@ -437,7 +432,9 @@ class HarnessTui(App):
         return f"{n/1000:.1f}K" if n >= 1000 else str(n)
 
     def _context_tagline(self) -> str:
-        window = _context_window_for_model(_model_label(self.model, self._worker_model_id))
+        # _tokens is the latest llm.return total (prompt+completion for that call),
+        # which tracks current context footprint until the next model call (or compaction).
+        window = resolve_ctx_window(_model_label(self.model, self._worker_model_id))
         if self._tokens <= 0:
             return f"ctx --/{self._fmt_tokens(window)}"
         remaining = max(window - self._tokens, 0)

@@ -115,6 +115,31 @@ def test_llm_return_event_includes_token_usage(tmp_path):
     }
 
 
+def test_llm_return_derives_total_from_prompt_and_completion(tmp_path):
+    out = make_toolcall_output("done", [], [])
+    out["extra"]["cost"] = 0.0
+    out["extra"]["response"] = {
+        "usage": {"prompt_tokens": 800, "completion_tokens": 200}
+    }
+    emitter = Emitter(tmp_path / "events.jsonl", clock=lambda: 0.0, console=False)
+    model = DeterministicToolcallModel(outputs=[out], cost_per_call=0.0)
+    env = LocalEnvironment(cwd=str(tmp_path))
+    cfg = _agent_config()
+    cfg["output_path"] = str(tmp_path / "traj.json")
+    agent = TracingAgent(model, env, emitter=emitter, **cfg)
+
+    agent.query()
+    emitter.close()
+
+    records = [json.loads(l) for l in (tmp_path / "events.jsonl").read_text().splitlines()]
+    llm_return = next(r for r in records if r["type"] == "llm.return")
+    assert llm_return["data"]["usage"] == {
+        "prompt": 800,
+        "completion": 200,
+        "total": 1000,
+    }
+
+
 _SUBMIT = [("done", ["echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"])]
 
 

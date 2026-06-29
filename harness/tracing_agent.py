@@ -54,6 +54,8 @@ def _usage_from_extra(extra: dict) -> dict:
     total = _int("total_tokens") or _int("total")
     prompt = _int("prompt_tokens") or _int("input_tokens")
     completion = _int("completion_tokens") or _int("output_tokens")
+    if total is None and prompt is not None and completion is not None:
+        total = prompt + completion
     if total is not None:
         out["total"] = total
     if prompt is not None:
