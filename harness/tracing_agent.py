@@ -35,6 +35,34 @@ from harness.events import Emitter
 from harness.permcheck import PermissionRequest, classify_path
 
 
+def _usage_from_extra(extra: dict) -> dict:
+    """Extract token usage from the persisted LiteLLM response shape.
+
+    Test/mock models usually omit it; real LiteLLM responses persist
+    ``extra["response"]["usage"]`` via model_dump().
+    """
+    response = extra.get("response") if isinstance(extra, dict) else None
+    usage = response.get("usage") if isinstance(response, dict) else None
+    if not isinstance(usage, dict):
+        return {}
+
+    def _int(name: str):
+        value = usage.get(name)
+        return value if isinstance(value, int) else None
+
+    out = {}
+    total = _int("total_tokens") or _int("total")
+    prompt = _int("prompt_tokens") or _int("input_tokens")
+    completion = _int("completion_tokens") or _int("output_tokens")
+    if total is not None:
+        out["total"] = total
+    if prompt is not None:
+        out["prompt"] = prompt
+    if completion is not None:
+        out["completion"] = completion
+    return out
+
+
 class TracingAgent(DefaultAgent):
     def __init__(self, model, env, *, emitter: Emitter, skill_block: str = "",
                  persona_block: str = "", memory_block: str = "",
@@ -213,10 +241,12 @@ class TracingAgent(DefaultAgent):
         extra = message.get("extra", {})
         content = message.get("content") or ""
         preview = content[:120] if isinstance(content, str) else str(content)[:120]
+        usage = _usage_from_extra(extra)
         self._emitter.emit("llm.return", n=self.n_calls,
                            cost=round(extra.get("cost", 0.0), 6),
                            n_actions=len(extra.get("actions", [])),
-                           content_preview=preview)
+                           content_preview=preview,
+                           usage=usage)
         return message
 
     # --- seam 3: tool dispatch (bash via env.execute; file tools via Tool.execute) ---
