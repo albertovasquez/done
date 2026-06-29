@@ -1463,10 +1463,16 @@ class HarnessTui(App):
             self._notify_line("finish the current turn before creating a job")
             return
         self._show_cron_drawer(False)
-        self.run_worker(
-            self._submit_text("I want to create a scheduled cron job."),
-            thread=False,
-        )
+        self.run_worker(self._seed_create_job(), thread=False)
+
+    async def _seed_create_job(self) -> None:
+        """Seed the create-job prompt. Pressing 'n' may be the FIRST action of a
+        session, still on the landing screen with no transcript — so enter the
+        conversation first (mirrors on_prompt_area_submitted) before _submit_text,
+        which assumes conversation state is already established."""
+        if not self._started:
+            await self._enter_conversation()
+        await self._submit_text("I want to create a scheduled cron job.")
         self._active_input().focus()
 
     def on_job_action_failed(self, event: JobActionFailed) -> None:
