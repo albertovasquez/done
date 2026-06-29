@@ -349,6 +349,18 @@ class HarnessTui(App):
                 self._tracer.emit("dn", "spawn.failed", error=str(e))
             self._fatal(f"could not start agent: {e}")
 
+        # Auto-start the cron daemon (best-effort, once per window). DELIBERATE:
+        # this spawns a DETACHED background process that OUTLIVES done — see
+        # harness/jobs/supervisor.py. Never let it break boot. Local import keeps
+        # subprocess/jobs off the TUI module-load path.
+        try:
+            from harness.jobs.supervisor import ensure_daemon_running
+            ensure_daemon_running()
+        except Exception as e:
+            self.log(f"cron autostart skipped: {e!r}")
+            if self._tracer is not None:
+                self._tracer.emit("dn", "cron.autostart.failed", error=str(e))
+
     async def _mount_status_contents(self) -> None:
         bar = self.query_one("#statusbar", Container)
         # Mode chip FIRST (leftmost), where the eye lands — a security-bypass

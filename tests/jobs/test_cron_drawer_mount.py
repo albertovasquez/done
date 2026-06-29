@@ -23,6 +23,13 @@ FAKE_CMD = [__import__("sys").executable, str(REPO / "tests/fake_agent.py")]
 
 
 @pytest.fixture(autouse=True)
+def _no_real_daemon_spawn(monkeypatch):
+    # on_mount now auto-starts the cron daemon. Stub the detached spawn so the
+    # mount tests never fork a real `python -m harness.jobs.cron_main` subprocess.
+    monkeypatch.setattr("harness.jobs.supervisor._spawn_detached", lambda: None)
+
+
+@pytest.fixture(autouse=True)
 def _cron_dir(tmp_path, monkeypatch):
     # Isolate the cron store so ops.list_jobs() reads an empty tmp store.
     monkeypatch.setattr("harness.paths.config_dir", lambda: tmp_path)
@@ -89,6 +96,39 @@ def test_daemon_status_header_row_mounted():
             # color travels with the text as a span (red = the 'stopped' status)
             assert any("red" in str(span.style) for span in content.spans), \
                 "header text must carry the status color as a markup span"
+
+    asyncio.run(go())
+
+
+def test_on_mount_calls_ensure_daemon_running(monkeypatch):
+    """Boot auto-starts the cron daemon exactly once per window."""
+    import harness.jobs.supervisor as sup
+    called = []
+    monkeypatch.setattr(sup, "ensure_daemon_running",
+                        lambda *a, **k: called.append(True) or "spawned")
+
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert called == [True]    # autostart attempted exactly once
+
+    asyncio.run(go())
+
+
+def test_on_mount_survives_autostart_failure(monkeypatch):
+    """A raising ensure_daemon_running must not break boot."""
+    import harness.jobs.supervisor as sup
+
+    def boom(*a, **k):
+        raise RuntimeError("spawn exploded")
+    monkeypatch.setattr(sup, "ensure_daemon_running", boom)
+
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert app.query_one("#cron-drawer") is not None   # booted anyway
 
     asyncio.run(go())
 
