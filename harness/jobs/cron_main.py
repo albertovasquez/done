@@ -21,6 +21,7 @@ from dotenv import load_dotenv
 from harness import paths
 from harness.jobs.daemon import run_forever, tick, DEFAULT_INTERVAL
 from harness.jobs.heartbeat import record_heartbeat
+from harness.jobs import lock
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -63,11 +64,20 @@ def main(argv: list[str] | None = None) -> int:
         record_heartbeat(success=True)
         return 0
 
-    asyncio.run(
-        run_forever(
-            interval=args.interval,
-            clock=time.time,
-            sleep=asyncio.sleep,
+    # Single-instance: only one harness-cron may run the loop. If a live daemon
+    # already holds the lock (another window/launchd/hand-start beat us), exit 0.
+    if not lock.acquire():
+        logging.getLogger(__name__).info(
+            "another harness-cron already holds %s — exiting", lock.lock_file())
+        return 0
+    try:
+        asyncio.run(
+            run_forever(
+                interval=args.interval,
+                clock=time.time,
+                sleep=asyncio.sleep,
+            )
         )
-    )
+    finally:
+        lock.release()
     return 0

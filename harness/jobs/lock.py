@@ -36,7 +36,12 @@ def _write_pid(path: Path, pid: int) -> None:
 
 
 def acquire(*, pid: int | None = None, pid_alive=_pid_alive) -> bool:
-    """Claim the lock. Return True if we now own it, False if a live daemon holds it."""
+    """Claim the lock. Return True if we now own it, False if a live daemon holds it.
+
+    `pid_alive` is bound as a default at def-time, so monkeypatching the module
+    `_pid_alive` does NOT affect it — tests must INJECT `pid_alive=` (or seed a
+    genuinely-live pid) to control the liveness check.
+    """
     pid = pid if pid is not None else os.getpid()
     path = lock_file()
     _paths.cron_dir().mkdir(parents=True, exist_ok=True)
