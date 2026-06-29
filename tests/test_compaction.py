@@ -342,3 +342,87 @@ def test_resolve_ctx_window_uses_litellm_when_available(monkeypatch):
     import harness.compaction as c
     monkeypatch.setattr(c, "_get_max_tokens", lambda name: 55555, raising=False)
     assert resolve_ctx_window("some-litellm-known-model") == 55555
+
+
+# ---------------------------------------------------------------------------
+# Task 2: build_compaction uses resolve_ctx_window; on_event/now round-trip
+# ---------------------------------------------------------------------------
+
+def test_build_compaction_uses_model_name_for_ctx_window():
+    """build_compaction(model_name=) resolves ctx_window from the curated table."""
+    comp = build_compaction(
+        {"enabled": True},
+        model=_FakeModel(), fixed_overhead_tokens=0, add_cost=lambda c: None,
+        model_name="claude-opus-4-8",
+    )
+    assert comp is not None
+    assert comp.ctx_window == 1_000_000
+
+
+def test_build_compaction_cfg_ctx_window_overrides_model_name():
+    """Explicit cfg['ctx_window'] beats model_name table lookup."""
+    comp = build_compaction(
+        {"enabled": True, "ctx_window": 99999},
+        model=_FakeModel(), fixed_overhead_tokens=0, add_cost=lambda c: None,
+        model_name="claude-opus-4-8",
+    )
+    assert comp is not None
+    assert comp.ctx_window == 99999
+
+
+def test_build_compaction_disabled_returns_none_with_model_name():
+    """disabled cfg still returns None even with model_name passed."""
+    result = build_compaction(
+        {"enabled": False},
+        model=_FakeModel(), fixed_overhead_tokens=0, add_cost=lambda c: None,
+        model_name="claude-opus-4-8",
+    )
+    assert result is None
+
+
+def test_build_compaction_on_event_stored_and_in_params():
+    """on_event kwarg is stored on Compaction and present in params()."""
+    sentinel = object()
+    comp = build_compaction(
+        {"enabled": True},
+        model=_FakeModel(), fixed_overhead_tokens=0, add_cost=lambda c: None,
+        on_event=sentinel,
+    )
+    assert comp is not None
+    assert comp.on_event is sentinel
+    assert comp.params()["on_event"] is sentinel
+
+
+def test_build_compaction_on_event_none_by_default():
+    """on_event defaults to None; params() exposes it."""
+    comp = build_compaction(
+        {"enabled": True},
+        model=_FakeModel(), fixed_overhead_tokens=0, add_cost=lambda c: None,
+    )
+    assert comp is not None
+    assert comp.on_event is None
+    assert "on_event" in comp.params()
+    assert comp.params()["on_event"] is None
+
+
+def test_compress_accepts_on_event_kwarg():
+    """compress() accepts on_event=... without error (no-op)."""
+    prior = _msgs(3)
+    r = compress(prior, summarize=lambda m: "S", count_tokens=TOK,
+                 fixed_overhead_tokens=0, ctx_window=10_000_000,
+                 on_event=None)
+    assert r.compressed is False
+
+
+def test_compress_params_roundtrip_with_on_event():
+    """compress(**comp.params()) works end-to-end with on_event in params."""
+    model = _FakeModel(response="COMPACTED")
+    prior = [{"role": "user", "content": "a" * 100} for _ in range(40)]
+    comp = build_compaction(
+        {"enabled": True, "ctx_window": 2000, "protect_head_n": 2, "protect_last_n": 5},
+        model=model, fixed_overhead_tokens=0, add_cost=lambda c: None,
+        on_event=lambda e: None,
+    )
+    # This should not raise even though params() includes on_event
+    r = compress(prior, **comp.params())
+    assert r.method == "summary"

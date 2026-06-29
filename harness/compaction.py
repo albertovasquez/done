@@ -102,6 +102,7 @@ class Compaction:
     protect_head_n: int = 0
     protect_last_n: int = 20
     enabled: bool = True
+    on_event: "Callable | None" = None
 
     def params(self) -> dict:
         """Return kwargs for compress() (everything except ``prior``)."""
@@ -114,11 +115,15 @@ class Compaction:
             "target_ratio": self.target_ratio,
             "protect_head_n": self.protect_head_n,
             "protect_last_n": self.protect_last_n,
+            "on_event": self.on_event,
         }
 
 
 def build_compaction(cfg, *, model, fixed_overhead_tokens: int,
-                     add_cost: Callable[[float], None]) -> "Compaction | None":
+                     add_cost: Callable[[float], None],
+                     model_name: str = "",
+                     on_event=None,
+                     now=None) -> "Compaction | None":
     """Build a ``Compaction`` adapter from a config dict and live model/cost hooks.
 
     Returns ``None`` when compaction is disabled or ``cfg`` is falsy.
@@ -127,17 +132,21 @@ def build_compaction(cfg, *, model, fixed_overhead_tokens: int,
     returned dict has ``"content"`` (str) and ``"extra": {"cost": float}``.
     ``add_cost`` is called with each summarize call's cost so the session can
     track it alongside normal turn costs.
+    ``model_name`` is used to resolve ``ctx_window`` via ``resolve_ctx_window``
+    when no explicit ``ctx_window`` is set in ``cfg``.
+    ``on_event`` and ``now`` are stored for future observability emission (Task 3).
     """
     if not cfg or not cfg.get("enabled"):
         return None
 
-    ctx_window: int = int(cfg.get("ctx_window", DEFAULT_CONTEXT_WINDOW))
+    ctx_window: int = resolve_ctx_window(model_name, cfg.get("ctx_window"))
     threshold: float = float(cfg.get("threshold", 0.5))
     target_ratio: float = float(cfg.get("target_ratio", 0.2))
     protect_head_n: int = int(cfg.get("protect_head_n", 0))
     protect_last_n: int = int(cfg.get("protect_last_n", 20))
 
     def summarize(middle: list[dict]) -> str:
+        # on_event and now are closed over here for Task 3 emission (no-op for now).
         user_content = render(middle)
         msg = model.query([
             {"role": "system", "content": COMPRESS_SYSTEM},
@@ -156,6 +165,7 @@ def build_compaction(cfg, *, model, fixed_overhead_tokens: int,
         protect_head_n=protect_head_n,
         protect_last_n=protect_last_n,
         enabled=True,
+        on_event=on_event,
     )
 
 
@@ -179,7 +189,8 @@ def _split(prior, *, count_tokens, budget, protect_head_n, protect_last_n, targe
 def compress(prior, *, summarize: Callable[[list[dict]], str],
              count_tokens: Callable[[str], int], fixed_overhead_tokens: int,
              ctx_window: int, threshold: float = 0.5, target_ratio: float = 0.2,
-             protect_head_n: int = 0, protect_last_n: int = 20) -> CompactResult:
+             protect_head_n: int = 0, protect_last_n: int = 20,
+             on_event=None) -> CompactResult:
     prior = prior or []
     before_msgs = len(prior)
     before_tokens = count_tokens(render(prior))
