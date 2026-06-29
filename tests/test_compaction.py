@@ -312,3 +312,165 @@ def test_compaction_integrates_with_compress():
     r = compress(prior, **comp.params())
     assert r.method == "summary"
     assert any("COMPACTED" in str(m.get("content")) for m in r.messages)
+
+
+# ---------------------------------------------------------------------------
+# Task 1: resolve_ctx_window
+# ---------------------------------------------------------------------------
+from harness.compaction import resolve_ctx_window, CONTEXT_WINDOWS, DEFAULT_CONTEXT_WINDOW
+
+def test_resolve_ctx_window_config_override_wins():
+    # override beats everything, even a known model
+    assert resolve_ctx_window("claude-opus-4-8", cfg_override=12345) == 12345
+
+def test_resolve_ctx_window_known_model_from_table():
+    assert resolve_ctx_window("gpt-5.4") == CONTEXT_WINDOWS["gpt-5.4"]
+    assert resolve_ctx_window("claude-opus-4-8") == 1_000_000
+
+def test_resolve_ctx_window_strips_openai_prefix():
+    # vibeproxy presents models as 'openai/<name>'
+    assert resolve_ctx_window("openai/gpt-5.4") == CONTEXT_WINDOWS["gpt-5.4"]
+
+def test_resolve_ctx_window_unknown_model_falls_back_to_floor(monkeypatch):
+    # force the litellm fallback to return nothing -> floor
+    import harness.compaction as c
+    def fake_get_max_tokens(name): return None
+    monkeypatch.setattr(c, "_get_max_tokens", fake_get_max_tokens, raising=False)
+    assert resolve_ctx_window("totally-unknown-model-xyz") == DEFAULT_CONTEXT_WINDOW
+
+def test_resolve_ctx_window_uses_litellm_when_available(monkeypatch):
+    import harness.compaction as c
+    monkeypatch.setattr(c, "_get_max_tokens", lambda name: 55555, raising=False)
+    assert resolve_ctx_window("some-litellm-known-model") == 55555
+
+
+# ---------------------------------------------------------------------------
+# Task 2: build_compaction uses resolve_ctx_window; on_event/now round-trip
+# ---------------------------------------------------------------------------
+
+def test_build_compaction_uses_model_name_for_ctx_window():
+    """build_compaction(model_name=) resolves ctx_window from the curated table."""
+    comp = build_compaction(
+        {"enabled": True},
+        model=_FakeModel(), fixed_overhead_tokens=0, add_cost=lambda c: None,
+        model_name="claude-opus-4-8",
+    )
+    assert comp is not None
+    assert comp.ctx_window == 1_000_000
+
+
+def test_build_compaction_cfg_ctx_window_overrides_model_name():
+    """Explicit cfg['ctx_window'] beats model_name table lookup."""
+    comp = build_compaction(
+        {"enabled": True, "ctx_window": 99999},
+        model=_FakeModel(), fixed_overhead_tokens=0, add_cost=lambda c: None,
+        model_name="claude-opus-4-8",
+    )
+    assert comp is not None
+    assert comp.ctx_window == 99999
+
+
+def test_build_compaction_disabled_returns_none_with_model_name():
+    """disabled cfg still returns None even with model_name passed."""
+    result = build_compaction(
+        {"enabled": False},
+        model=_FakeModel(), fixed_overhead_tokens=0, add_cost=lambda c: None,
+        model_name="claude-opus-4-8",
+    )
+    assert result is None
+
+
+def test_build_compaction_on_event_stored_and_in_params():
+    """on_event kwarg is stored on Compaction and present in params()."""
+    sentinel = object()
+    comp = build_compaction(
+        {"enabled": True},
+        model=_FakeModel(), fixed_overhead_tokens=0, add_cost=lambda c: None,
+        on_event=sentinel,
+    )
+    assert comp is not None
+    assert comp.on_event is sentinel
+    assert comp.params()["on_event"] is sentinel
+
+
+def test_build_compaction_on_event_none_by_default():
+    """on_event defaults to None; params() exposes it."""
+    comp = build_compaction(
+        {"enabled": True},
+        model=_FakeModel(), fixed_overhead_tokens=0, add_cost=lambda c: None,
+    )
+    assert comp is not None
+    assert comp.on_event is None
+    assert "on_event" in comp.params()
+    assert comp.params()["on_event"] is None
+
+
+def test_compress_accepts_on_event_kwarg():
+    """compress() accepts on_event=... without error (no-op)."""
+    prior = _msgs(3)
+    r = compress(prior, summarize=lambda m: "S", count_tokens=TOK,
+                 fixed_overhead_tokens=0, ctx_window=10_000_000,
+                 on_event=None)
+    assert r.compressed is False
+
+
+def test_compress_params_roundtrip_with_on_event():
+    """compress(**comp.params()) works end-to-end with on_event in params."""
+    model = _FakeModel(response="COMPACTED")
+    prior = [{"role": "user", "content": "a" * 100} for _ in range(40)]
+    comp = build_compaction(
+        {"enabled": True, "ctx_window": 2000, "protect_head_n": 2, "protect_last_n": 5},
+        model=model, fixed_overhead_tokens=0, add_cost=lambda c: None,
+        on_event=lambda name, data: None,
+    )
+    # This should not raise even though params() includes on_event
+    r = compress(prior, **comp.params())
+    assert r.method == "summary"
+
+
+# ---------------------------------------------------------------------------
+# Task 3: on_event emission
+# ---------------------------------------------------------------------------
+
+def test_compress_emits_eval_none_when_below_budget():
+    events = []
+    compress(_msgs(3), summarize=lambda m: "S", count_tokens=TOK,
+             fixed_overhead_tokens=0, ctx_window=10_000_000,
+             on_event=lambda name, data: events.append((name, data)))
+    evals = [d for n, d in events if n == "context.compaction.eval"]
+    assert len(evals) == 1
+    assert evals[0]["decision"] == "none"
+    assert "prior_tokens" in evals[0] and "budget" in evals[0]
+
+def test_compress_emits_eval_summary_when_fired():
+    events = []
+    compress(_msgs(40), summarize=lambda m: "SUMMARY", count_tokens=TOK,
+             fixed_overhead_tokens=0, ctx_window=200,
+             protect_head_n=2, protect_last_n=5,
+             on_event=lambda name, data: events.append((name, data)))
+    evals = [d for n, d in events if n == "context.compaction.eval"]
+    assert evals and evals[0]["decision"] == "summary"
+
+def test_compress_no_event_callback_is_silent_and_unchanged():
+    # default on_event=None -> no crash, normal result (merged behavior intact)
+    r = compress(_msgs(3), summarize=lambda m: "S", count_tokens=TOK,
+                 fixed_overhead_tokens=0, ctx_window=10_000_000)
+    assert r.method == "none"
+
+def test_summarize_closure_emits_summarize_event():
+    events = []
+    class M:
+        def query(self, msgs):
+            return {"role": "assistant", "content": "the summary text",
+                    "extra": {"cost": 0.002}}
+    comp = build_compaction(
+        {"enabled": True, "ctx_window": 200},
+        model=M(), model_name="gpt-5.4", fixed_overhead_tokens=0,
+        add_cost=lambda c: None,
+        on_event=lambda name, data: events.append((name, data)))
+    comp.summarize([{"role": "user", "content": "hello world"}])
+    summ = [d for n, d in events if n == "context.compaction.summarize"]
+    assert len(summ) == 1
+    assert summ[0]["out_tokens"] >= 1 and summ[0]["in_tokens"] >= 1
+    assert summ[0]["cost"] == 0.002
+    assert "elapsed_s" in summ[0]

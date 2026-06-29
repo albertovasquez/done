@@ -19,6 +19,47 @@ log = logging.getLogger(__name__)
 MIN_BUDGET_FLOOR = 1000  # tokens; keeps the tail target from going negative
 DEFAULT_CONTEXT_WINDOW = 32000
 
+# Done's shipped models -> real context windows (authoritative as of 2026-06-29).
+# litellm.get_max_tokens is WRONG for these (it predates them: returns 128000 for
+# gpt-5.4 and claude-opus-4-8, which are really 400k/1M), so this table wins over it.
+# Maintain as models change.
+CONTEXT_WINDOWS = {
+    "gpt-5.4": 400_000,
+    "gpt-5.4-mini": 400_000,
+    "claude-opus-4-8": 1_000_000,
+    "claude-opus-4-7": 1_000_000,
+    "claude-opus-4-6": 1_000_000,
+    "claude-sonnet-4-6": 1_000_000,
+    "claude-haiku-4-5": 200_000,
+    "claude-fable-5": 1_000_000,
+}
+
+
+def _get_max_tokens(name: str):
+    """Lazy litellm fallback for unknown models. Imported here (not at module top)
+    because litellm import costs ~1s on the startup path; this is only called when
+    compaction builds an adapter for a model absent from CONTEXT_WINDOWS."""
+    try:
+        from litellm import get_max_tokens
+        return get_max_tokens(name)
+    except Exception:
+        return None
+
+
+def resolve_ctx_window(model_name, cfg_override=None) -> int:
+    """Resolve the model's context window:
+    config override > curated table > litellm.get_max_tokens > floor.
+    `model_name` is normalized by stripping a leading 'openai/' provider prefix."""
+    if cfg_override:
+        return int(cfg_override)
+    name = (model_name or "").split("/", 1)[-1]
+    if name in CONTEXT_WINDOWS:
+        return CONTEXT_WINDOWS[name]
+    n = _get_max_tokens(name)
+    if n:
+        return int(n)
+    return DEFAULT_CONTEXT_WINDOW
+
 COMPRESS_SYSTEM = (
     "You are a context compaction assistant. You will be given a section of a "
     "conversation transcript that needs to be summarized to save context space. "
@@ -61,6 +102,7 @@ class Compaction:
     protect_head_n: int = 0
     protect_last_n: int = 20
     enabled: bool = True
+    on_event: "Callable | None" = None
 
     def params(self) -> dict:
         """Return kwargs for compress() (everything except ``prior``)."""
@@ -73,11 +115,15 @@ class Compaction:
             "target_ratio": self.target_ratio,
             "protect_head_n": self.protect_head_n,
             "protect_last_n": self.protect_last_n,
+            "on_event": self.on_event,
         }
 
 
 def build_compaction(cfg, *, model, fixed_overhead_tokens: int,
-                     add_cost: Callable[[float], None]) -> "Compaction | None":
+                     add_cost: Callable[[float], None],
+                     model_name: str = "",
+                     on_event=None,
+                     now=None) -> "Compaction | None":
     """Build a ``Compaction`` adapter from a config dict and live model/cost hooks.
 
     Returns ``None`` when compaction is disabled or ``cfg`` is falsy.
@@ -86,11 +132,14 @@ def build_compaction(cfg, *, model, fixed_overhead_tokens: int,
     returned dict has ``"content"`` (str) and ``"extra": {"cost": float}``.
     ``add_cost`` is called with each summarize call's cost so the session can
     track it alongside normal turn costs.
+    ``model_name`` is used to resolve ``ctx_window`` via ``resolve_ctx_window``
+    when no explicit ``ctx_window`` is set in ``cfg``.
+    ``on_event`` and ``now`` are stored for future observability emission (Task 3).
     """
     if not cfg or not cfg.get("enabled"):
         return None
 
-    ctx_window: int = int(cfg.get("ctx_window", DEFAULT_CONTEXT_WINDOW))
+    ctx_window: int = resolve_ctx_window(model_name, cfg.get("ctx_window"))
     threshold: float = float(cfg.get("threshold", 0.5))
     target_ratio: float = float(cfg.get("target_ratio", 0.2))
     protect_head_n: int = int(cfg.get("protect_head_n", 0))
@@ -98,12 +147,22 @@ def build_compaction(cfg, *, model, fixed_overhead_tokens: int,
 
     def summarize(middle: list[dict]) -> str:
         user_content = render(middle)
+        start = now() if now else None
         msg = model.query([
             {"role": "system", "content": COMPRESS_SYSTEM},
             {"role": "user", "content": user_content},
         ])
-        add_cost(msg.get("extra", {}).get("cost", 0.0))
-        return msg.get("content") or ""
+        cost = msg.get("extra", {}).get("cost", 0.0)
+        add_cost(cost)
+        text = msg.get("content") or ""
+        if on_event:
+            on_event("context.compaction.summarize", {
+                "in_tokens": estimate_tokens(user_content),
+                "out_tokens": estimate_tokens(text),
+                "cost": cost,
+                "elapsed_s": round((now() - start), 3) if (now and start is not None) else 0.0,
+            })
+        return text
 
     return Compaction(
         summarize=summarize,
@@ -115,6 +174,7 @@ def build_compaction(cfg, *, model, fixed_overhead_tokens: int,
         protect_head_n=protect_head_n,
         protect_last_n=protect_last_n,
         enabled=True,
+        on_event=on_event,
     )
 
 
@@ -138,26 +198,36 @@ def _split(prior, *, count_tokens, budget, protect_head_n, protect_last_n, targe
 def compress(prior, *, summarize: Callable[[list[dict]], str],
              count_tokens: Callable[[str], int], fixed_overhead_tokens: int,
              ctx_window: int, threshold: float = 0.5, target_ratio: float = 0.2,
-             protect_head_n: int = 0, protect_last_n: int = 20) -> CompactResult:
+             protect_head_n: int = 0, protect_last_n: int = 20,
+             on_event=None) -> CompactResult:
     prior = prior or []
     before_msgs = len(prior)
     before_tokens = count_tokens(render(prior))
+    budget = int(threshold * ctx_window) - fixed_overhead_tokens  # pre-clamp: reported in eval
+
+    def _emit_eval(decision):
+        if on_event:
+            on_event("context.compaction.eval", {
+                "prior_tokens": before_tokens, "budget": budget,
+                "ctx_window": ctx_window, "fixed_overhead": fixed_overhead_tokens,
+                "decision": decision,
+            })
 
     def noop(method="none"):
+        _emit_eval(method)
         return CompactResult(prior, False, method, before_tokens, before_tokens,
                              before_msgs, before_msgs)
 
-    budget = int(threshold * ctx_window) - fixed_overhead_tokens
     if budget <= 0:
         log.warning("compaction: fixed overhead (%d) >= budget; cannot compact",
                     fixed_overhead_tokens)
         return noop()
-    budget = max(budget, MIN_BUDGET_FLOOR)
+    clamped_budget = max(budget, MIN_BUDGET_FLOOR)
 
-    if before_tokens <= budget:
+    if before_tokens <= clamped_budget:
         return noop()
 
-    head, middle, tail = _split(prior, count_tokens=count_tokens, budget=budget,
+    head, middle, tail = _split(prior, count_tokens=count_tokens, budget=clamped_budget,
                                 protect_head_n=protect_head_n,
                                 protect_last_n=protect_last_n, target_ratio=target_ratio)
     if not middle:
@@ -176,6 +246,7 @@ def compress(prior, *, summarize: Callable[[list[dict]], str],
         method = "truncated"
 
     new = _sanitize_tool_pairs(new)
+    _emit_eval(method)
     return CompactResult(new, True, method, before_tokens,
                          count_tokens(render(new)), before_msgs, len(new))
 
