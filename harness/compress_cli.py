@@ -37,6 +37,8 @@ def rebuild_one(source: Path, *, call_model, today: str) -> str:
 def status_line(source: Path) -> str:
     """Return a one-line freshness + delta report for *source*."""
     source = Path(source)
+    if not source.exists():
+        return f"{source.name}: source missing"
     sib = sibling.sibling_path(source)
     if not sib.exists():
         return f"{source.name}: no sibling"

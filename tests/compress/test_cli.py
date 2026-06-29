@@ -22,3 +22,14 @@ def test_status_line_reports_stale(tmp_path):
     src.write_text("changed now")
     line = compress_cli.status_line(src)
     assert "stale" in line.lower()
+
+
+def test_status_line_handles_missing_source(tmp_path):
+    src = tmp_path / "AGENTS.md"
+    # Create a sibling but not the source file
+    sib = sibling.sibling_path(src)
+    sib.parent.mkdir(parents=True, exist_ok=True)
+    sib.write_text("compressed content")
+    # Now call status_line with missing source (but existing sibling)
+    line = compress_cli.status_line(src)
+    assert "missing" in line.lower()   # returns a message, does not raise
