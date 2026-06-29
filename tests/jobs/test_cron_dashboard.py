@@ -6,7 +6,8 @@ running Textual app. These tests pin the display-string contract for the pure
 render function.
 """
 from harness.jobs import model as m
-from harness.tui.widgets.cron_dashboard import _humanize_until, render_rows
+from harness.jobs import daemon as _d
+from harness.tui.widgets.cron_dashboard import _humanize_until, render_rows, daemon_header
 
 # Fixed reference "now" so relative-time rows are deterministic.
 NOW = 1_700_000_000.0
@@ -110,3 +111,25 @@ def test_multiple_jobs_order_preserved():
     assert len(rows) == 2
     assert "alpha" in rows[0]
     assert "beta" in rows[1]
+
+
+# ── daemon_header contract ────────────────────────────────────────────────────
+
+def test_daemon_header_running():
+    text, color = daemon_header(5.0, 5.0, interval=_d.DEFAULT_INTERVAL)
+    assert color == "green" and text.startswith("✓")
+
+
+def test_daemon_header_stopped():
+    text, color = daemon_header(None, None, interval=_d.DEFAULT_INTERVAL)
+    assert color == "red" and "won't fire" in text
+
+
+def test_daemon_header_failing():
+    text, color = daemon_header(5.0, 999.0, interval=_d.DEFAULT_INTERVAL)
+    assert color == "yellow"
+
+
+def test_daemon_header_stalled():
+    text, color = daemon_header(999.0, 5.0, interval=_d.DEFAULT_INTERVAL)
+    assert color == "yellow"
