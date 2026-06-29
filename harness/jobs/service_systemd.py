@@ -78,4 +78,12 @@ def service_status() -> ServiceResult:
     if not unit_path().exists():
         return ServiceResult(True, "systemd", "not-installed", "systemd unit not installed")
     rc, out = _run(["systemctl", "--user", "is-active", UNIT])
-    return ServiceResult(True, "systemd", "installed", f"systemd unit active={out or 'unknown'}")
+    if rc == 0:
+        return ServiceResult(True, "systemd", "installed", f"systemd unit active={out or 'unknown'}")
+    # Orphaned/inactive unit: the file is on disk but systemd does not report it
+    # active (inactive/failed/never-enabled). Report "not-installed", NOT
+    # "installed" — _decide_cron_autostart treats only "installed" as "the OS owns
+    # the daemon, do nothing", so a false "installed" would silently skip autostart.
+    # The detail keeps the systemctl word for `dn cron status`; `dn cron install`
+    # re-enables it. Mirrors the launchd backend's orphaned-plist handling.
+    return ServiceResult(True, "systemd", "not-installed", f"systemd unit not active ({out or 'inactive'})")

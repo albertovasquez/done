@@ -82,4 +82,10 @@ def service_status() -> ServiceResult:
     rc, _ = _run(["launchctl", "print", f"{_domain_target()}/{LABEL}"])
     if rc == 0:
         return ServiceResult(True, "launchd", "installed", "launchd service loaded")
-    return ServiceResult(True, "launchd", "installed", "plist present but not loaded")
+    # Orphaned plist: the file is on disk but launchctl can't find the loaded job
+    # (a manually-deleted registration, or a stale plist after a crash). Report
+    # "not-installed", NOT "installed" — _decide_cron_autostart treats only
+    # "installed" as "the OS owns the daemon, do nothing", so a false "installed"
+    # here would silently skip autostart and jobs would never fire. The detail
+    # preserves the nuance for `dn cron status`; `dn cron install` re-bootstraps it.
+    return ServiceResult(True, "launchd", "not-installed", "plist present but not loaded")
