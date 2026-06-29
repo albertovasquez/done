@@ -595,6 +595,11 @@ class HarnessTui(App):
         if widget is not None and getattr(widget, "id", None) == "statusbar-mode":
             self.action_toggle_yolo()
             return
+        # Compress-aware chip: a click toggles the live gate (never persists —
+        # same YOLO contract: pin is a separate gesture via /compress-aware pin).
+        if widget is not None and getattr(widget, "id", None) == "statusbar-compress-aware":
+            self.action_toggle_compress_aware()
+            return
         # Turn footer: a click copies that turn's response and flips "(copy)" to
         # "(copied)". Guard on the _copyable marker so only turn footers respond.
         if widget is not None and getattr(widget, "_copyable", False):
