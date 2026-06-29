@@ -24,9 +24,14 @@ def plist_path() -> Path:
 
 
 def build_plist(python: str, label: str) -> bytes:
+    # Resolve the harness-cron console-script binary next to the python interpreter.
+    # Using the binary (which calls main()) is correct; `-m harness.jobs.cron_main`
+    # skips the `if __name__ == "__main__"` guard and returns immediately.
+    from pathlib import Path as _Path
+    cron_bin = str(_Path(python).parent / "harness-cron")
     doc = {
         "Label": label,
-        "ProgramArguments": [python, "-m", "harness.jobs.cron_main"],
+        "ProgramArguments": [cron_bin],
         "RunAtLoad": True,
         "KeepAlive": True,
         # Rate-limit respawns: KeepAlive restarts the daemon the instant it exits,
