@@ -34,3 +34,11 @@ def test_max_concurrent_default_and_override(tmp_path, monkeypatch):
     assert sc.subagent_max_concurrent() == 4
     _write_conf(tmp_path, "[subagent]\nmax_concurrent = 8\n")
     assert sc.subagent_max_concurrent() == 8
+
+
+def test_corrupt_conf_falls_back_safely(tmp_path, monkeypatch):
+    monkeypatch.setattr(sc, "conf_path", lambda: tmp_path / "done.conf")
+    (tmp_path / "done.conf").write_text("this is = = not valid toml [[[")
+    # Corrupt file must NOT raise — both functions return their fallback.
+    assert sc.resolve_subagent_model("default", parent_model="P") == "P"
+    assert sc.subagent_max_concurrent() == 4

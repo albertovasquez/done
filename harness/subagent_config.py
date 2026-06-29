@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import tomllib
 
-from harness.config import RESERVED_KEY, conf_path  # noqa: F401  (conf_path patched in tests)
+from harness.config import conf_path  # noqa: F401  (patched in tests)
 
 
 def _raw() -> dict:
