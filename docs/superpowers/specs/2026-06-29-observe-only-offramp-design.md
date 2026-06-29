@@ -29,7 +29,9 @@ Root cause, in the user's words: **we hard-code that there must be a problem to 
 ## Design — defense-in-depth, prompt-text only
 
 Each layer is fixed independently so any one defends even if another regresses.
-No new code paths, no keyword-heuristic gate — all four edits are prompt text.
+The behavior change is prompt text (the three templates); the only code is plumbing —
+one leaf-module extraction and threading `task_type`/`agent_options` to the run paths
+that classify. No keyword-heuristic gate, no new task type.
 
 ### L1 — `ops_task` gets an observe-first instance template (the core fix)
 
@@ -42,14 +44,19 @@ work-order.
 (they are genuine work orders). `code_explain` keeps `ANSWER_ONLY_INSTANCE`.
 
 `OBSERVE_FIRST_INSTANCE` semantics (observe-first with consent-gated escalation —
-chosen by the user over pure observe-only):
+chosen by the user over pure observe-only). **Read-only is the floor; acting is the
+explicit exception** — the prohibition must be as imperative as `ANSWER_ONLY_INSTANCE`'s
+"Do NOT edit, create, or delete" (`acp_agent.py:57`), so the agent can't read "ask
+first" as a soft suggestion and act under work-order momentum:
 - Treat the request as: **inspect the relevant state and report what you find.**
 - Read files, run read-only commands (status, logs, heartbeat, PID, job state).
+  **Do NOT edit, create, or delete anything to investigate.**
 - **Do not assume something is broken.** If everything is healthy, say so and stop.
-- If you discover a *real* failure, describe it and **ask whether to fix it** before
-  changing anything — do not start a fix yourself, and do **not** manufacture a
-  reproduction (e.g. do not run the test suite to find a failing test that wasn't
-  reported).
+- If a fix turns out to be needed, **STOP and ask first** — describe the failure and
+  ask whether to proceed; do not start the change yourself. And do **not** manufacture
+  a reproduction: **do not run the test suite to find a failing test that wasn't
+  reported** (this is the exact #177 anti-pattern — it must survive as a content-test
+  assertion so it can't silently drop).
 - Finish with the standard `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` sentinel,
   matching `ANSWER_ONLY_INSTANCE`'s contract.
 
@@ -68,7 +75,7 @@ fall through to the raw `mini.yaml` "Please solve this issue" work-order. Verifi
 | ACP interactive (`acp_agent.py:716`) | yes | yes | L1 as written |
 | Chat (`chat_handler.py:151-157`) | yes | no — sends raw prompt, no template | nothing (correct already) |
 | Dev CLI (`run_traced.py:197-203`) | yes — **has `cls.task_type`** at `:80` but drops it | no | **thread `task_type` through** (see below) |
-| Cron executor (`jobs/executor.py:185`) | no router | no | **explicit decision** (see below) |
+| Cron executor (`jobs/executor.py:185`) | no router | no | **per-job `agent_options.mode`**, default work-order (see below) |
 | Subagent worker (`tools/subagent.py:98`) | no — runs an assigned task | no | out of scope (intentional work-order) |
 
 To avoid three divergent copies, **lift the template selection into one shared seam**
@@ -82,13 +89,16 @@ leaf module (e.g. `harness/instance_templates.py`) importable by `acp_agent.py`,
 - **Dev CLI (`run_traced.py`):** thread `cls.task_type` into `run_agent` and set
   `agent_cfg["instance_template"] = _instance_template_for(task_type, default)` before
   building the runner. (It already classifies; it just discards the result.)
-- **Cron executor:** has no router, so it cannot classify intent. **Decision (default,
-  revisitable): leave cron on the work-order template for now** — a cron job is a
-  predetermined instruction the user wrote, and many are genuine "do X" jobs. Record
-  this as a known limitation; a follow-up can add a per-job `mode: observe|work`
-  field (`jobs/model.py`) if observe-style cron jobs become common. *(If the user
-  prefers, the alternative is to default cron ops to observe-first too — flagged in
-  the open question below.)*
+- **Cron executor:** has no router, so it cannot classify intent. **Default stays
+  work-order** — a cron job is a predetermined instruction the author wrote
+  (`AgentTurn.message`), and many are genuine "do X nightly" jobs that a forced
+  observe-first would silently break. But the per-job override is **free, not a
+  follow-up**: `AgentTurn.agent_options` is already a serialized free-form dict
+  (`jobs/model.py:22,76,81`) — no new `Job` field, no schema migration. So **wire the
+  read now**: in `executor.py`, pick `OBSERVE_FIRST_INSTANCE` when
+  `agent_options.get("mode") == "observe"`, else keep the work-order default. This
+  closes the gap the spec previously only admitted, at near-zero cost. (Surfacing
+  `mode` in the create-job skill is the only piece left optional — see open Q1.)
 - **Subagent worker:** out of scope — a worker is dispatched a concrete assigned task
   by its parent, so the work-order framing is correct; do not change it.
 
@@ -141,6 +151,9 @@ behavior, not a regression. Noted, not fixed.
 - `harness/acp_agent.py` — import the three symbols from the leaf; `:716` unchanged.
 - `harness/run_traced.py` — thread `cls.task_type` into `run_agent`; set
   `agent_cfg["instance_template"] = _instance_template_for(task_type, default)`.
+- `harness/jobs/executor.py` — when `AgentTurn.agent_options.get("mode") == "observe"`,
+  set the runner's `instance_template` to `OBSERVE_FIRST_INSTANCE`; else keep the
+  work-order default. No `jobs/model.py` change (agent_options is already free-form).
 - `harness/router.py` — extend `_system_prompt` with observe-vs-fix guidance.
 - `harness/skills/systematic-debugging/SKILL.md` — tighten `description`, add precondition off-ramp.
 - `tests/test_acp_agent.py` — **update** `test_work_order_turn_keeps_engine_instance_template`
@@ -152,6 +165,9 @@ behavior, not a regression. Noted, not fixed.
   on the runner config (guards the dev-CLI path that the review found unprotected).
 - `tests/test_router.py` — assert an observe-intent prompt does not attach `systematic-debugging`
   (extend with a stubbed-classification case).
+- `tests/jobs/test_executor.py` — extend: an `AgentTurn` with
+  `agent_options={"mode":"observe"}` runs with `OBSERVE_FIRST_INSTANCE`; default
+  (no `mode`) keeps the work-order template.
 
 ## Testing / success criteria
 
@@ -160,10 +176,17 @@ behavior, not a regression. Noted, not fixed.
    `"code_fix"`/`"code_feature"`/`"code_refactor"` still return `default`.
 2. **Content (L1):** `OBSERVE_FIRST_INSTANCE` contains the observe/ask-before-fix
    contract and the completion sentinel; does **not** contain "solve this issue".
-3. **Content (L3):** `systematic-debugging/SKILL.md` body contains the observe-only
+3. **Content (L1):** `OBSERVE_FIRST_INSTANCE` contains the imperative read-only
+   prohibition ("Do NOT edit/create/delete") **and** the literal no-manufactured-repro
+   line ("do not run the test suite to find a failing test that wasn't reported") —
+   both asserted so they can't silently drop.
+4. **Cron (L1):** `executor` with `agent_options={"mode":"observe"}` → observe-first
+   template; without `mode` → work-order default unchanged.
+5. **Content (L3):** `systematic-debugging/SKILL.md` body contains the observe-only
    precondition; frontmatter `description` no longer says "any … unexpected behavior".
-4. **Regression:** existing `test_router.py`, `test_run_traced.py`,
-   `test_system_skills.py`, `test_flows.py` stay green (baseline: 39 passed).
+6. **Regression:** existing `test_router.py`, `test_run_traced.py`,
+   `test_system_skills.py`, `test_flows.py`, `tests/jobs/test_executor.py` stay green
+   (baseline: 39 passed in the four originally-named modules).
 5. **Behavioral acceptance (manual, from #177 repro):** in `dn`, "check if the cron
    was firing" inspects daemon/heartbeat/job state and answers, without asking for a
    bug report or running pytest.
@@ -175,30 +198,39 @@ behavior, not a regression. Noted, not fixed.
 - New `ops_check` task type (not needed; would touch `TASK_TYPES`, flows, tests).
 - The upstream `mini.yaml` default template is left as-is (it is correct for the
   SWE-bench `code_fix` lane); we override per task type in the harness, not upstream.
-- **Cron-executor and subagent-worker paths** keep the work-order template (cron =
-  predetermined instruction with no router intent; worker = parent-assigned task).
-  A per-job `mode` field for cron is a possible follow-up, not this PR.
+- **Subagent-worker path** keeps the work-order template (worker = parent-assigned
+  concrete task; the framing is correct there).
+- **Surfacing `mode` in the create-job skill** (so an author can *author* an observe
+  cron) — the executor *reads* `mode` in this PR, but exposing it in the create-job
+  UX is optional and deferred. Existing jobs (no `mode`) keep work-order; nothing
+  regresses.
 - Chasing classifier *misclassification* of read-only intent into `code_fix`/etc.
   (L3 off-ramp is the backstop; see "Residual completeness limit").
 - #176 (create_job re-announce loop) — separate turn-termination bug.
 
-## Open questions for the user
+## Resolved decisions (from caveman review)
 
-1. **Cron ops jobs:** default the cron path to the work-order template (current spec
-   decision) or to observe-first? Work-order is safer for "do X nightly" jobs; some
-   "check X and alert" jobs would prefer observe. Recommendation: keep work-order now,
-   add a per-job `mode` later.
-2. **`OBSERVE_FIRST_INSTANCE` escalation wording:** "find a real failure → describe it
-   and ask before fixing" vs. stricter "always report only, never act." (Earlier
-   answer chose observe-first-with-consent; confirm that still holds.)
+1. **Cron default = work-order, override = `agent_options.mode`.** Forcing observe-first
+   on all cron jobs would silently break legitimate "do X nightly" jobs (no router =
+   no mislabel, so #177 doesn't apply to cron). The per-job override is free
+   (`agent_options` already persisted), so the executor *reads* `mode` now rather than
+   punting it to a follow-up.
+2. **Escalation = consent-gated, hardened to `ANSWER_ONLY` strength.** Pure report-only
+   would muzzle ops_tasks that genuinely need to act (restart a dead daemon) → wasted
+   re-ask. Keep "if a fix is needed, STOP and ask first," but phrase the read-only
+   floor as an imperative prohibition (not a soft "ask"), so work-order momentum can't
+   override it. See L1 template semantics above.
 
 ## Risks
 
-- **Low-risk class of change** — mostly prompt text plus one leaf-module extraction
-  (`instance_templates.py`) and one thread-through in `run_traced.py`. Blast radius
-  bounded by the named test modules; the extraction is a move, not a rewrite.
+- **Low-risk class of change** — prompt text (three templates) plus plumbing: one
+  leaf-module extraction (`instance_templates.py`) and three thread-throughs
+  (`run_traced.py` task_type, `executor.py` `mode`). Blast radius bounded by the named
+  test modules; the extraction is a move, not a rewrite.
 - The router change (L2) is advisory (the cheap model may still occasionally
-  mis-attach); **L1 (now covering ACP + dev CLI) and L3 are the real safety net** and
-  make the agent behave correctly even when L2 mis-fires.
+  mis-attach); **L1 (now covering ACP + dev CLI + opt-in cron) and L3 are the real
+  safety net** and make the agent behave correctly even when L2 mis-fires.
+- Cron `mode` read is **additive** — absent `mode` → unchanged work-order, so no
+  existing job changes behavior.
 - New import seam: `instance_templates.py` must stay leaf (no `acp_agent`/`router`
   imports) to avoid a cycle — same discipline as `textgate.py`/`permcheck.py`.
