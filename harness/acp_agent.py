@@ -32,6 +32,9 @@ from harness.router import Router, Classification
 from harness.chat_handler import ChatHandler
 from harness.permcheck import PermissionRequest, decide_permission
 from harness.transcript import flatten_agent_messages
+from harness.instance_templates import (
+    ANSWER_ONLY_INSTANCE, OBSERVE_FIRST_INSTANCE, _instance_template_for,
+)
 from minisweagent.exceptions import UserInterruption
 
 logger = logging.getLogger("harness.acp_agent")
@@ -41,32 +44,9 @@ logger = logging.getLogger("harness.acp_agent")
 # headless cron-executor + dev-CLI paths can reuse it without a cycle (#168). Imported
 # above; re-exported here implicitly for any caller that did `from acp_agent import
 # decide_permission`.
-
-
-# Answer-only instance template for code_explain turns. The engine's default
-# instance_template (mini.yaml) is injected as the USER turn EVERY step and reads
-# "Please solve this issue: {{task}} … Edit the source code to resolve it" — an
-# every-turn work-order framing that overrides the clarify-before-acting skill
-# (appended far down the SYSTEM prompt) and makes the agent edit files when the
-# user only asked it to look. For an explain classification we swap that framing
-# for one whose job is to answer, not act. {{task}} is preserved so the agent
-# still sees the request; Jinja renders it the same way the default does.
-ANSWER_ONLY_INSTANCE = (
-    "The user asked: {{task}}\n\n"
-    "This is a QUESTION, not a work order. Investigate as needed — read files, "
-    "run read-only commands — then ANSWER in words. Do NOT edit, create, or "
-    "delete files to answer it. If a good answer would require changing code, "
-    "say so and ask whether to proceed; do not start the change yourself. "
-    "When you have answered, finish by issuing exactly: "
-    "`echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`."
-)
-
-
-def _instance_template_for(task_type: str, default: str) -> str:
-    """Pick the engine instance_template for this turn. code_explain gets the
-    answer-only template (the clarify gate, enforced at the prompt the model
-    actually obeys); every other task_type keeps the engine default unchanged."""
-    return ANSWER_ONLY_INSTANCE if task_type == "code_explain" else default
+# ANSWER_ONLY_INSTANCE, OBSERVE_FIRST_INSTANCE, _instance_template_for now live in
+# harness/instance_templates.py (the import-light leaf); imported above and re-exported
+# implicitly so any caller that did `from acp_agent import ...` keeps working.
 
 
 # The single privileged door now lives in harness/jobs/create.py (pure jobs logic,
