@@ -51,9 +51,13 @@ def compress_on_write(path: Path, text: str, *, call_model) -> None:
 
     This is the SANCTIONED helper for memory file writes.  Routing the agent's
     own Write/Edit tool calls through this helper is deferred (issue #186).
+
+    Non-CompressionError exceptions (e.g. call_model raising) propagate and leave
+    memory UNWRITTEN — caller must handle (documented, intentional; spec only
+    guarantees fallback on CompressionError).
     """
     path = Path(path)
-    if not _compress_on(path):
+    if not _compress_on(path.parent):  # path.parent is workspace dir; path.name would be "MEMORY.md" (wrong key)
         path.write_text(text)
         return
     try:
