@@ -312,3 +312,33 @@ def test_compaction_integrates_with_compress():
     r = compress(prior, **comp.params())
     assert r.method == "summary"
     assert any("COMPACTED" in str(m.get("content")) for m in r.messages)
+
+
+# ---------------------------------------------------------------------------
+# Task 1: resolve_ctx_window
+# ---------------------------------------------------------------------------
+from harness.compaction import resolve_ctx_window, CONTEXT_WINDOWS, DEFAULT_CONTEXT_WINDOW
+
+def test_resolve_ctx_window_config_override_wins():
+    # override beats everything, even a known model
+    assert resolve_ctx_window("claude-opus-4-8", cfg_override=12345) == 12345
+
+def test_resolve_ctx_window_known_model_from_table():
+    assert resolve_ctx_window("gpt-5.4") == CONTEXT_WINDOWS["gpt-5.4"]
+    assert resolve_ctx_window("claude-opus-4-8") == 1_000_000
+
+def test_resolve_ctx_window_strips_openai_prefix():
+    # vibeproxy presents models as 'openai/<name>'
+    assert resolve_ctx_window("openai/gpt-5.4") == CONTEXT_WINDOWS["gpt-5.4"]
+
+def test_resolve_ctx_window_unknown_model_falls_back_to_floor(monkeypatch):
+    # force the litellm fallback to return nothing -> floor
+    import harness.compaction as c
+    def fake_get_max_tokens(name): return None
+    monkeypatch.setattr(c, "_get_max_tokens", fake_get_max_tokens, raising=False)
+    assert resolve_ctx_window("totally-unknown-model-xyz") == DEFAULT_CONTEXT_WINDOW
+
+def test_resolve_ctx_window_uses_litellm_when_available(monkeypatch):
+    import harness.compaction as c
+    monkeypatch.setattr(c, "_get_max_tokens", lambda name: 55555, raising=False)
+    assert resolve_ctx_window("some-litellm-known-model") == 55555

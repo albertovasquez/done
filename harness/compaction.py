@@ -19,6 +19,47 @@ log = logging.getLogger(__name__)
 MIN_BUDGET_FLOOR = 1000  # tokens; keeps the tail target from going negative
 DEFAULT_CONTEXT_WINDOW = 32000
 
+# Done's shipped models -> real context windows (authoritative as of 2026-06-29).
+# litellm.get_max_tokens is WRONG for these (it predates them: returns 128000 for
+# gpt-5.4 and claude-opus-4-8, which are really 400k/1M), so this table wins over it.
+# Maintain as models change.
+CONTEXT_WINDOWS = {
+    "gpt-5.4": 400_000,
+    "gpt-5.4-mini": 400_000,
+    "claude-opus-4-8": 1_000_000,
+    "claude-opus-4-7": 1_000_000,
+    "claude-opus-4-6": 1_000_000,
+    "claude-sonnet-4-6": 1_000_000,
+    "claude-haiku-4-5": 200_000,
+    "claude-fable-5": 1_000_000,
+}
+
+
+def _get_max_tokens(name: str):
+    """Lazy litellm fallback for unknown models. Imported here (not at module top)
+    because litellm import costs ~1s on the startup path; this is only called when
+    compaction builds an adapter for a model absent from CONTEXT_WINDOWS."""
+    try:
+        from litellm import get_max_tokens
+        return get_max_tokens(name)
+    except Exception:
+        return None
+
+
+def resolve_ctx_window(model_name, cfg_override=None) -> int:
+    """Resolve the model's context window:
+    config override > curated table > litellm.get_max_tokens > floor.
+    `model_name` is normalized by stripping a leading 'openai/' provider prefix."""
+    if cfg_override:
+        return int(cfg_override)
+    name = (model_name or "").split("/", 1)[-1]
+    if name in CONTEXT_WINDOWS:
+        return CONTEXT_WINDOWS[name]
+    n = _get_max_tokens(name)
+    if n:
+        return int(n)
+    return DEFAULT_CONTEXT_WINDOW
+
 COMPRESS_SYSTEM = (
     "You are a context compaction assistant. You will be given a section of a "
     "conversation transcript that needs to be summarized to save context space. "
