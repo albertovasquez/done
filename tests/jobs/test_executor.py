@@ -110,3 +110,47 @@ def test_reminder_orphan_persona_raises():
 
     # notify should NOT have been called — the orphan check comes first
     assert len(notify_calls) == 0
+
+
+def test_observe_mode_passed_from_agent_options():
+    """A cron AgentTurn with agent_options={'mode':'observe'} must hand mode through
+    to run_turn; absent mode must not (default work-order). (#177)"""
+    seen = {}
+    deps = ex.Deps(
+        resolve_workspace=lambda pid: __import__("pathlib").Path("/ws/fred"),
+        resolve_model=lambda *a, **k: "model-X",
+        compose=lambda ws: ("PB", "MB", ws),
+        run_turn=lambda *, model_id, workspace, persona_block, memory_block, message, mode=None: (
+            seen.setdefault("mode", mode)
+        ),
+        notify=lambda **k: None,
+    )
+    job = _job(payload=m.AgentTurn(message="check cron", agent_options={"mode": "observe"}))
+    ex.run_headless_turn(job, deps=deps)
+    assert seen["mode"] == "observe"
+
+
+def test_no_mode_defaults_to_none():
+    seen = {}
+    deps = ex.Deps(
+        resolve_workspace=lambda pid: __import__("pathlib").Path("/ws/fred"),
+        resolve_model=lambda *a, **k: "model-X",
+        compose=lambda ws: ("PB", "MB", ws),
+        run_turn=lambda *, model_id, workspace, persona_block, memory_block, message, mode=None: (
+            seen.setdefault("mode", mode)
+        ),
+        notify=lambda **k: None,
+    )
+    ex.run_headless_turn(_job(), deps=deps)   # default payload: no agent_options
+    assert seen["mode"] is None
+
+
+def test_observe_or_default_cfg_swaps_only_for_observe():
+    from harness.jobs.executor import _observe_or_default_cfg
+    from harness.instance_templates import OBSERVE_FIRST_INSTANCE
+
+    base = {"instance_template": "Please solve this issue: {{task}}", "step_limit": 9}
+    assert _observe_or_default_cfg(base, "observe")["instance_template"] is OBSERVE_FIRST_INSTANCE
+    assert _observe_or_default_cfg(base, "observe")["step_limit"] == 9       # other keys kept
+    assert _observe_or_default_cfg(base, None) is base                       # default untouched
+    assert base["instance_template"] == "Please solve this issue: {{task}}"  # not mutated
