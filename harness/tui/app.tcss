@@ -180,3 +180,23 @@ PermissionModal #select-list { height: 2; margin-top: 1; }
 #quick-keys {
     height: auto; padding: 1 1; background: $background; border-top: solid $surface;
 }
+
+/* ---- cron jobs drawer (mirrors #agent-drawer) ---- */
+/* The drawer is a framed panel: the roster (1fr) stacks above the run-history
+   chart (fixed height), each region carries its own round border + border-title
+   ("CRON JOBS" / "Run history") so the two read as one balanced bordered panel
+   rather than bare floating text. Mirrors #agent-drawer's dock/width/background. */
+#cron-drawer {
+    dock: right; width: 50; border-left: solid $surface; background: $background;
+    layout: vertical; padding: 1 1;
+}
+#cron-dashboard {
+    height: 1fr; background: $background;
+    border: round $surface; border-title-color: $accent; border-title-style: bold;
+    padding: 1 1; margin-bottom: 1;
+}
+#cron-detail {
+    height: 12; background: $background;
+    border: round $surface; border-title-color: $accent; border-title-style: bold;
+    padding: 1 1;
+}

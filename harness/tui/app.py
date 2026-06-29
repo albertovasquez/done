@@ -46,6 +46,8 @@ from harness.tui.widgets.activity_region import ActivityRegion
 from harness.tui.widgets.permission_modal import PermissionModal
 from harness.tui.widgets.select_modal import SelectModal, SelectOption
 from harness.tui.widgets.agent_rail import AgentRail, PersonaSelected
+from harness.tui.widgets.cron_dashboard import CronDashboard, NewJobRequested, JobActionFailed
+from harness.tui.widgets.cron_detail import CronDetail
 from harness.tui.widgets.slash_menu import SlashMenu
 from harness.tui.widgets.prompt_area import PromptArea
 from harness.tui.widgets.decision_prompt import DecisionPrompt, TYPE_SOMETHING, CHAT_ABOUT_IT
@@ -87,7 +89,8 @@ def extract_agent_trace(tracer, update) -> None:
 class HarnessTui(App):
     CSS_PATH = "app.tcss"  # relative to this module's dir (harness/tui/)
     BINDINGS = [("escape", "cancel", "Cancel turn"),
-                ("ctrl+o", "toggle_details", "Tool details")]
+                ("ctrl+o", "toggle_details", "Tool details"),
+                ("ctrl+j", "toggle_cron", "Cron jobs")]
 
     def __init__(self, agent_cmd: list[str], cwd: str, model: str,
                  worker_model_id: str | None = None, version: str = "0.5.0",
@@ -167,6 +170,15 @@ class HarnessTui(App):
         drawer = Vertical(AgentRail(id="agent-rail"), QuickKeysPanel(), id="agent-drawer")
         drawer.display = False            # the whole drawer (rail + legend) toggles as one
         yield drawer
+        # Cron jobs drawer — mirrors #agent-drawer: roster + run-history chart,
+        # hidden until ctrl+j. Empty job id until a job is selected.
+        cron_drawer = Vertical(
+            CronDashboard(id="cron-dashboard"),
+            CronDetail("", id="cron-detail"),
+            id="cron-drawer",
+        )
+        cron_drawer.display = False
+        yield cron_drawer
 
     def _mode_label(self) -> str:
         """The label that replaced the old 'Build' mode word: the active persona's
@@ -1382,6 +1394,56 @@ class HarnessTui(App):
         else:
             self._show_drawer(False)
             self._active_input().focus()
+
+    # ---- cron jobs drawer (mirrors the agents drawer) ----
+
+    def _cron_drawer_visible(self) -> bool:
+        try:
+            return self.query_one("#cron-drawer").display
+        except Exception:
+            return False
+
+    def _show_cron_drawer(self, visible: bool) -> None:
+        try:
+            self.query_one("#cron-drawer").display = visible
+        except Exception:
+            pass
+
+    def action_toggle_cron(self) -> None:
+        from harness.jobs import ops
+        dash = self.query_one("#cron-dashboard", CronDashboard)
+        if not self._cron_drawer_visible():
+            dash.set_rows(ops.list_jobs())            # refresh roster on open
+            self._show_cron_drawer(True)
+            dash.focus()
+        else:
+            self._show_cron_drawer(False)
+            self._active_input().focus()
+
+    def on_new_job_requested(self, event: NewJobRequested) -> None:
+        """User pressed 'n' in the cron roster. The create-job flow is the
+        create-job gate SKILL, driven by a prompt to the agent — not a modal,
+        not a direct ops.add. Seed the prompt; the agent loads the skill and
+        runs the gate conversation."""
+        event.stop()
+        if self._turn_active:
+            self._notify_line("finish the current turn before creating a job")
+            return
+        self._show_cron_drawer(False)
+        self.run_worker(
+            self._submit_text("I want to create a scheduled cron job."),
+            thread=False,
+        )
+        self._active_input().focus()
+
+    def on_job_action_failed(self, event: JobActionFailed) -> None:
+        """A roster action (run/toggle/remove) raised — surface it and resync."""
+        event.stop()
+        self._notify_line(f"job {event.job_id}: {event.action} failed — {event.error}")
+        try:
+            self.query_one("#cron-dashboard", CronDashboard).refresh_jobs()
+        except Exception:
+            pass
 
     async def on_persona_selected(self, event: PersonaSelected) -> None:
         event.stop()

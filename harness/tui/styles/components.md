@@ -350,34 +350,66 @@ Filtered command list, mounted/removed by the app as `/` is typed/cleared.
 > the components below target. (Raw PNGs: drop into `docs/superpowers/assets/` if
 > committing them; the decisions are captured in text here so they survive.)
 
-## E. Future / scheduled
+## E. Scheduled / cron
 
-> **Reality:** there is **no cron/schedule backend** in the engine today, and
-> `AgentSnapshot.schedule` / `ScheduleView` are defined but never populated. Both
-> components below are `📐 designed-only` with **no data source** — build the
-> backend (or wire a stub) before them.
+> **Reality:** the cron/jobs backend now exists. `harness/jobs/` provides the job
+> model, a locked/versioned store (`jobs.json` + per-job `runs/<id>.jsonl`), ops
+> (`add`/`list`/`run`/…), a persona-faithful headless executor, and the
+> `harness-cron` daemon that fires due jobs unattended. Jobs are created only
+> through the single-door `harness/create_job` ext-method (driven by the
+> `create-job` gate skill). The two widgets below read this real data source via
+> `harness.jobs.ops`. (v1 caveat: per-job permission `grant` fields are *recorded,
+> not yet runtime-enforced* — see the `create-job` skill.)
+
+### `CronDashboard`   `✅ shipped`
+The roster of scheduled jobs — the realization of the designed `CronRow` concept,
+as a `ListView` panel rather than a single row.
+- **In:** `harness.jobs.ops.list_jobs()` (a list of `Job`).
+- **Look:** one row per job — `● {name} · {status-word} · {next-run}`, where
+  status-word is `scheduled` / `running` / `disabled` (precedence: running >
+  disabled > scheduled) and next-run is **human-readable relative** time
+  (`in 8h`, `in 2d`, `<1m`, `due`, or `—`). Rendered by the pure
+  `render_rows(jobs, now=…)` helper.
+- **Placement:** a right **drawer** toggled by `ctrl+j`, mirroring the `AgentRail`
+  drawer chrome (rounded `$surface` border, accent `border-title` "CRON JOBS",
+  `display:false` until toggled). Sits above `CronDetail` as a balanced two-box panel.
+- **Actions:** run-now / enable-toggle / remove (via `ops`); `n` posts
+  `NewJobRequested`, which the app turns into a prompt that runs the `create-job`
+  gate skill. Errors surface as `JobActionFailed`.
+- **When to use:** the dedicated crons panel. For an inline "happens later" hint
+  next to a single task/agent, use `ScheduleBadge` (still designed-only, below).
+
+```
+┌─ CRON JOBS ───────────────────────────────┐
+│ ● Nightly dep sync · scheduled · in 8h     │
+│ ● Morning standup  · scheduled · in 24h    │
+└────────────────────────────────────────────┘
+```
+
+### `CronDetail`   `✅ shipped`
+The per-job detail surface: a run-history chart over a job's `runs.jsonl` series.
+- **In:** `read_run_series(job_id)` → `(started_at, duration, status)` tuples from
+  `runs/<id>.jsonl`.
+- **Look:** a `textual-plotext` `PlotextPlot` of run **duration over time**, inside
+  a bordered "Run history" box below `CronDashboard` in the same `ctrl+j` drawer.
+  Empty state reads "No runs recorded".
+- **When to use:** the dedicated surface for one job's history — this is exactly
+  where a live Textual chart widget belongs (no stdout problem).
 
 ### `ScheduleBadge`   `📐 designed-only`
-The "something will happen later" signal — a single inline badge.
-- **In:** `ScheduleView` (`label`, `when`)
-- **Look:** amber `⏱` + relative time. From the mockup: `in 2d 14h SCHEDULED`,
-  or a cron task row `□ Weekly report cron · emails reports … SCHEDULED`.
-- **When to use:** to mark *one* future event inline next to its task/agent (e.g. a
-  cron task in the task list, or a `scheduled · 1 job` rail sub-line). Use `CronRow`
-  instead for a *dedicated list* of scheduled jobs.
+The "something will happen later" signal — a single **inline** badge (distinct from
+the `CronDashboard` roster, which inlines status+next-run per row itself).
+- **In:** `ScheduleView` (`label`, `when`) — or, in practice, a `Job`'s
+  `state.next_run_at`.
+- **Look:** amber `⏱` + relative time, e.g. `in 2d 14h SCHEDULED`.
+- **When to use:** to mark *one* future event inline next to a task/agent (e.g. a
+  `scheduled · 1 job` rail sub-line). For a dedicated list of jobs, the shipped
+  `CronDashboard` already covers it — build `ScheduleBadge` only if you need the
+  standalone inline badge elsewhere.
 
 ```
 □ Weekly report cron · emails reports          in 2d 14h   SCHEDULED
 ```
-
-### `CronRow`   `📐 designed-only`
-A scheduled job as a full row, for a crons list/sidebar. Sibling of `ProgressRow`.
-- **In:** `ScheduleView`
-- **Look (mockup):** `↻` cron glyph (amber) + name + cadence/next-run; in the rail,
-  a `cron` status word on an agent that's mid-scheduled-run (`robbie · cron ·
-  nightly-sync · syncing`).
-- **When to use:** for a *roster* of scheduled jobs (a crons panel). For a single
-  inline "happens later" hint, use `ScheduleBadge`.
 
 ---
 
