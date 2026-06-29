@@ -6,7 +6,10 @@ running Textual app. These tests pin the display-string contract for the pure
 render function.
 """
 from harness.jobs import model as m
-from harness.tui.widgets.cron_dashboard import render_rows
+from harness.tui.widgets.cron_dashboard import _humanize_until, render_rows
+
+# Fixed reference "now" so relative-time rows are deterministic.
+NOW = 1_700_000_000.0
 
 
 def _job(**kw) -> m.Job:
@@ -23,6 +26,39 @@ def _job(**kw) -> m.Job:
     return m.Job(**base)
 
 
+# ── _humanize_until bucket boundaries ────────────────────────────────────────
+
+def test_humanize_none():
+    assert _humanize_until(None) == "—"
+
+
+def test_humanize_overdue_is_due():
+    assert _humanize_until(0) == "due"
+    assert _humanize_until(-5) == "due"
+
+
+def test_humanize_under_a_minute():
+    assert _humanize_until(1) == "<1m"
+    assert _humanize_until(59) == "<1m"
+
+
+def test_humanize_minutes():
+    assert _humanize_until(60) == "in 1m"
+    assert _humanize_until(45 * 60) == "in 45m"
+    assert _humanize_until(3599) == "in 59m"
+
+
+def test_humanize_hours():
+    assert _humanize_until(3600) == "in 1h"
+    assert _humanize_until(8 * 3600) == "in 8h"
+    assert _humanize_until(86399) == "in 23h"
+
+
+def test_humanize_days():
+    assert _humanize_until(86400) == "in 1d"
+    assert _humanize_until(2 * 86400) == "in 2d"
+
+
 # ── render_rows contract ────────────────────────────────────────────────────
 
 def test_empty_list():
@@ -30,47 +66,47 @@ def test_empty_list():
 
 
 def test_scheduled_with_next_run():
-    job = _job(state=m.JobState(next_run_at=1_700_000_000.0))
-    rows = render_rows([job])
-    assert rows == ["● my-job · scheduled · next @1700000000"]
+    # next_run_at is 8h out → "in 8h" (deterministic via explicit now=).
+    job = _job(state=m.JobState(next_run_at=NOW + 8 * 3600))
+    rows = render_rows([job], now=NOW)
+    assert rows == ["● my-job · scheduled · in 8h"]
 
 
 def test_scheduled_no_next_run():
     job = _job(state=m.JobState(next_run_at=None))
-    rows = render_rows([job])
-    assert rows == ["● my-job · scheduled · next —"]
+    rows = render_rows([job], now=NOW)
+    assert rows == ["● my-job · scheduled · —"]
+
+
+def test_overdue_next_run_is_due():
+    job = _job(state=m.JobState(next_run_at=NOW - 100))
+    rows = render_rows([job], now=NOW)
+    assert rows == ["● my-job · scheduled · due"]
 
 
 def test_disabled():
-    job = _job(enabled=False, state=m.JobState(next_run_at=1_700_000_000.0))
-    rows = render_rows([job])
-    assert rows == ["● my-job · disabled · next @1700000000"]
+    job = _job(enabled=False, state=m.JobState(next_run_at=NOW + 8 * 3600))
+    rows = render_rows([job], now=NOW)
+    assert rows == ["● my-job · disabled · in 8h"]
 
 
 def test_running():
-    job = _job(state=m.JobState(next_run_at=1_700_000_000.0, running_since=1_699_999_000.0))
-    rows = render_rows([job])
-    assert rows == ["● my-job · running · next @1700000000"]
+    job = _job(state=m.JobState(next_run_at=NOW + 8 * 3600, running_since=NOW - 1000))
+    rows = render_rows([job], now=NOW)
+    assert rows == ["● my-job · running · in 8h"]
 
 
 def test_running_beats_disabled():
     """running_since set takes priority even if enabled=False."""
-    job = _job(enabled=False, state=m.JobState(running_since=1_699_999_000.0))
-    rows = render_rows([job])
+    job = _job(enabled=False, state=m.JobState(running_since=NOW - 1000))
+    rows = render_rows([job], now=NOW)
     assert rows[0].startswith("● my-job · running ·")
 
 
 def test_multiple_jobs_order_preserved():
-    j1 = _job(id="j1", name="alpha", state=m.JobState(next_run_at=100.0))
-    j2 = _job(id="j2", name="beta", state=m.JobState(next_run_at=200.0))
-    rows = render_rows([j1, j2])
+    j1 = _job(id="j1", name="alpha", state=m.JobState(next_run_at=NOW + 100.0))
+    j2 = _job(id="j2", name="beta", state=m.JobState(next_run_at=NOW + 200.0))
+    rows = render_rows([j1, j2], now=NOW)
     assert len(rows) == 2
     assert "alpha" in rows[0]
     assert "beta" in rows[1]
-
-
-def test_next_run_truncates_float():
-    """next_run_at is stored as float; displayed as int(@<epoch>)."""
-    job = _job(state=m.JobState(next_run_at=1_700_000_000.9))
-    rows = render_rows([job])
-    assert "@1700000000" in rows[0]

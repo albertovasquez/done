@@ -36,8 +36,14 @@ def test_cron_drawer_hidden_by_default():
             drawer = app.query_one("#cron-drawer")
             assert drawer.display is False, "cron drawer must start hidden"
             # the two child widgets are mounted
-            assert app.query_one("#cron-dashboard", CronDashboard) is not None
-            assert app.query_one("#cron-detail", CronDetail) is not None
+            dash = app.query_one("#cron-dashboard", CronDashboard)
+            detail = app.query_one("#cron-detail", CronDetail)
+            assert dash is not None
+            assert detail is not None
+            # framed-panel chrome: each region carries a border-title so the drawer
+            # reads as a bordered panel, not bare floating rows.
+            assert dash.border_title == "CRON JOBS"
+            assert detail.border_title == "Run history"
 
     asyncio.run(go())
 

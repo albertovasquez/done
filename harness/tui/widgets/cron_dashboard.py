@@ -1,6 +1,6 @@
 """CronDashboard — read-mostly roster widget for scheduled cron jobs.
 
-One row per job: ● {name} · {status_word} · next {nxt}
+One row per job: ● {name} · {status_word} · {when}
 
 Actions:
   action_run_now(job_id)       — trigger an immediate run via ops.run
@@ -28,22 +28,48 @@ from harness.jobs import model as m, ops
 logger = logging.getLogger(__name__)
 
 
-# ── Pure render function (unit-tested) ────────────────────────────────────────
+# ── Pure render helpers (unit-tested) ─────────────────────────────────────────
 
-def render_rows(jobs: list[m.Job]) -> list[str]:
+def _humanize_until(delta_seconds: float | None) -> str:
+    """Render a seconds-until-next-run delta as a short human-readable string.
+
+    Buckets:
+      None      → "—"   (no next run scheduled)
+      <= 0      → "due" (overdue / ready to run now)
+      < 60s     → "<1m"
+      < 3600s   → "in {m}m"
+      < 86400s  → "in {h}h"
+      else      → "in {d}d"
+    """
+    if delta_seconds is None:
+        return "—"
+    if delta_seconds <= 0:
+        return "due"
+    if delta_seconds < 60:
+        return "<1m"
+    if delta_seconds < 3600:
+        return f"in {int(delta_seconds // 60)}m"
+    if delta_seconds < 86400:
+        return f"in {int(delta_seconds // 3600)}h"
+    return f"in {int(delta_seconds // 86400)}d"
+
+
+def render_rows(jobs: list[m.Job], now: float | None = None) -> list[str]:
     """Return one display string per job.
 
-    Format: ● {name} · {status_word} · next {nxt}
+    Format: ● {name} · {status_word} · {when}
 
     status_word priority:
       1. "running"  — state.running_since is set (may coexist with disabled)
       2. "disabled" — enabled is False
       3. "scheduled"
 
-    nxt:
-      "—"           — next_run_at is None
-      "@{int(t)}"   — formatted epoch second
+    when: a human-readable relative time until next_run_at (see _humanize_until),
+    measured against *now* (defaults to time.time() so live rows are current).
+    Pass an explicit *now* for deterministic output in tests.
     """
+    if now is None:
+        now = time.time()
     rows: list[str] = []
     for job in jobs:
         if job.state.running_since is not None:
@@ -54,9 +80,9 @@ def render_rows(jobs: list[m.Job]) -> list[str]:
             status_word = "scheduled"
 
         nra = job.state.next_run_at
-        nxt = "—" if nra is None else f"@{int(nra)}"
+        when = _humanize_until(None if nra is None else nra - now)
 
-        rows.append(f"● {job.name} · {status_word} · next {nxt}")
+        rows.append(f"● {job.name} · {status_word} · {when}")
     return rows
 
 
@@ -96,6 +122,9 @@ class CronDashboard(ListView):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._jobs: list[m.Job] = []
+        # Bordered-panel title; the round border + this title give the roster
+        # framed chrome (CSS #cron-dashboard) instead of bare floating rows.
+        self.border_title = "CRON JOBS"
 
     def set_rows(self, jobs: list[m.Job]) -> None:
         """Re-render the list with a new job snapshot."""

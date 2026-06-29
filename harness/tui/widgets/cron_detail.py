@@ -22,7 +22,6 @@ import logging
 
 from textual.app import ComposeResult
 from textual.widget import Widget
-from textual.widgets import Label
 from textual_plotext import PlotextPlot
 
 from harness.jobs import paths as jp
@@ -96,9 +95,11 @@ class CronDetail(Widget):
     def __init__(self, job_id: str, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._job_id = job_id
+        # Bordered-panel title (round border via #cron-detail CSS). Replaces the
+        # old in-body "Run history:" Label so the framed panel has one header.
+        self.border_title = "Run history"
 
     def compose(self) -> ComposeResult:
-        yield Label(f"Run history: {self._job_id}", id="cron-detail-title")
         yield PlotextPlot(id="cron-detail-plot")
 
     def on_mount(self) -> None:
@@ -108,8 +109,6 @@ class CronDetail(Widget):
     def refresh_chart(self, job_id: str) -> None:
         """Reload the chart for *job_id* (call from a timer or selection handler)."""
         self._job_id = job_id
-        title = self.query_one("#cron-detail-title", Label)
-        title.update(f"Run history: {job_id}")
         self._draw(job_id)
 
     def _draw(self, job_id: str) -> None:
