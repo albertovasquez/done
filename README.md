@@ -85,6 +85,31 @@ The harness remembers your selected model across sessions in
 to the reserved `default` agent there; passing `--model` at launch overrides
 the saved value for that session without erasing it.
 
+### Context compaction
+
+DoneDone automatically compresses the conversation transcript when it grows
+large, so long sessions don't hit the model's context limit. Compaction is
+**on by default** — no config needed. To opt out or tune it, add a
+`[compaction]` block to `~/.config/harness/done.conf`:
+
+```toml
+[compaction]
+enabled       = true    # set to false to disable entirely
+threshold     = 0.5     # compress when transcript exceeds this fraction of ctx_window
+target_ratio  = 0.2     # keep this fraction of ctx_window in the retained tail
+protect_head_n = 0      # never compress the first N messages
+protect_last_n = 20     # always keep the last N messages verbatim
+# ctx_window is auto-resolved from the model (curated table → litellm → 32000).
+# Only set it to override for an unknown or proxy model:
+# ctx_window = 128000
+```
+
+With `--debug`, three compaction events appear in the JSONL trace every turn:
+`context.compaction.eval` (prior tokens, budget, decision),
+`context.compaction.summarize` (in/out tokens, cost, elapsed — only when a
+summary is produced), and `context.compacted` (before/after message + token
+counts — only when compaction actually fires).
+
 Either install puts two commands on your `PATH`:
 
 | Command | What it is |
