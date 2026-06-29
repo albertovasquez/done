@@ -548,7 +548,7 @@ class HarnessTui(App):
         active = self._snapshot.active
         view = active.decision if active else None
         if index is None:
-            pass                                  # esc/cancel: just close
+            return                                # esc/cancel: just close, keep state
         elif index == TYPE_SOMETHING:
             self._active_input().focus()
         elif index == CHAT_ABOUT_IT:
