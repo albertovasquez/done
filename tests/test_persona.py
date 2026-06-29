@@ -163,11 +163,12 @@ def test_seed_creates_trio_when_absent(monkeypatch, tmp_path):
     ws = paths.default_workspace_dir()
     for name in ("SOUL.md", "IDENTITY.md", "USER.md"):
         assert (ws / name).is_file(), name
-    # the default ships with a soul ("Done") -> compose injects its SOUL/IDENTITY;
-    # USER.md stays inert (blank) for the user to fill in.
+    # the default ships with a soul -> compose injects its SOUL/IDENTITY;
+    # USER.md stays inert (blank) for the user to fill in. The soul names itself
+    # "Bob" (deliberate voice) while IDENTITY shows the display name "Done".
     block = compose_persona(ws).block
-    assert "You're Done." in block
-    assert "Name: Done." in block
+    assert "You're Bob." in block       # soul body
+    assert "Name: Done." in block       # IDENTITY display name
 
 
 def test_seed_does_not_clobber_existing_dir(monkeypatch, tmp_path):
