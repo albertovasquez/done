@@ -1,7 +1,8 @@
 # Compress-Aware Mode — Design
 
 **Date:** 2026-06-29
-**Status:** Design approved, pending spec review
+**Status:** Design approved → Phase 1 tracked in #186
+**Issue:** https://github.com/albertovasquez/done/issues/186 (Phase 1)
 **Branch:** `context-friendly-mode`
 **Mode name:** `compress-aware` (user-facing mode, `done.conf` setting, `dn`
 subcommand, and footer chip all use this name).
