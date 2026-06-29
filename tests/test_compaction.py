@@ -421,8 +421,56 @@ def test_compress_params_roundtrip_with_on_event():
     comp = build_compaction(
         {"enabled": True, "ctx_window": 2000, "protect_head_n": 2, "protect_last_n": 5},
         model=model, fixed_overhead_tokens=0, add_cost=lambda c: None,
-        on_event=lambda e: None,
+        on_event=lambda name, data: None,
     )
     # This should not raise even though params() includes on_event
     r = compress(prior, **comp.params())
     assert r.method == "summary"
+
+
+# ---------------------------------------------------------------------------
+# Task 3: on_event emission
+# ---------------------------------------------------------------------------
+
+def test_compress_emits_eval_none_when_below_budget():
+    events = []
+    compress(_msgs(3), summarize=lambda m: "S", count_tokens=TOK,
+             fixed_overhead_tokens=0, ctx_window=10_000_000,
+             on_event=lambda name, data: events.append((name, data)))
+    evals = [d for n, d in events if n == "context.compaction.eval"]
+    assert len(evals) == 1
+    assert evals[0]["decision"] == "none"
+    assert "prior_tokens" in evals[0] and "budget" in evals[0]
+
+def test_compress_emits_eval_summary_when_fired():
+    events = []
+    compress(_msgs(40), summarize=lambda m: "SUMMARY", count_tokens=TOK,
+             fixed_overhead_tokens=0, ctx_window=200,
+             protect_head_n=2, protect_last_n=5,
+             on_event=lambda name, data: events.append((name, data)))
+    evals = [d for n, d in events if n == "context.compaction.eval"]
+    assert evals and evals[0]["decision"] == "summary"
+
+def test_compress_no_event_callback_is_silent_and_unchanged():
+    # default on_event=None -> no crash, normal result (merged behavior intact)
+    r = compress(_msgs(3), summarize=lambda m: "S", count_tokens=TOK,
+                 fixed_overhead_tokens=0, ctx_window=10_000_000)
+    assert r.method == "none"
+
+def test_summarize_closure_emits_summarize_event():
+    events = []
+    class M:
+        def query(self, msgs):
+            return {"role": "assistant", "content": "the summary text",
+                    "extra": {"cost": 0.002}}
+    comp = build_compaction(
+        {"enabled": True, "ctx_window": 200},
+        model=M(), model_name="gpt-5.4", fixed_overhead_tokens=0,
+        add_cost=lambda c: None,
+        on_event=lambda name, data: events.append((name, data)))
+    comp.summarize([{"role": "user", "content": "hello world"}])
+    summ = [d for n, d in events if n == "context.compaction.summarize"]
+    assert len(summ) == 1
+    assert summ[0]["out_tokens"] >= 1 and summ[0]["in_tokens"] >= 1
+    assert summ[0]["cost"] == 0.002
+    assert "elapsed_s" in summ[0]

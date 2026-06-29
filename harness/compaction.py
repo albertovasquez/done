@@ -146,14 +146,23 @@ def build_compaction(cfg, *, model, fixed_overhead_tokens: int,
     protect_last_n: int = int(cfg.get("protect_last_n", 20))
 
     def summarize(middle: list[dict]) -> str:
-        # on_event and now are closed over here for Task 3 emission (no-op for now).
         user_content = render(middle)
+        start = now() if now else None
         msg = model.query([
             {"role": "system", "content": COMPRESS_SYSTEM},
             {"role": "user", "content": user_content},
         ])
-        add_cost(msg.get("extra", {}).get("cost", 0.0))
-        return msg.get("content") or ""
+        cost = msg.get("extra", {}).get("cost", 0.0)
+        add_cost(cost)
+        text = msg.get("content") or ""
+        if on_event:
+            on_event("context.compaction.summarize", {
+                "in_tokens": estimate_tokens(user_content),
+                "out_tokens": estimate_tokens(text),
+                "cost": cost,
+                "elapsed_s": round((now() - start), 3) if (now and start is not None) else 0.0,
+            })
+        return text
 
     return Compaction(
         summarize=summarize,
@@ -194,22 +203,31 @@ def compress(prior, *, summarize: Callable[[list[dict]], str],
     prior = prior or []
     before_msgs = len(prior)
     before_tokens = count_tokens(render(prior))
+    budget = int(threshold * ctx_window) - fixed_overhead_tokens  # pre-clamp: reported in eval
+
+    def _emit_eval(decision):
+        if on_event:
+            on_event("context.compaction.eval", {
+                "prior_tokens": before_tokens, "budget": budget,
+                "ctx_window": ctx_window, "fixed_overhead": fixed_overhead_tokens,
+                "decision": decision,
+            })
 
     def noop(method="none"):
+        _emit_eval(method)
         return CompactResult(prior, False, method, before_tokens, before_tokens,
                              before_msgs, before_msgs)
 
-    budget = int(threshold * ctx_window) - fixed_overhead_tokens
     if budget <= 0:
         log.warning("compaction: fixed overhead (%d) >= budget; cannot compact",
                     fixed_overhead_tokens)
         return noop()
-    budget = max(budget, MIN_BUDGET_FLOOR)
+    clamped_budget = max(budget, MIN_BUDGET_FLOOR)
 
-    if before_tokens <= budget:
+    if before_tokens <= clamped_budget:
         return noop()
 
-    head, middle, tail = _split(prior, count_tokens=count_tokens, budget=budget,
+    head, middle, tail = _split(prior, count_tokens=count_tokens, budget=clamped_budget,
                                 protect_head_n=protect_head_n,
                                 protect_last_n=protect_last_n, target_ratio=target_ratio)
     if not middle:
@@ -228,6 +246,7 @@ def compress(prior, *, summarize: Callable[[list[dict]], str],
         method = "truncated"
 
     new = _sanitize_tool_pairs(new)
+    _emit_eval(method)
     return CompactResult(new, True, method, before_tokens,
                          count_tokens(render(new)), before_msgs, len(new))
 
