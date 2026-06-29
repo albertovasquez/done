@@ -28,3 +28,14 @@ def test_error_result_returns_exit_1(monkeypatch):
 
 def test_unknown_subcommand_returns_2(capsys):
     assert cli.run(["frobnicate"]) == 2
+
+
+def test_help_returns_0(capsys):
+    # #164: argparse raises SystemExit(0) for --help. run() must propagate that
+    # exit code (help=0), not flatten every SystemExit to a usage-error 2.
+    assert cli.run(["--help"]) == 0
+
+
+def test_missing_subcommand_returns_2(capsys):
+    # No action → argparse usage error → SystemExit(2). Still 2, not flattened to 0.
+    assert cli.run([]) == 2
