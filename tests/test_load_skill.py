@@ -50,7 +50,9 @@ def test_loaded_set_is_reset_between_turns(tmp_path):
 
 
 def test_registry_no_op_without_roots():
-    assert [t.name for t in build_registry()] == ["bash", "read", "write", "edit"]
+    # The always-present tools: the four defaults plus create_job (needs no roots/
+    # context — it's the agent's only way to create a cron job; see registry.py).
+    assert [t.name for t in build_registry()] == ["bash", "read", "write", "edit", "create_job"]
 
 
 def test_registry_appends_load_skill_with_roots(tmp_path):

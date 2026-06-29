@@ -5,8 +5,8 @@ chat, per-persona) must not share mutable tool state.
 When skill_roots are passed, the agent gets a load_skill tool so it can pull skill
 bodies on demand (lazy discovery). When a memory_root (the session workspace) is
 passed, it gets a load_memory tool so it can pull remembered facts on demand. With
-neither, the registry is exactly the four default tools — a strict no-op for any
-caller that doesn't opt in."""
+neither, the registry is the five always-present tools (bash, read, write, edit,
+create_job) — load_skill/load_memory are the only context-gated additions."""
 
 from __future__ import annotations
 
