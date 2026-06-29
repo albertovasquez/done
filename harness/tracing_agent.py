@@ -98,18 +98,25 @@ class TracingAgent(DefaultAgent):
             # template used to estimate fixed_overhead_tokens.  Rebuilt per-turn so
             # persona/skill/memory changes (and per-session model swaps) are reflected
             # in the fixed_overhead_tokens estimate and model reference.
+            # Default-ON: build the adapter unless compaction is explicitly disabled.
+            # Absent config -> {} -> all defaults with enabled=True (ON).
+            # Explicit {"enabled": False} -> opt out.
             self._compaction = None
-            if self._compaction_cfg:
+            cfg = self._compaction_cfg if self._compaction_cfg is not None else {}
+            if cfg.get("enabled", True):
                 rendered_system = self._render_template(self.config.system_template)
                 rendered_instance = self._render_template(self.config.instance_template)
                 fixed_overhead_tokens = _compaction.estimate_tokens(
                     rendered_system + rendered_instance
                 )
                 self._compaction = _compaction.build_compaction(
-                    self._compaction_cfg,
+                    {**cfg, "enabled": True},   # normalize: build only when enabled
                     model=self.model,
+                    model_name=getattr(self.model.config, "model_name", ""),
                     fixed_overhead_tokens=fixed_overhead_tokens,
                     add_cost=lambda c: setattr(self, "cost", self.cost + c),
+                    on_event=lambda name, data: self._emitter.emit(name, **data),
+                    now=time.monotonic,
                 )
             # load_skill / load_memory dedup is per-turn: a fresh set each run so
             # a long-lived ACP session can re-pull a skill/fact on a later turn

@@ -3,8 +3,9 @@
 Tests that:
   (a) When compaction is enabled and prior is long, context.compacted event fires
       with correct fields (after_msgs < before_msgs, method in valid set).
-  (b) When no compaction kwarg is passed (default off), no context.compacted event
-      fires — behavior is byte-identical to the baseline (no-op).
+  (b) When no compaction kwarg is passed (default ON), context.compacted event
+      fires when the prior is large enough.
+  (c) Explicit enabled:False opts out — no context.compacted event fired.
 """
 from __future__ import annotations
 
@@ -150,19 +151,70 @@ def test_compaction_enabled_long_prior_emits_event(tmp_path):
     assert ev["after_tokens"] >= 0
 
 
-def test_compaction_default_off_no_event(tmp_path):
-    """No compaction kwarg → no context.compacted event, run() behaves identically."""
+def test_compaction_explicit_disable_no_event(tmp_path):
+    """Explicit enabled:False → no context.compacted event, run() behaves identically."""
     model = build_mock_model()
-    agent = _build_agent(tmp_path, model)   # no compaction_cfg => default off
+    agent = _build_agent(tmp_path, model, compaction_cfg={"enabled": False})
     prior = _long_prior(60)
     records = _run_agent(agent, prior)
 
     compacted_events = [r for r in records if r["type"] == "context.compacted"]
     assert compacted_events == [], (
-        f"Expected NO context.compacted events when compaction is off, "
+        f"Expected NO context.compacted events when compaction is explicitly disabled, "
         f"but got: {compacted_events}"
     )
 
     # Also verify the agent completed successfully (no regression)
     finished = [r for r in records if r["type"] == "run.finished"]
     assert finished and finished[-1]["data"]["ok"] is True
+
+
+def _events_collector():
+    seen = []
+    class E:
+        def set_clock(self, *_): pass
+        def emit(self, name, **data): seen.append((name, data))
+    return E(), seen
+
+
+def _agent_cfg():
+    return {"system_template": "You are a helpful agent.",
+            "instance_template": "Task: {{task}}",
+            "step_limit": 10, "cost_limit": 5.0}
+
+
+def test_compaction_default_on_fires_without_config(tmp_path):
+    """NO compaction kwarg → ON by default; fires when prior is large enough."""
+    emitter, seen = _events_collector()
+    model = build_mock_model()
+    agent = TracingAgent(model, LocalEnvironment(cwd=str(tmp_path)),
+                         emitter=emitter, registry=None, **_agent_cfg())
+    # floor ctx_window = 32000 tokens; budget = 0.5 * 32000 = 16000 est tokens.
+    # estimate_tokens = len // 4, so we need prior_chars > 64000.
+    # 60 messages × "turn-{i} " * 400 ≈ 60 × 3600 chars = 216000 chars ≈ 54000 est tokens → well above floor.
+    prior = [{"role": "user", "content": f"turn-{i} " * 400} for i in range(60)]
+    agent.run("solve the bug", prior=prior)
+    names = [n for n, _ in seen]
+    assert "context.compacted" in names, (
+        f"Expected context.compacted event but got: {names}"
+    )
+    assert "context.compaction.eval" in names, (
+        f"Expected context.compaction.eval event but got: {names}"
+    )
+
+
+def test_compaction_explicit_disable_is_off(tmp_path):
+    """Explicit enabled:False → no compaction events even with a large prior."""
+    emitter, seen = _events_collector()
+    agent = TracingAgent(build_mock_model(), LocalEnvironment(cwd=str(tmp_path)),
+                         emitter=emitter, registry=None,
+                         compaction={"enabled": False}, **_agent_cfg())
+    agent.run("solve the bug",
+              prior=[{"role": "user", "content": "x " * 5000} for _ in range(40)])
+    names = [n for n, _ in seen]
+    assert "context.compacted" not in names, (
+        f"Expected no context.compacted event but got: {names}"
+    )
+    assert "context.compaction.eval" not in names, (
+        f"Expected no context.compaction.eval event but got: {names}"
+    )
