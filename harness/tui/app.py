@@ -349,17 +349,53 @@ class HarnessTui(App):
                 self._tracer.emit("dn", "spawn.failed", error=str(e))
             self._fatal(f"could not start agent: {e}")
 
-        # Auto-start the cron daemon (best-effort, once per window). DELIBERATE:
-        # this spawns a DETACHED background process that OUTLIVES done — see
-        # harness/jobs/supervisor.py. Never let it break boot. Local import keeps
-        # subprocess/jobs off the TUI module-load path.
+        # Ensure scheduled jobs can fire. PRIMARY path is the OS service (launchd/
+        # systemd) installed via `dn cron install`; if present, the OS owns the
+        # daemon and we do nothing. On first run we offer to install it; otherwise
+        # we fall back to a best-effort detached spawn (survives window close but
+        # not reboot). Never let any of this break boot.
         try:
-            from harness.jobs.supervisor import ensure_daemon_running
-            ensure_daemon_running()
+            self._decide_cron_autostart(show_prompt=self._show_cron_install_prompt)
         except Exception as e:
             self.log(f"cron autostart skipped: {e!r}")
             if self._tracer is not None:
                 self._tracer.emit("dn", "cron.autostart.failed", error=str(e))
+
+    def _decide_cron_autostart(self, *, show_prompt) -> str:
+        """Decide how to ensure cron runs. Returns the branch taken (testable).
+
+        1. OS service already installed → do nothing; the OS owns the lifecycle.
+        2. First run on a supported platform → show the opt-in prompt (once).
+        3. Otherwise (declined before, or unsupported platform) → best-effort
+           fallback spawn so jobs still fire while this window is open.
+        """
+        from harness.jobs import service, prompt_state
+        from harness.jobs.supervisor import ensure_daemon_running
+
+        if service.current_backend() != "unsupported":
+            if service.service_status().state == "installed":
+                return "os-service-present"
+            if not prompt_state.has_been_asked():
+                prompt_state.mark_asked()
+                show_prompt()
+                return "prompted"
+        ensure_daemon_running()
+        return "fallback-spawn"
+
+    def _show_cron_install_prompt(self) -> None:
+        """Offer to install the OS autostart service (once). Yes → service.install();
+        the result detail is surfaced in the activity log. Mirrors NewPersonaModal's
+        push_screen(..., callback=...) lifecycle."""
+        from harness.tui.widgets.cron_install_modal import CronInstallModal
+        from harness.jobs import service
+
+        def _on_choice(accepted: bool) -> None:
+            if not accepted:
+                return
+            res = service.install()
+            self.log(f"cron autostart: {res.detail}")
+
+        self.push_screen(CronInstallModal(), callback=_on_choice)
 
     async def _mount_status_contents(self) -> None:
         bar = self.query_one("#statusbar", Container)
