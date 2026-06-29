@@ -296,11 +296,13 @@ fires it *as that persona* — same model, workspace, memory, and AGENTS.md as a
 live turn. If the persona is gone, the job auto-disables instead of running as
 someone else.
 
-You don't type a create command: ask the persona for the job (or press **n** in
-the cron drawer) and the **`create-job` skill** walks four fail-closed gates —
-timeout, min-cadence, max-failures, and permissions — before writing it through
-the single `harness/create_job` door. Schedules are 5-field cron (`0 2 * * *`), a
-fixed interval, or a one-shot timestamp.
+You don't type a create command: just ask the persona in chat — *"remind me every
+Monday at 9am to review deploy metrics"* — and the **`create-job` skill** turns
+your plain-language intent into a job. It's guess-first: safe defaults for
+timeout / cadence / failures / permissions, asking only when the schedule is
+unclear or a risky permission (shell, network, writes outside the project) is
+needed. It writes through the single `create_job` tool. Schedules can be a 5-field
+cron (`0 2 * * *`), a fixed interval, or a one-shot timestamp.
 
 `done` **auto-starts the daemon on launch** (single-instance — several `done`
 windows still share one; it keeps running in the background after you close
@@ -312,8 +314,8 @@ harness-cron --once     # fire all due jobs once and exit
 ```
 
 In the TUI, **Ctrl+J** toggles the cron dashboard (status per job + a run-duration
-chart); `n`/`r`/`t`/`Backspace` create, run-now, toggle, and remove. Jobs live in
-`~/.config/harness/cron/`.
+chart); `r`/`t`/`Backspace` run-now, toggle, and remove (creation is in chat, as
+above). Jobs live in `~/.config/harness/cron/`.
 
 > Phase 1: the permission `grant` is **recorded but not yet enforced at runtime** —
 > a job can currently do whatever its persona could. Prefer narrow, low-privilege

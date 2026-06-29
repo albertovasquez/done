@@ -45,11 +45,17 @@ defaults — no questions.
 1. **The schedule is unclear.** The user said "remind me" / "run a check" with no
    usable *when*. → Ask one question: *"How often, or at what time?"*
 
-2. **The job needs a risky permission.** The action clearly requires **shell
-   commands**, **network access**, or **writing to paths outside the current
-   project**. → Confirm that one thing explicitly, e.g. *"This will run shell
-   commands and write to `/backups` — okay to grant that?"* Reminders and
-   read-only jobs never trigger this.
+2. **The job needs a risky permission.** The action requires **shell commands**,
+   **network access** (any call to an external service or API — fetching PRs,
+   weather, a webpage, posting a message), or **writing to paths outside the
+   current project**. → Confirm that one thing explicitly, e.g. *"This will fetch
+   from GitHub's API — okay to grant network access?"* or *"This will run shell
+   commands and write to `/backups` — okay?"* Then set the matching grant field
+   (`network: true`, `shell: true`, or the path).
+   - Only a **purely local, read-only** job (a plain reminder, or reading a file
+     inside the project) is exempt and needs no question. A job that *looks*
+     read-only but reaches the network ("summarize my open PRs") is **not**
+     exempt — confirm the network grant.
 
 That's it. Never re-print a list of four gates. Never refuse a job that only
 lacks a default-able value.
@@ -102,9 +108,10 @@ actually gives you one.
 max-fail 3, grant none. Report the job id. **No questions.**
 
 **User:** "Every morning, give me a summary of my open PRs."
-→ Schedule = daily (pick a morning time, e.g. 9am → `"0 9 * * *"`). A read-only
-task; default grant is fine. Create it. (If it genuinely needs network/an API,
-that's the one thing to confirm — see "When to ask".)
+→ Schedule = daily (pick a morning time, e.g. 9am → `"0 9 * * *"`). This LOOKS
+read-only but it reaches GitHub over the network, so confirm that one thing:
+*"This will fetch your PRs from GitHub — okay to grant network access?"* On yes,
+create with `network: true` (everything else default).
 
 **User:** "Set up a reminder."
 → Schedule unclear. Ask once: *"Sure — how often, or at what time?"* Then create.

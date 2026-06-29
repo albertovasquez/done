@@ -25,42 +25,39 @@ walkthrough.
 
 In `done`, press **`Ctrl+J`**.
 
-The **cron drawer** opens. If you've never made a job, the roster is empty.
+The **cron drawer** opens. If you've never made a job, the roster is empty. (This
+is just to view jobs — you create them in chat, next.)
 
-## Step 2 — start the create flow
+## Step 2 — just ask for the job in chat
 
-With the dashboard focused, press **`n`**.
+Job creation is **agent-native** — you don't press a key, you just say what you
+want. In the chat composer, type something like:
 
-`done` closes the drawer and drops a seed message into the chat —
-*"I want to create a scheduled cron job."* — then hands off to the agent, which
-loads the **`create-job`** skill and begins asking you questions.
+> Remind me every weekday at 9am: stand-up in 15 minutes.
 
-> You can also just type the request yourself in chat (e.g. *"create a daily
-> reminder job"*) instead of pressing `n`. Same skill, same gates.
+The router loads the **`create-job`** skill and the agent turns that into a real
+job.
 
-## Step 3 — answer the four gates
+## Step 3 — the agent fills in the details
 
-A job runs unattended with no per-run confirmation, so the skill **will not
-create anything until you answer four gates**. It fails closed: vague answers
-get bounced back as specific questions. For our reminder, answer like this:
+The skill is **guess-first**: it applies safe defaults and only asks a follow-up
+when it genuinely needs to. For a plain reminder like ours, it asks **nothing** —
+it already has the schedule ("every weekday at 9am" → `0 9 * * 1-5`) and the
+message, and everything else gets a safe default:
 
-| Gate | What it asks | Answer for this job |
-|---|---|---|
-| **Timeout** | max wall-clock seconds for one run | `60` |
-| **Min-cadence** | the closest interval it may run | `86400` (once a day) |
-| **Max failures** | consecutive failures before auto-disable | `3` |
-| **Permissions** | paths / shell / tools / network it needs | *none — it's a text reminder* |
+| Setting | Default it uses |
+|---|---|
+| Timeout | 300s (5 min) |
+| Min-cadence | derived from the schedule (daily) |
+| Max failures | 3 |
+| Permissions | none — it's a text reminder |
 
-You'll also tell the agent **what the job does** and **when**. Say something
-like:
+It only stops to ask if your request is missing the **schedule** ("remind me" —
+when?), or needs a **risky permission** (shell, network, or writing outside the
+project) — which it confirms before granting.
 
-> A daily reminder at 9am that says: "stand-up in 15 minutes."
-
-The agent turns "9am daily" into the cron schedule `0 9 * * *`.
-
-When all four gates are satisfied, the agent calls the single privileged door
-(`harness/create_job`) and confirms with a **job id**. Your job now lives in
-`~/.config/harness/cron/jobs.json`.
+The agent calls the **`create_job` tool** and confirms with a **job id**. Your job
+now lives in `~/.config/harness/cron/jobs.json`.
 
 ### Which persona owns it?
 
@@ -96,7 +93,8 @@ Other roster keys while you're here:
 | `r` | run now |
 | `t` | enable / disable (pause without deleting) |
 | `Backspace` | remove the job |
-| `n` | create another |
+
+(To create another, just ask in chat — there's no create key.)
 
 ## Step 6 (optional) — let it fire on its own
 
@@ -124,7 +122,7 @@ never have to guess whether your jobs are armed.
 | Action | How |
 |---|---|
 | Open dashboard | `Ctrl+J` |
-| Create a job | `n` → answer the four gates in chat |
+| Create a job | ask in chat (e.g. *"remind me every weekday at 9am…"*) |
 | View jobs | `Ctrl+J` (roster + run chart) |
 | Run a job now | select → `r` |
 | Pause / resume | select → `t` |
