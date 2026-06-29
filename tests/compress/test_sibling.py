@@ -53,3 +53,34 @@ def test_is_safe_sibling_rejects_symlink(tmp_path):
     target.write_text("evil")
     sib.symlink_to(target)
     assert sibling.is_safe_sibling(source, sib) is False
+
+
+def test_freshness_stale_when_rules_changed(monkeypatch):
+    src = "original source"
+    sib = _fresh_sibling_text(src)  # built with the CURRENT rules_sha256
+    # now simulate the compression rules changing:
+    monkeypatch.setattr(rules, "rules_sha256", lambda: "0" * 64)
+    assert sibling.freshness(src, sib) == "stale"
+
+
+def test_is_safe_sibling_false_when_source_missing(tmp_path):
+    source = tmp_path / "AGENTS.md"  # not created
+    sib = tmp_path / "AGENTS.compressed.md"
+    sib.write_text("x")
+    assert sibling.is_safe_sibling(source, sib) is False
+
+
+def test_is_safe_sibling_false_when_different_parent(tmp_path):
+    source = tmp_path / "AGENTS.md"
+    source.write_text("x")
+    other = tmp_path / "other"
+    other.mkdir()
+    sib = other / "AGENTS.compressed.md"
+    sib.write_text("y")
+    assert sibling.is_safe_sibling(source, sib) is False
+
+
+def test_parse_header_none_on_partial_header():
+    # a compress-aware comment that is missing required keys (e.g. only source-sha256)
+    partial = "<!-- compress-aware source-sha256:abc -->\nbody"
+    assert sibling.parse_header(partial) is None
