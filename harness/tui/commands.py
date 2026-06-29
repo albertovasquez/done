@@ -60,11 +60,24 @@ async def _yolo(app, arg: str = "") -> None:
         app._notify_line("usage: /yolo [pin|unpin]")
 
 
+async def _compress_aware(app, arg: str = "") -> None:
+    sub = arg.strip().lower()
+    if sub == "":
+        app.action_toggle_compress_aware()
+    elif sub == "pin":
+        app.action_compress_aware_pin()
+    elif sub == "unpin":
+        app.action_compress_aware_unpin()
+    else:
+        app._notify_line("usage: /compress-aware [pin|unpin]")
+
+
 def build_registry() -> list[Command]:
     """The commands available in the slash menu, in display order."""
     return [
         Command("models", "Select the active model", _models),
         Command("yolo", "Toggle auto-allow (pin/unpin to persist)", _yolo),
+        Command("compress-aware", "Toggle context compression (pin/unpin to persist)", _compress_aware),
         Command("reload", "Reload everything (restart the app)", _reload),
         Command("persona", "Open the agents rail (your personas + which is active)", _persona),
         Command("clear", "Fresh conversation (restart the agent)", _clear),
