@@ -76,7 +76,7 @@ Each line is one event:
 | --- | --- |
 | `dn` | `tx.prompt`, `tx.cancel`, `rx.update`, `perm`, `spawn.failed`, `teardown.error` |
 | `agent` | `task.classified`, `clarify`, `chat.done`, `router.failed`, `run.started`, `llm.call`, `llm.return`, `action`, `action.done`, `run.finished` |
-| `agent` (reserved for the future cron model) | `cron.fire`, `cron.tick`, `cron.error` |
+| `agent` (cron daemon — reserved, not yet emitted; see [jobs.md](jobs.md)) | `cron.fire`, `cron.tick`, `cron.error` |
 
 The `agent` `llm.*` / `action.*` / `run.*` events come from the engine's own
 tracer (`harness/tracing_agent.py`), relayed instead of discarded. `llm.return`
