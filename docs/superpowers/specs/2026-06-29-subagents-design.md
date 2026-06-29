@@ -73,6 +73,55 @@ persona agent runs cleanly headless on threads. A worker is that same recipe wit
 turned (trimmed context, restricted tools, cheaper model). Sharing the chokepoint means the
 worker can never silently drift from how a real persona turn is constructed.
 
+**Extraction is the risk-concentrated task (verified against live code).** The construction is
+NOT a clean copy-paste: in `jobs/executor.py` it lives inside the `_default_deps()` factory
+with ~15 lazy imports and nested `compose`/`run_turn`/`_load_agent_cfg` closures, and
+`resolve_model` reads `os.environ` (executor.py:153). The refactor must untangle these
+closures into explicit `build_persona_agent` parameters. Treat it as the **highest-risk task
+in the plan**, with the existing executor tests as the parity gate (the cron path must produce
+a byte-identical agent before and after).
+
+---
+
+## 2a. Concurrency safety (the load-bearing assumption)
+
+The feature rests on running **N `TracingAgent` instances concurrently on threads**. Verified
+against live code (harness AND upstream):
+
+**Safe — per-instance, no harness-level shared mutable state:**
+
+- `StreamingLitellmModel` holds `self.registry` / `self.on_delta` per construction
+  (streaming_model.py:43-45, *"Fresh registry per construction — never a shared
+  module-global"*). `litellm` is used only as call-site functions
+  (`litellm.completion`, `litellm.stream_chunk_builder`) — there is **no `litellm.<global> = …`
+  assignment** that would race.
+- `TracingAgent` has no module-globals / ClassVars — only per-instance `self.messages`,
+  `self.cost`, `self.n_calls`, `self._cancel_flag`.
+- `LocalEnvironment.execute` spawns a fresh `subprocess.Popen` per call — stateless.
+
+**The one shared singleton — `GLOBAL_MODEL_STATS` (upstream, process-global):**
+
+Upstream defines a **process-global** model-stats accumulator
+(`upstream/src/minisweagent/models/__init__.py:42`), hit on **every** litellm query
+(`litellm_model.py:86`). It is **mutex-locked** (no corruption / no crash under concurrency),
+but it is **process-global, not per-agent**, so **cost and call-count accounting cross-talks
+across all concurrent workers and the parent.**
+
+Consequences the plan must honor:
+
+- **Do NOT rely on `cost_limit` as a worker guardrail.** With N workers + parent accumulating
+  into one counter, a global cost limit trips early and unpredictably. The worker guardrails
+  are **`step_limit` (turn cap) and `wall_time_limit`** (§7) — both genuinely per-instance —
+  NOT cost.
+- Per-worker cost *attribution* is not available in v1 (it would require threading a
+  per-agent stats object through upstream — out of scope, and a reason to keep workers cheap
+  by model choice, not by cost metering).
+
+**Required by the plan:** fresh `StreamingLitellmModel` + fresh registry + fresh
+`LocalEnvironment` + fresh `MiniSweAgentRunner` **per worker** (never shared across threads),
+and a **concurrency stress test**: N concurrent mock workers (correctness/isolation) to prove
+no cross-talk in results, messages, or tool dispatch.
+
 ---
 
 ## 3. The tool surface — `harness/tools/subagent.py`
@@ -93,12 +142,23 @@ subagent(tasks=[
 
 Tool execution (`execute(args, env) -> dict`):
 
-1. `agent_id = env._active_persona` (inherited; same stamp `CreateJobTool` relies on).
-   Never read `agent_id` from the model.
+1. `agent_id = getattr(env, "_active_persona", None) or "default"` (inherited; same read
+   `CreateJobTool` uses at create_job.py:125). Never read `agent_id` from the model.
+
+   **Correction to an earlier assumption:** `_active_persona` is NOT "stamped at env
+   construction." It is set *after* construction, and **only on the ACP/interactive path**
+   (acp_agent.py:667/675). The **cron path does NOT stamp it** — `jobs/executor.py:140` builds
+   a bare `LocalEnvironment(cwd=workspace)`. Therefore the plan must, in TWO places:
+   (a) have the cron executor stamp `env._active_persona = job.agent_id`, and
+   (b) have `build_persona_agent` stamp `env._active_persona = agent_id` unconditionally,
+   so a worker is always bound to the correct persona regardless of the launch surface.
 2. Read optional propagation from `env`: `cancel_flag` (parent interrupt) and
-   `_remaining_secs` (cron budget; `None` on the interactive path).
-3. Run `tasks` on a `ThreadPoolExecutor(max_workers=cap)` (§7). The parent's tool call
-   **blocks** until all workers finish — exactly like a slow `bash` call. No scheduler.
+   `_remaining_secs` (cron budget; `None` on the interactive path). These are worker-builder
+   additions to the env, not existing attributes.
+3. Run `tasks` on a `ThreadPoolExecutor(max_workers=cap)` **created and torn down inside this
+   single tool call** (§7) — never a shared/module-level pool. Cap the task count (§7). The
+   parent's tool call **blocks** until all workers finish — exactly like a slow `bash` call.
+   No scheduler.
 4. Return a **digest** observation (§7): `{"output": digest, "returncode": 0,
    "exception_info": None}`.
 
@@ -148,9 +208,18 @@ parent's synthesis reliable. The worker's submission (its `Submitted` payload, w
 - **Default toolset: `{read, bash}`** — a read-only investigator. This is the highest-value,
   lowest-risk fan-out pattern (research / survey / analyze).
 - The parent opts a task **up** to `{write, edit}` (and any other tool) per task via `tools`.
-- Implemented as a one-line filter at the end of `build_registry(..., toolset)`:
+- Implemented as a filter at the end of `build_registry(..., toolset)`:
   `tools = [t for t in tools if t.name in toolset]` when `toolset is not None`.
-- `subagent` is always excluded from a worker's registry regardless of `tools` (§3, depth-1).
+  **Both the model and the agent must receive the SAME filtered registry** — the model uses it
+  for `_tool_schemas()` (what the LLM sees) and the agent uses it for dispatch
+  (`by_name = {t.name: t for t in self.registry}`, streaming_model.py:104). A mismatch would
+  let the model call a tool the agent can't dispatch (or vice-versa). The builder must pass one
+  registry object to both.
+- **Depth-1 enforcement is an explicit deny rule, not a side effect of `toolset`.** A worker is
+  built with an explicit `is_worker=True` (or equivalent mode) that *always* excludes
+  `subagent` from its registry, regardless of what `tools` requests. Do not rely on `subagent`
+  merely being absent from the default toolset — a task could name it in `tools`. The deny
+  must be unconditional for workers.
 
 **Honest caveat (recorded, not hidden):** `bash` is in the default set, and `bash` can write
 files (`echo > file`, `rm`). So **"read-only" is an *intent* default, not a hard sandbox** —
@@ -188,6 +257,10 @@ the `[agents.<id>]` table and a global default key.
 - **Overflow is queued, not rejected.** If the model submits more tasks than the cap, the
   executor runs them as slots free up. (Hermes rejects over-cap; we queue because workers are
   cheap and the parent is already blocked.)
+- **But cap the absolute task count** (e.g. a hard `MAX_TASKS_PER_CALL`, ~16): queueing
+  unbounded tasks behind a blocked parent thread is a thread-starvation / runaway-cost risk.
+  Over the hard cap → reject with a clear tool error (a model emitting 500 tasks is a bug, not
+  a workload). The pool is **created and torn down inside the single tool call**, never shared.
 
 ### Turn cap (primary cheap-model guardrail)
 
@@ -203,6 +276,18 @@ the `[agents.<id>]` table and a global default key.
 - A failed worker (exception, `TimeExceeded`, `LimitsExceeded`, `RepeatedFormatError`)
   returns a **structured error entry** instead of a summary. It never aborts sibling workers.
 - The batch always completes.
+
+### Cancellation — best-effort, NOT mid-step (corrected)
+
+`cancel_flag` is checked at **exactly one point**: between steps (tracing_agent.py:154, the
+"ESC checkpoint"). So cancellation is **cooperative and coarse**:
+
+- A worker mid-LLM-call or mid-`bash` does **not** stop until the current step completes.
+- The parent's `cancel_flag` is passed to each worker so an interrupt *reaches* them, but the
+  spec must NOT claim crisp "interrupt propagation." A worker finishes its in-flight step
+  first. For a cheap worker on a short turn this is usually sub-second; for a long `bash` it is
+  not. This is a known engine limitation (the loop has no mid-step cancel), not something this
+  feature fixes.
 
 ### Return shape (digest)
 
@@ -234,8 +319,14 @@ the job's `timeout_secs`.
 
 - **Per-worker wall-time cap:** `wall_time_limit = min(worker_default, env._remaining_secs)`.
   A single worker cannot individually outlive the job budget.
-- **Job-level `timeout_secs` is the real backstop.** `jobs/executor.py` already kills the
-  whole headless turn on timeout, so we do **not** need aggregate accounting to be *safe*.
+- **The cron `timeout_secs` does NOT reap threads (corrected — Codex Risk B).** The cron
+  timeout (`jobs/ops.py:55/68`) makes the supervisor **stop waiting** for the turn; it does
+  **not** kill the executor thread or any worker threads it spawned. Because workers run on
+  **daemon** threads, they die when the process exits — but a "timed-out" cron job can leave
+  worker threads running (and burning tokens) until the daemon process recycles. So the
+  per-worker `step_limit` + `wall_time_limit` are the **real** bounds; the job timeout is a
+  *supervisor-level* give-up, not a thread reaper. Lean on the per-worker caps, not the job
+  timeout, to bound worker work.
 - **Interactive (non-cron) path:** `env._remaining_secs = None` → workers use their own
   defaults. No special-casing — the budget cap only activates when a parent sets it.
 - **Why the cron path is the *easy* surface, not the hard one:** cron already runs through
@@ -245,10 +336,11 @@ the job's `timeout_secs`.
   which is deferred to v2.
 
 **Deferred (documented future tightening):** aggregate cost/time accounting across a batch.
-v1 relies on per-worker turn cap + per-worker wall-time cap + job-level timeout. The honest
-limitation: per-worker caps bound each worker individually, not the *sum*; but because workers
-run in parallel and the parent blocks, the job-level `timeout_secs` still catches a true
-overrun.
+v1 relies on **per-worker turn cap + per-worker wall-time cap** as the genuine bounds (the job
+timeout is a supervisor give-up, not a reaper — see above; and `cost_limit` is unreliable under
+concurrency because of `GLOBAL_MODEL_STATS` cross-talk, §2a). The honest limitation: per-worker
+caps bound each worker individually, not the *sum*. Aggregate accounting that actually reaps an
+over-budget batch is future work.
 
 ---
 
@@ -260,9 +352,10 @@ overrun.
 | Wall-time | `wall_time_limit` (existing)           | `min(default, parent_remaining)` | —                 |
 | Tools     | registry `toolset` filter              | `{read, bash}`                   | `tools`           |
 | Model     | resolution chain (§6)                  | parent's (until opted cheaper)   | `model`           |
-| Depth     | `subagent` excluded from worker registry | flat (1) — no nested spawn      | none              |
-| Concurrency | `ThreadPoolExecutor(max_workers=cap)` | 4 (queue overflow)              | —                 |
-| Interrupt | parent `cancel_flag` passed to workers | propagated                       | —                 |
+| Depth     | explicit `is_worker` deny of `subagent` | flat (1) — no nested spawn      | none              |
+| Concurrency | per-call `ThreadPoolExecutor(max_workers=cap)` | 4 (queue overflow, hard task cap ~16) | —          |
+| Interrupt | parent `cancel_flag` passed to workers | best-effort, between-steps only (NOT mid-step) | —     |
+| Cost limit | — | **NOT a guardrail** (`GLOBAL_MODEL_STATS` cross-talks across workers, §2a) | — |
 
 ---
 
