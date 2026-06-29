@@ -7,156 +7,128 @@ description: Use when the user wants to create a scheduled cron job, recurring t
 
 ## Overview
 
-A cron job is a privileged operation: it runs automatically on a schedule without user confirmation. This skill documents the gate procedure you must follow before creating any job.
+A cron job runs automatically on a schedule. Your job is to turn the user's
+plain-language intent — **what** they want and **how often** — into a real
+scheduled job, calling the `create_job` tool.
 
-**Core principle:** Every gate must be answered. Never create a job unless every gate has approval.
+**Core principle:** Be helpful, not bureaucratic. Collect the user's intent,
+**apply safe defaults for anything they didn't specify**, and create the job.
+Ask a follow-up **only** when you genuinely can't proceed — see "When to ask"
+below. Do NOT interrogate the user for every parameter.
 
-## The Gate Procedure
+## What you need
 
-Creating a job requires passing four gates: **cost**, **cadence**, **failure handling**, and **permissions**. You apply these gates BEFORE calling the `create_job` tool.
+A job has four kinds of settings. You almost always only need the user to tell
+you the **schedule** (and what the job does) — the rest have safe defaults you
+apply yourself.
 
-### 1. Cost Gate: Timeout
+| Setting | How to fill it |
+|---|---|
+| **Schedule** (when/how often) | From the user. The one thing you usually must know. |
+| **Timeout** (max time per run) | **Default 300s (5 min).** Use longer only if the action clearly implies it (a backup, a big report/sync → e.g. 600–1800s). |
+| **Min-cadence** (frequency floor) | **Derive from the schedule** (daily → 86400, hourly → 3600, every N min → N×60). |
+| **Max consecutive failures** | **Default 3.** |
+| **Permissions** (`grant`) | **Default none** — `paths: []`, `shell: false`, `network: false`, `tools: []`. That's correct for a reminder or read-only check. Only widen it if the action obviously needs it. |
 
-Every job run has a **timeout** — the maximum wall-clock time the agent may spend on one execution.
+> **Note (v1 — grant fields are recorded, not enforced):** The `grant` fields are
+> stored as a declared scope (auditable metadata) but the harness does **not yet
+> enforce them at runtime** — a job's effective access is "whatever the persona
+> could do." Defaulting permissions to none is therefore safe today; it does not
+> restrict the job, it just records intent. Enforcement is a later phase, at which
+> point the "ask before a risky grant" rule below becomes the real guard.
 
-**Questions to answer:**
-- How long should a single run be allowed to execute?
-- What is a reasonable timeout for this specific task?
-- Is the timeout based on typical/worst-case runtime plus buffer?
+## When to ask (the ONLY two triggers)
 
-**Example:**
-- A daily backup job: timeout = 10 minutes (15 min worst-case, 5 min buffer)
-- An hourly health check: timeout = 30 seconds
-- A weekly report generation: timeout = 30 minutes
+Ask a focused follow-up **only** in these cases. Otherwise, create the job with
+defaults — no questions.
 
-**Never proceed without a specific timeout.** If the user says "reasonable," ask: "Typically how long does this take?"
+1. **The schedule is unclear.** The user said "remind me" / "run a check" with no
+   usable *when*. → Ask one question: *"How often, or at what time?"*
 
-### 2. Cadence Gate: Min-Cadence
+2. **The job needs a risky permission.** The action requires **shell commands**,
+   **network access** (any call to an external service or API — fetching PRs,
+   weather, a webpage, posting a message), or **writing to paths outside the
+   current project**. → Confirm that one thing explicitly, e.g. *"This will fetch
+   from GitHub's API — okay to grant network access?"* or *"This will run shell
+   commands and write to `/backups` — okay?"* Then set the matching grant field
+   (`network: true`, `shell: true`, or the path).
+   - Only a **purely local, read-only** job (a plain reminder, or reading a file
+     inside the project) is exempt and needs no question. A job that *looks*
+     read-only but reaches the network ("summarize my open PRs") is **not**
+     exempt — confirm the network grant.
 
-Every job has a **minimum frequency floor** — the closest interval a job should run.
-
-**Questions to answer:**
-- What is the minimum time between runs?
-- Is hourly too frequent? Daily? Weekly?
-- Can the downstream system handle this frequency?
-
-**Examples:**
-- "Run every 6 hours" → min-cadence = 6 hours
-- "Run every Monday" → min-cadence = 1 week
-- "Run every 30 minutes" → min-cadence = 30 minutes
-
-**Never allow runaway schedules.** If the user says "very often," ask: "Specifically, how often? Every hour? Every minute?"
-
-### 3. Failure Gate: Max Consecutive Failures
-
-Every job has a **maximum consecutive failure limit** — if the job fails that many times in a row, it auto-disables to prevent a broken job from hammering a system.
-
-**Questions to answer:**
-- How many consecutive failures before auto-disabling?
-- What is the acceptable failure tolerance?
-- Is the system set up to alert on auto-disable?
-
-**Examples:**
-- A backup job: 3 consecutive failures → disable (alert the team)
-- A health check: 5 consecutive failures → disable (too flaky to trust)
-- A data sync: 10 consecutive failures → disable (wait for manual review)
-
-**Never allow unlimited retries.** If the user says "robust," ask: "Specifically, how many failures can you tolerate before giving up?"
-
-### 4. Permissions Gate
-
-Every job declares what permissions it needs: file tools, shell commands, network, LLM cost.
-
-**Questions to answer:**
-- What paths does this job access (read/write)?
-- What external tools or APIs does it call?
-- Does it execute shell commands?
-- What is its LLM cost budget (if any)?
-
-**Example permission spec:**
-```
-grant:
-  paths: [/var/backups/db, /home/user/restore]
-  shell: true
-  tools: ["bash", "file-read", "file-write"]
-  network: false
-```
-
-> **Note (v1 — grant fields are recorded, not enforced):** The `grant` fields you collect (paths, shell, tools, network) are stored on the job spec as a declared scope — honest, best-effort metadata — but the harness does **not yet enforce them at runtime**. Enforcement (path confinement, tool restriction, headless deny-by-default) is a planned later phase. This means a scheduled job's effective access is currently "whatever the persona could do," not what is declared in `grant`. Collecting these values is still the right practice — it produces an auditable record and will slot directly into enforcement once it lands — but **do not treat the Permissions Gate as a hard security boundary yet**. Be conservative about what you schedule unattended, and prefer narrow, low-privilege tasks until runtime enforcement ships.
-
-## Fail Closed
-
-**CRITICAL: Fail closed is not optional. It is the rule.**
-
-If ANY gate is unanswered or unclear, **do not create the job.** Return to the user with specific questions:
-
-```
-I cannot create this job yet. Before I proceed:
-
-1. Timeout: You said "fast" — specifically, how many seconds/minutes should one run take?
-2. Min-cadence: You said "often" — specifically, every hour? Every 10 minutes?
-3. Consecutive failures: How many failures before I should auto-disable and alert you?
-4. Permissions: Does this job need to write to any paths outside the project?
-```
-
-Only when ALL four gates are answered do you proceed to the next step.
+That's it. Never re-print a list of four gates. Never refuse a job that only
+lacks a default-able value.
 
 ## Implementation: Call the `create_job` tool
 
-Once every gate is answered, call the **`create_job` tool** with this structure:
+Once you know the schedule (and have confirmed any risky permission), call the
+**`create_job` tool**. Fill the defaults yourself for anything the user didn't
+specify:
 
 ```json
 {
-    "schedule": "0 2 * * *",
-    "description": "what this job does",
+    "schedule": "0 9 * * 1-5",
+    "description": "stand-up reminder",
     "cost": {
-        "timeout_secs": 600,
+        "timeout_secs": 300,
         "min_cadence_secs": 86400,
         "max_consecutive_failures": 3
     },
     "grant": {
-        "paths": ["/absolute/path"],
+        "paths": [],
         "shell": false,
         "network": false,
-        "tools": ["bash"]
+        "tools": []
     }
 }
 ```
 
 - **Do NOT pass `agent_id`** — the tool binds the job to the persona you are
   currently acting as, automatically.
-- `schedule` is a 5-field cron string (`"0 2 * * *"`), an interval in seconds, or
-  an ISO-8601 timestamp for a one-shot.
-- The `create_job` tool is the ONLY way to create a job. It validates every gate
-  fail-closed and returns `Created job <id> …` on success, or `Could not create
-  job: <reason>` if a gate is missing or invalid — in which case, ask the user for
-  the missing piece and call the tool again. **Once it returns "Created job", you
-  are done — report the job id; do NOT re-ask the gates.**
+- `schedule` accepts a plain 5-field cron string (`"0 9 * * 1-5"`), an interval
+  in seconds, or an ISO-8601 timestamp for a one-shot. Translate the user's
+  phrase into one of these (e.g. "every weekday at 9am" → `"0 9 * * 1-5"`,
+  "every 6 hours" → `21600`).
+- The tool returns `Created job <id> …` on success, or `Could not create job:
+  <reason>` if something is genuinely invalid — in which case fix it (or ask the
+  user for the one missing piece) and call again. **Once it returns "Created
+  job", you are done — report the job id; do NOT re-ask anything.**
 
-## Example Walkthrough
+## Examples
 
-**User:** "I want a daily backup job."
+Most jobs are **high-level human tasks**, not scripts. Lead with those. A job
+can be a plain reminder/check the agent performs on schedule — the user does not
+need to hand you a command. Only treat it as a script/command job if the user
+actually gives you one.
 
-**You:**
-1. **Timeout:** "How long should a backup run typically take?" User: "10 minutes tops." → timeout = 600 seconds.
-2. **Min-cadence:** "What time of day?" User: "2 AM." → min-cadence = 86400 seconds (1 day).
-3. **Consecutive failures:** "If the backup fails 3 days in a row, should I disable it?" User: "Yes, alert me." → max_consecutive_failures = 3.
-4. **Permissions:** "This needs to read `/var/www` and write to `/backups/daily`, right?" User: "Correct." → grant = {paths: [...], ...}.
+**User:** "Remind me every Monday at 9am to review deploy metrics."
+→ Schedule clear, no permission needed. Create immediately:
+`schedule="0 9 * * 1"`, `description="review deploy metrics"`, timeout 300,
+max-fail 3, grant none. Report the job id. **No questions.**
 
-All gates answered. Now call the `create_job` tool.
+**User:** "Every morning, give me a summary of my open PRs."
+→ Schedule = daily (pick a morning time, e.g. 9am → `"0 9 * * *"`). This LOOKS
+read-only but it reaches GitHub over the network, so confirm that one thing:
+*"This will fetch your PRs from GitHub — okay to grant network access?"* On yes,
+create with `network: true` (everything else default).
+
+**User:** "Set up a reminder."
+→ Schedule unclear. Ask once: *"Sure — how often, or at what time?"* Then create.
+
+**User (developer, gives a command):** "Run `python sync.py` every 6 hours."
+→ Now it's a script job: `schedule=21600`, and since it runs shell, confirm:
+*"This will run a shell command — okay to allow that?"* Then create with
+`shell: true`.
+
+Prefer phrasing your own suggestions as **high-level tasks** ("remind me to…",
+"every morning, summarize…") rather than scripts. Developers can give you a
+command if they want one; everyone else just describes what they want.
 
 ## Key Points
 
-- **Timeout:** Always specific (seconds/minutes), never vague ("reasonable," "fast").
-- **Min-cadence:** Always specific interval (seconds, hours, days), never vague ("often").
-- **Consecutive failures:** Always a specific number, never unlimited.
-- **Permissions:** Always scoped to actual paths/tools, never a blanket "full access."
-- **Fail closed:** No job until every gate is answered. This is the law.
-- **Implementation:** The ONLY way to create a job is the `create_job` tool. No direct ops.add calls. No shortcuts.
-
-## Common Mistakes
-
-**❌ Wrong:** "I'll set a generous timeout." → Unanswered. Ask "How many minutes?"
-**❌ Wrong:** "I'll allow 10 failures." → Unanswered until you know WHY. Is that the right number for THIS job?
-**❌ Wrong:** Calling code/bash directly instead of the `create_job` tool → Wrong gate. Always use the tool.
-**✓ Right:** Ask all four questions. Get specific numbers. Call the `create_job` tool once all gates are answered.
+- **Guess, don't interrogate.** Apply the defaults table. Ask only for an unclear
+  schedule or a risky permission.
+- **Translate phrases to schedules** yourself ("weekdays at 9" → `0 9 * * 1-5`).
+- **One way to create:** the `create_job` tool. No direct `ops.add`, no bash.
+- **Stop after success.** "Created job …" means done — report it, don't re-ask.

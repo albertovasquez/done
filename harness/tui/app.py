@@ -46,7 +46,7 @@ from harness.tui.widgets.activity_region import ActivityRegion
 from harness.tui.widgets.permission_modal import PermissionModal
 from harness.tui.widgets.select_modal import SelectModal, SelectOption
 from harness.tui.widgets.agent_rail import AgentRail, PersonaSelected
-from harness.tui.widgets.cron_dashboard import CronDashboard, NewJobRequested, JobActionFailed
+from harness.tui.widgets.cron_dashboard import CronDashboard, JobActionFailed
 from harness.tui.widgets.cron_detail import CronDetail
 from harness.tui.widgets.slash_menu import SlashMenu
 from harness.tui.widgets.prompt_area import PromptArea
@@ -1453,27 +1453,6 @@ class HarnessTui(App):
             self._show_cron_drawer(False)
             self._active_input().focus()
 
-    def on_new_job_requested(self, event: NewJobRequested) -> None:
-        """User pressed 'n' in the cron roster. The create-job flow is the
-        create-job gate SKILL, driven by a prompt to the agent — not a modal,
-        not a direct ops.add. Seed the prompt; the agent loads the skill and
-        runs the gate conversation."""
-        event.stop()
-        if self._turn_active:
-            self._notify_line("finish the current turn before creating a job")
-            return
-        self._show_cron_drawer(False)
-        self.run_worker(self._seed_create_job(), thread=False)
-
-    async def _seed_create_job(self) -> None:
-        """Seed the create-job prompt. Pressing 'n' may be the FIRST action of a
-        session, still on the landing screen with no transcript — so enter the
-        conversation first (mirrors on_prompt_area_submitted) before _submit_text,
-        which assumes conversation state is already established."""
-        if not self._started:
-            await self._enter_conversation()
-        await self._submit_text("I want to create a scheduled cron job.")
-        self._active_input().focus()
 
     def on_job_action_failed(self, event: JobActionFailed) -> None:
         """A roster action (run/toggle/remove) raised — surface it and resync."""

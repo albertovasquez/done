@@ -68,35 +68,37 @@ Keys while the dashboard is focused:
 
 | Key | Action |
 |---|---|
-| `n` | **New job** — starts the create-job flow (see below) |
 | `r` | **Run now** — fire the selected job immediately (ignores the schedule) |
 | `t` | **Toggle enabled** — pause / resume the job |
 | `Backspace` | **Remove** the selected job |
 
+(The dashboard has no create key — see "Creating a job" below.)
+
 ## Creating a job
 
-Job creation is **agent-driven**, not a command you type. You ask the persona, in
-chat, for the job you want — e.g. *"create a daily backup job at 2am"* — or press
-`n` in the dashboard. That activates the **`create-job` skill**, which walks four
-mandatory gates before anything is written. This is deliberate: a job runs
-unattended with no per-run confirmation, so the agent must pin down its cost and
-scope up front.
+Job creation is **agent-native**: you just ask, in chat, for the job you want —
+e.g. *"remind me every Monday at 9am to review deploy metrics"* or *"every night
+at 2am, back up the database to /backups"*. The router loads the **`create-job`
+skill**, which turns your plain-language intent into a real job.
 
-The four gates (the skill **fails closed** — if any is unanswered, no job is
-created and the agent comes back with specific questions):
+The skill is **guess-first**, not an interrogation. It applies safe defaults for
+anything you didn't specify, and asks a follow-up **only** when it can't tell
+*when* the job should run, or when the job needs a **risky permission** (shell
+commands, network access, or writing outside the project) — those it confirms
+before granting. A plain reminder is created with no questions.
 
-| Gate | Field | What it pins down |
-|---|---|---|
-| **Timeout** | `cost.timeout_secs` | max wall-clock per run (e.g. `600`) |
-| **Min-cadence** | `cost.min_cadence_secs` | the closest interval the job may run (e.g. `86400`) |
-| **Max failures** | `cost.max_consecutive_failures` | consecutive failures before auto-disable (e.g. `3`) |
-| **Permissions** | `grant` | declared `paths` / `shell` / `tools` / `network` scope |
+Defaults the skill fills for you:
 
-Once every gate is answered the skill calls the single privileged door —
-the **`harness/create_job` ext-method** — which re-validates that `agent_id`,
-`cost`, and `grant` are all present (fail-closed) and writes the job. This
-ext-method is the **only** way a job is written; there is no direct file-editing
-path you're expected to use.
+| Setting | Default |
+|---|---|
+| Timeout | 300s (5 min); longer if the action implies it |
+| Min-cadence | derived from the schedule |
+| Max failures | 3 |
+| Permissions (`grant`) | none — widened only after you confirm a risky one |
+
+Under the hood the skill calls the **`create_job` tool**, which re-validates the
+spec fail-closed (cost + grant must be present) and writes the job. That tool is
+the only way a job is written.
 
 ### Specifying the schedule
 
