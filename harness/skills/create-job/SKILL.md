@@ -13,7 +13,7 @@ A cron job is a privileged operation: it runs automatically on a schedule withou
 
 ## The Gate Procedure
 
-Creating a job requires passing four gates: **cost**, **cadence**, **failure handling**, and **permissions**. You apply these gates BEFORE calling `harness/create_job`.
+Creating a job requires passing four gates: **cost**, **cadence**, **failure handling**, and **permissions**. You apply these gates BEFORE calling the `create_job` tool.
 
 ### 1. Cost Gate: Timeout
 
@@ -101,30 +101,37 @@ I cannot create this job yet. Before I proceed:
 
 Only when ALL four gates are answered do you proceed to the next step.
 
-## Implementation: Call harness/create_job
+## Implementation: Call the `create_job` tool
 
-Once every gate is answered, call `harness/create_job` with this structure:
+Once every gate is answered, call the **`create_job` tool** with this structure:
 
-```python
+```json
 {
-    "agent_id": "the-persona-or-agent-id",
+    "schedule": "0 2 * * *",
+    "description": "what this job does",
     "cost": {
-        "timeout_secs": <integer>,
-        "min_cadence_secs": <integer>,
-        "max_consecutive_failures": <integer>,
+        "timeout_secs": 600,
+        "min_cadence_secs": 86400,
+        "max_consecutive_failures": 3
     },
     "grant": {
-        "paths": [<absolute paths>],
-        "shell": <true|false>,
-        "tools": [<tool names>],
-        "network": <true|false>,
-    },
-    "schedule": "0 2 * * *",  # cron schedule or interval
-    "description": "what this job does",
+        "paths": ["/absolute/path"],
+        "shell": false,
+        "network": false,
+        "tools": ["bash"]
+    }
 }
 ```
 
-The `harness/create_job` method is the ONLY way to create a cron job. It is the single-door privileged write path. The method validates every gate and returns `{"ok": true, "job_id": ...}` on success or `{"ok": false, "error": "..."}` on failure.
+- **Do NOT pass `agent_id`** — the tool binds the job to the persona you are
+  currently acting as, automatically.
+- `schedule` is a 5-field cron string (`"0 2 * * *"`), an interval in seconds, or
+  an ISO-8601 timestamp for a one-shot.
+- The `create_job` tool is the ONLY way to create a job. It validates every gate
+  fail-closed and returns `Created job <id> …` on success, or `Could not create
+  job: <reason>` if a gate is missing or invalid — in which case, ask the user for
+  the missing piece and call the tool again. **Once it returns "Created job", you
+  are done — report the job id; do NOT re-ask the gates.**
 
 ## Example Walkthrough
 
@@ -136,7 +143,7 @@ The `harness/create_job` method is the ONLY way to create a cron job. It is the 
 3. **Consecutive failures:** "If the backup fails 3 days in a row, should I disable it?" User: "Yes, alert me." → max_consecutive_failures = 3.
 4. **Permissions:** "This needs to read `/var/www` and write to `/backups/daily`, right?" User: "Correct." → grant = {paths: [...], ...}.
 
-All gates answered. Now call `harness/create_job`.
+All gates answered. Now call the `create_job` tool.
 
 ## Key Points
 
@@ -145,11 +152,11 @@ All gates answered. Now call `harness/create_job`.
 - **Consecutive failures:** Always a specific number, never unlimited.
 - **Permissions:** Always scoped to actual paths/tools, never a blanket "full access."
 - **Fail closed:** No job until every gate is answered. This is the law.
-- **Implementation:** The ONLY way to create a job is via `harness/create_job`. No direct ops.add calls. No shortcuts.
+- **Implementation:** The ONLY way to create a job is the `create_job` tool. No direct ops.add calls. No shortcuts.
 
 ## Common Mistakes
 
 **❌ Wrong:** "I'll set a generous timeout." → Unanswered. Ask "How many minutes?"
 **❌ Wrong:** "I'll allow 10 failures." → Unanswered until you know WHY. Is that the right number for THIS job?
-**❌ Wrong:** Calling code directly instead of `harness/create_job` → Wrong gate. Always use the ext-method.
-**✓ Right:** Ask all four questions. Get specific numbers. Call `harness/create_job` once all gates are answered.
+**❌ Wrong:** Calling code/bash directly instead of the `create_job` tool → Wrong gate. Always use the tool.
+**✓ Right:** Ask all four questions. Get specific numbers. Call the `create_job` tool once all gates are answered.

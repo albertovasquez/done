@@ -5,8 +5,8 @@ chat, per-persona) must not share mutable tool state.
 When skill_roots are passed, the agent gets a load_skill tool so it can pull skill
 bodies on demand (lazy discovery). When a memory_root (the session workspace) is
 passed, it gets a load_memory tool so it can pull remembered facts on demand. With
-neither, the registry is exactly the four default tools — a strict no-op for any
-caller that doesn't opt in."""
+neither, the registry is the five always-present tools (bash, read, write, edit,
+create_job) — load_skill/load_memory are the only context-gated additions."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from pathlib import Path
 from harness import memory as memory_mod
 from harness.tools.base import Tool
 from harness.tools.bash import BashTool
+from harness.tools.create_job import CreateJobTool
 from harness.tools.edit import EditTool
 from harness.tools.load_memory import LoadMemoryTool
 from harness.tools.load_skill import LoadSkillTool
@@ -24,7 +25,10 @@ from harness.tools.write import WriteTool
 
 def build_registry(skill_roots: list[Path] | None = None,
                    memory_root: Path | None = None) -> list[Tool]:
-    tools: list[Tool] = [BashTool(), ReadTool(), WriteTool(), EditTool()]
+    # CreateJobTool is always present (needs no roots/context) — it is the agent's
+    # ONLY way to actually create a cron job after the create-job gates; without it
+    # the model loops re-asking the gates.
+    tools: list[Tool] = [BashTool(), ReadTool(), WriteTool(), EditTool(), CreateJobTool()]
     if skill_roots:
         tools.append(LoadSkillTool(skill_roots))
     # Gate load_memory on the workspace actually HAVING recall content — an empty

@@ -62,48 +62,11 @@ def _instance_template_for(task_type: str, default: str) -> str:
     return ANSWER_ONLY_INSTANCE if task_type == "code_explain" else default
 
 
-def handle_create_job(spec: dict, *, now: float) -> dict:
-    """The SINGLE privileged door that writes a job.  Validates all gates fail-closed
-    (agent_id, cost, grant must all be present), then delegates to ops.add.
-
-    NOT registered as a normal agent tool — only reachable via the
-    "harness/create_job" ext-method in HarnessAgent.ext_method.
-    Callable directly in tests as `handle_create_job(spec, now=...)`.
-    """
-    from harness.jobs import ops, model as m
-
-    if not spec.get("agent_id"):
-        raise ValueError("agent_id required")
-    if not spec.get("cost"):
-        raise ValueError("cost gate required (fail closed)")
-    if not spec.get("grant"):
-        raise ValueError("grant required (fail closed)")
-
-    schedule = m.schedule_from_dict(spec["schedule"])
-    cost = m.CostGate(**spec["cost"])
-    # Cadence-floor footgun guard (spec §5.3 / §6.5). v1 enforces the floor only for
-    # Every schedules (a fixed interval is cheap to check). At is one-shot (skip).
-    # Cron's implied interval isn't floor-checked yet (no cheap interval read) —
-    # TODO: derive successive croniter steps and reject sub-floor cron cadences.
-    if isinstance(schedule, m.Every) and schedule.seconds < cost.min_cadence_s:
-        raise ValueError("cadence below min_cadence_s floor")
-
-    job = m.Job(
-        id=spec["id"],
-        name=spec.get("name", spec["id"]),
-        agent_id=spec["agent_id"],
-        description=spec.get("description", ""),
-        enabled=spec.get("enabled", True),
-        delete_after_run=spec.get("delete_after_run"),
-        session_target=spec.get("session_target", "isolated"),
-        schedule=schedule,
-        payload=m.payload_from_dict(spec["payload"]),
-        grant=m.Grant(**spec["grant"]),
-        cost=cost,
-        state=m.JobState(),
-    )
-    result = ops.add(job, now=now)
-    return m.job_to_dict(result)
+# The single privileged door now lives in harness/jobs/create.py (pure jobs logic,
+# no ACP deps) so BOTH the "harness/create_job" ext-method (below) and the agent
+# `create_job` tool can reach it. Re-exported here for the ext-method + existing
+# test imports (`from harness.acp_agent import handle_create_job`).
+from harness.jobs.create import handle_create_job  # noqa: E402,F401
 
 
 class HarnessAgent(acp.Agent):
@@ -706,6 +669,10 @@ class HarnessAgent(acp.Agent):
                              cancel_flag=state.cancel_flag,
                              client_terminal=client_terminal,
                              on_plan=on_plan)
+        # Bind the active persona onto the env so the create_job tool can resolve
+        # agent_id from it (never from the model). Per-session workspace name, or
+        # "default" with no persona. Mirrors the env._loaded_skills stamp pattern.
+        env._active_persona = state.workspace_dir.name if state.workspace_dir else "default"
 
         def run_engine() -> dict:
             from harness.tracing_agent import TracingAgent
