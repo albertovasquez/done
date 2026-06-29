@@ -191,7 +191,8 @@ def test_compaction_default_on_fires_without_config(tmp_path):
                          emitter=emitter, registry=None, **_agent_cfg())
     # floor ctx_window = 32000 tokens; budget = 0.5 * 32000 = 16000 est tokens.
     # estimate_tokens = len // 4, so we need prior_chars > 64000.
-    # 60 messages × "turn-{i} " * 400 ≈ 60 × 3600 chars = 216000 chars ≈ 54000 est tokens → well above floor.
+    # 60 messages × ("turn-{i} " * 400 ≈ 2800 chars) → rendered ≈ 188000 chars
+    # ≈ 47000 est tokens (verified) — ~3x the 16000 budget, fires with a large margin.
     prior = [{"role": "user", "content": f"turn-{i} " * 400} for i in range(60)]
     agent.run("solve the bug", prior=prior)
     names = [n for n, _ in seen]
