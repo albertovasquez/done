@@ -67,3 +67,31 @@ def test_concurrency_isolation_no_crosstalk(monkeypatch):
     out = SubagentTool().execute({"tasks": tasks}, _FakeEnv())
     for i in range(8):
         assert f"[g{i}]" in out["output"]
+
+
+def test_worker_uses_real_model_when_env_var_unset(monkeypatch):
+    # Bug regression: with VIBEPROXY_MODEL unset, the worker must still resolve a
+    # REAL model (engine default), not silently fall back to mock (model_name=None).
+    monkeypatch.delenv("VIBEPROXY_MODEL", raising=False)
+    captured = {}
+
+    class _FakeRunner:
+        result = type("R", (), {"submission": "done", "ok": True, "error": None, "exit_status": "ok"})()
+
+        def run(self, task_str):
+            return iter(())  # empty generator; no real engine
+
+    def _fake_build(**kwargs):
+        captured["model_name"] = kwargs.get("model_name")
+        return _FakeRunner(), []
+
+    monkeypatch.setattr(sub, "build_persona_agent", _fake_build)
+
+    env = _FakeEnv()
+    sub._run_one_worker({"goal": "g", "context": "c"}, env, agent_id="default")
+    assert captured["model_name"] is not None, (
+        "model_name must be a real model string, not None (which triggers mock path)"
+    )
+    assert captured["model_name"] == "gpt-5.4", (
+        f"expected vibeproxy.DEFAULT_MODEL 'gpt-5.4', got {captured['model_name']!r}"
+    )

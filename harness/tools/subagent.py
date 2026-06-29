@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 from concurrent.futures import ThreadPoolExecutor
 
+from harness import vibeproxy
 from harness.agent_build import build_persona_agent
 from harness.subagent_config import resolve_subagent_model, subagent_max_concurrent
 from harness.tools.subagent_prompt import build_worker_task
@@ -55,9 +56,12 @@ SUBAGENT_TOOL = {
 def _run_one_worker(task: dict, env, *, agent_id: str):
     """Build + run ONE worker. Returns (ok: bool, text: str). Raising is caught by
     the caller and rendered as a failed entry (sibling isolation)."""
-    parent_model = os.environ.get("VIBEPROXY_MODEL")  # None => mock path
+    # parent model: env override, else the engine default — NEVER silently mock.
+    # (Matches persona_sessions.resolve_session_model's ladder semantics: a real
+    #  worker inherits a real model even when VIBEPROXY_MODEL isn't in the env.)
+    parent_model = vibeproxy.default_model()
     model_name = resolve_subagent_model(
-        agent_id, per_task=task.get("model"), parent_model=parent_model) if parent_model else None
+        agent_id, per_task=task.get("model"), parent_model=parent_model)
 
     toolset = set(task.get("tools") or DEFAULT_WORKER_TOOLSET)
     step_limit = int(task.get("max_iterations") or DEFAULT_STEP_LIMIT)
