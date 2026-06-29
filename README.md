@@ -74,11 +74,33 @@ uv tool install --reinstall --force --from . quiubo-done
 
 (The `--editable` install runs live source and never needs this.)
 
-Configure VibeProxy by putting your settings in `~/.config/harness/.env`
-(see `.env.example`), or drop a `.env` in the project directory you run `dn`
-from. Add your own skills in `~/.config/harness/skills/` (global) or a project's
-`.agents/skills` / `.claude/skills` (see *Skills* below); a user skill overrides a
-bundled one of the same name. (`$XDG_CONFIG_HOME` is honored if set.)
+### Try it immediately (no LLM needed)
+
+```bash
+dn --model mock     # zero-cost mock model — no API key, no VibeProxy, works right now
+```
+
+The mock model simulates the agent loop so you can explore the TUI before connecting a
+real LLM. It fixes the sample failing test in `examples/sample-repo` and demonstrates
+skills, permissions, and the cron dashboard.
+
+### Connect a real LLM (VibeProxy)
+
+DoneDone routes LLM calls through **VibeProxy**, an OpenAI-compatible local proxy
+that must be running on `:8317`. Once it is, configure the model:
+
+```bash
+# Put your settings in ~/.config/harness/.env (copy .env.example as a starting point):
+cp .env.example ~/.config/harness/.env
+# Edit ~/.config/harness/.env: set VIBEPROXY_MODEL to a model your VibeProxy serves.
+# Then launch:
+dn
+```
+
+You can also drop a `.env` in the project directory you run `dn` from instead of
+`~/.config/harness/.env`. Add your own skills in `~/.config/harness/skills/` (global)
+or a project's `.agents/skills` / `.claude/skills` (see *Skills* below); a user skill
+overrides a bundled one of the same name. (`$XDG_CONFIG_HOME` is honored if set.)
 
 The harness remembers your selected model across sessions in
 `~/.config/harness/done.conf` (TOML). Changing the model at runtime saves it
@@ -120,8 +142,8 @@ Either install puts two commands on your `PATH`:
 Then run it:
 
 ```bash
-dn                       # a real LLM via VibeProxy (the default); operates on the current directory
-dn --model mock          # zero-cost mock model — no LLM, for trying the UI
+dn --model mock          # start here — zero-cost mock model, no setup required
+dn                       # real LLM via VibeProxy (requires ~/.config/harness/.env)
 dn --cwd ~/myproject     # operate on a specific project instead of the cwd
 ```
 
