@@ -6,14 +6,17 @@
 
 ## Goal
 
-Cut the per-turn token tax of **factual/structural** context files
-(`MEMORY.md`, `AGENTS.md`, `CLAUDE.md`) by loading pre-compressed **shadow
-copies**, without ever mutating the human-facing originals, without any
-on-the-fly compression on the hot path, and with a clean opt-out.
+Cut the per-turn token tax of prose context files (soul / identity / user /
+MEMORY.md / AGENTS.md / CLAUDE.md) by loading pre-compressed **shadow copies**,
+without ever mutating the human-facing originals, without any on-the-fly
+compression on the hot path, and with a clean opt-out.
 
-**Voice-bearing files (soul / identity / user) are excluded from compression
-entirely** — see "Voice files are off-limits" below. The agent's personality
-is the product's core differentiator and must come through verbatim.
+**The key distinction is input vs output.** Compression applies to what we
+*send into* the model (input tokens). It must **never** change how the main
+agent *responds* (output) — the agent's personality is the product's core
+differentiator and must come through in full voice. See "Input vs output"
+below. (Sub-agents are the exception on the output side — their responses may
+be caveman, since no user reads them.)
 
 Done is an opinionated system: this mode is **ON by default**. Users can turn it
 off (live) and pin the preference.
@@ -24,29 +27,46 @@ off (live) and pin the preference.
   assembled into a prompt. All compression is offline. (Explicitly rejected
   during brainstorming: per-turn LLM compression adds latency to the
   two-process hot path and can silently corrupt agent behavior.)
-- **No mutation of human-authored files.** AGENTS.md / CLAUDE.md originals are
-  never overwritten. (Memory is the one exception — see below.)
-- **No compression of voice-bearing files.** Soul / identity / user are never
-  compressed and never mutated — see "Voice files are off-limits".
+- **No mutation of human-authored files.** Soul / identity / user / AGENTS.md /
+  CLAUDE.md originals are never overwritten. (Memory is the one exception — see
+  below.)
+- **No compression of the main agent's response.** Compression is input-only.
+  The main agent's output must always be full personality — never caveman.
 
-## Voice files are off-limits
+## Input vs output (the core distinction)
 
-Soul / identity / user files define the agent's **personality** — and in Done,
-**the phrasing IS the function.** The whole value of the product is that each
-agent has a distinct personality that comes through in its responses.
+The `caveman-compress` engine has two separable effects, and conflating them is
+a trap:
 
-The `caveman-compress` engine does not merely shorten; it rewrites prose into
-telegraphic "caveman-speak" (dropped articles, fragments, flattened tone). That
-is fine for a factual index where every line is already terse signal — but
-applied to a soul/identity file it would feed the model *"be terse caveman"* as
-its personality definition, and the agent's responses would inherit that
-flattened voice. That trades the product's core differentiator for tokens — an
-unacceptable trade.
+1. **Input compression** — it shrinks the *text we send into* the model (fewer
+   input tokens). This is what we want everywhere.
+2. **Output style** — the caveman skill can also make the *model respond* in
+   caveman talk (terse output). For the **main agent this is forbidden** — the
+   user reads the response and the personality must come through fully.
 
-**Hard rule:** soul / identity / user files are **never** compressed. No sibling
-is ever generated for them; they always load verbatim. This is not a default the
-user can flip — it is a fixed exclusion. Compression applies only to
-factual/structural files where voice does not matter.
+**These do not have to travel together.** Compressing a soul/identity file on
+the *input* side does not, on its own, force a caveman *response*: the
+personality is the *meaning* of the identity, not its prose verbosity. So we
+compress soul / identity / user when **sending** them into context, while the
+agent still responds in full voice.
+
+- **Main agent:** compress input (soul / identity / user / MEMORY / AGENTS /
+  CLAUDE). Never touch the response style.
+- **Sub-agents:** compress input **and** let the response be caveman — no user
+  reads a sub-agent's output (it is returned to the controller as a tool
+  result), so output style is free. See "Sub-agent compression".
+
+### Verification gate (input compression of voice files)
+
+The load-bearing assumption is that **a compressed identity does not bleed into
+the response style.** This is empirically testable and MUST be verified before
+voice-file input compression is trusted:
+
+- A/B the same prompt with (a) full identity vs (b) compressed identity.
+- Confirm the agent's responses keep their personality / tone in case (b).
+- If voice bleed is observed, fall back to excluding that file from input
+  compression. The mechanism already degrades safely (delete the sibling →
+  verbatim original).
 
 ## The shadow-file pattern
 
@@ -82,10 +102,11 @@ For any `FOO.md`, an optional sibling `FOO.compressed.md`.
 ## Compression engine
 
 Reuse the existing `caveman-compress` Python scripts
-(`detect → compress via Claude → validate → retry`). **The engine only ever sees
-factual/structural files** (`MEMORY.md`, `AGENTS.md`, `CLAUDE.md`) — never
-voice-bearing files (see "Voice files are off-limits"), so its telegraphic
-caveman style is appropriate by construction. Its rules already:
+(`detect → compress via Claude → validate → retry`). The engine is used for
+**input compression only** — it rewrites *files we send into context*, never the
+main agent's response. Its exact-preservation rules make it safe even on
+voice-bearing files (it keeps the substance; see the verification gate under
+"Input vs output"). Its rules already:
 
 - preserve code blocks, inline code, URLs, file paths, commands, env vars,
   dates, version numbers, and proper nouns **exactly**;
@@ -128,6 +149,33 @@ Model the toggle on the existing YOLO yellow footer chip (PR #33):
 
 When the mode is OFF, originals always load and the entire feature is inert.
 
+## Sub-agent compression (separate runtime mechanism)
+
+Sub-agents are special: **no user ever reads a sub-agent's output** — its final
+message is returned to the controller as a tool result, never shown to a human.
+So for sub-agents both sides are free to compress:
+
+- **Input side:** the same shadow-file input compression applies to whatever
+  context a sub-agent is dispatched with.
+- **Output side (the new part):** sub-agents may **respond in caveman talk.**
+  Because only the controller parses the return (and relays in its own voice),
+  there is zero personality risk and a direct cut to the controller's context,
+  since sub-agent returns land straight in it.
+
+**Implementation — prompt-level, not post-process.** Instruct the sub-agent, in
+its dispatch prompt, to write its final return in compressed/caveman style. The
+agent produces compact output natively — **no extra LLM round-trip, no hot-path
+post-processing.** This is the cheap, safe version. (Rejected alternative:
+returning normally then running output through the engine — adds a hot-path LLM
+call, the very thing this design avoids.)
+
+**Degrades safely:** if the sub-agent ignores the instruction, you simply get
+normal verbose output — correct, just larger. No failure mode.
+
+**Distinct from shadow-files:** this is a *runtime* mechanism (live dispatch
+prompt), not the offline shadow-file system. It shares the "caveman is fine when
+no human reads it" principle but none of the file/sibling/freshness machinery.
+
 ## Status / measurement tools
 
 Two distinct tools — kept separate because they measure different things:
@@ -138,13 +186,12 @@ Two distinct tools — kept separate because they measure different things:
    Measures files **in isolation** (sum of per-file savings).
 
 2. **On/off prefix-comparison tool (Phase 2/3)** — assembles the **real composed
-   prompt prefix both ways** (compressed-off vs compressed-on) across the
-   **compressible** injected context (`AGENTS.md`, `CLAUDE.md`) and reports the
-   true end-to-end per-turn token delta a user would actually see. Heavier; this
-   is the honest "should I turn it on?" number.
-   **Excludes voice files** (soul / identity / user — never compressed) **and
-   memory** (destructive-at-write, so there is no "off" version to compare
-   against — an on/off diff is undefined for it).
+   prompt prefix both ways** (compressed-off vs compressed-on) across all
+   input-compressible context (soul / identity / user / AGENTS.md / CLAUDE.md)
+   and reports the true end-to-end per-turn token delta a user would actually
+   see. Heavier; this is the honest "should I turn it on?" number.
+   **Excludes memory** (destructive-at-write, so there is no "off" version to
+   compare against — an on/off diff is undefined for it).
 
 ## Components (isolated units)
 
@@ -169,9 +216,8 @@ Authoring / cron:
 Memory write (destructive):
   agent writes memory --> compressor --> validate --> persisted compressed memory
 
-Per turn (read-only, no LLM):
-  context chokepoint --> for each file:
-      voice file (soul/identity/user)? --> ALWAYS load original (hard exclusion)
+Per turn (read-only, no LLM) — INPUT side only, never touches response style:
+  context chokepoint --> for each target file (soul/identity/user/MEMORY/AGENTS/CLAUDE):
       mode OFF? --> load original
       sibling missing? --> load original
       sibling stale (hash mismatch)? --> load original, mark for rebuild
@@ -201,23 +247,33 @@ Per turn (read-only, no LLM):
   fixture tree.
 - **Memory write:** asserts compressed-at-write; asserts fallback-to-verbose on
   compression failure (no content loss).
+- **Voice-bleed gate:** A/B harness — same prompt with full vs compressed
+  identity; asserts response personality is preserved (manual/eval check, gates
+  voice-file input compression).
+- **Sub-agent caveman return:** asserts the dispatch prompt carries the
+  compressed-return instruction; asserts a verbose return is still accepted
+  (graceful degradation).
 
 ## Phasing
 
 - **Phase 1:** shadow-file pattern + loader hook + freshness + `dn compress` /
   `--status` + memory-write integration + the YOLO-style chip & `done.conf`
-  flag. Targets: **`MEMORY.md` / `AGENTS.md` / `CLAUDE.md`** — the per-turn
-  prefix files where voice does not matter and the compounding token tax lives.
-  Voice files (soul / identity / user) are **excluded by design**, not deferred.
+  flag. Targets (input compression): **soul / identity / user / `MEMORY.md` /
+  `AGENTS.md` / `CLAUDE.md`** — the per-turn prefix files where the compounding
+  token tax lives. Voice-file compression is gated on the voice-bleed
+  verification check.
 - **Phase 2/3:** `SKILL.md` bodies (same mechanism, lower ROI — loaded only on
-  invocation), **and** the on/off whole-prefix comparison tool (excludes voice
-  files and memory).
+  invocation); the on/off whole-prefix comparison tool (excludes memory); and
+  **sub-agent caveman returns** (prompt-level — distinct runtime mechanism; can
+  ship independently of the shadow-file work).
 
 ## Open questions
 
 None at design time. All forks resolved during brainstorming:
-engine (reuse caveman-compress), home (bundled in harness), freshness
-(content hash), memory writes (destructive-at-write, accepted), toggle
-(YOLO-style chip, default ON), comparison tool (Phase 2/3, excludes voice +
-memory), **voice files (soul/identity/user) excluded from compression entirely
-to preserve agent personality.**
+engine (reuse caveman-compress, input-only), home (bundled in harness),
+freshness (content hash), memory writes (destructive-at-write, accepted),
+toggle (YOLO-style chip, default ON), comparison tool (Phase 2/3, excludes
+memory). **Core principle: compress INPUT everywhere; never compress the main
+agent's RESPONSE (voice is the product); sub-agents may also caveman their
+OUTPUT since no human reads it.** Voice-file *input* compression is gated on a
+verification check that it does not bleed into response style.
