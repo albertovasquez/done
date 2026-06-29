@@ -94,9 +94,6 @@ def _default_deps() -> Deps:
     from harness import persona_config as _persona_config  # read_flows: persona_config.py:38
     from harness import persona_sessions as _ps   # resolve_session_model: persona_sessions.py:20
     from harness import skills as _skills      # load_catalog_with_skips: skills.py:85
-    from harness import vibeproxy as _vp          # vibeproxy.model_id, vibeproxy.DEFAULT_MODEL
-    from harness.models_mock import build_mock_model  # harness/models_mock.py:58
-    from harness.runner import MiniSweAgentRunner     # harness/runner.py:72
 
     import yaml
     import os
@@ -138,36 +135,23 @@ def _default_deps() -> Deps:
             skills_menu=ctx.skills_menu,
             agents_block=_agents_block)
 
-        # Fresh model per call; NEVER vibeproxy.default_model() (persona-fidelity rule #1).
-        if model_id is None:
-            model = build_mock_model()
-        else:
-            # run_traced.py:48-63 — _build_vibeproxy_model pattern.
-            # vibeproxy.model_id() converts a bare model name to the qualified name
-            # the litellm backend expects (e.g. "openai/gpt-5.4").
-            from harness.streaming_model import StreamingLitellmModel
-            from harness.tools.registry import build_registry
-            model = StreamingLitellmModel(
-                model_name=_vp.model_id(model_id),  # vibeproxy.py:36
-                model_kwargs=_vp.model_kwargs(),     # vibeproxy.py:47
-                cost_tracking="ignore_errors",
-                registry=build_registry(
-                    skill_roots=skills_roots,
-                    memory_root=workspace,
-                ),
-            )
-
-        # run_traced.py:158 — LocalEnvironment import.
-        from minisweagent.environments.local import LocalEnvironment  # noqa: E402
-        env = LocalEnvironment(cwd=str(workspace))
+        # Construction via the shared chokepoint (harness/agent_build.py). Cron
+        # passes model_name=None for mock, else the qualified model; the builder
+        # stamps env._active_persona = agent_id so env-bound tools resolve.
+        from harness.agent_build import build_persona_agent
+        runner, _registry = build_persona_agent(
+            agent_id=workspace.name,
+            model_name=(None if model_id is None else model_id),
+            skill_roots=skills_roots,
+            memory_root=workspace,
+            agent_cfg=_load_agent_cfg(),
+            cwd=str(workspace),
+        )
         # #168: this is a HEADLESS path (no elicitation channel), so file tools must
         # be gated + confined to the job's workspace — risky/out-of-root ops fail
         # CLOSED. Same chokepoint machinery as the ACP path, deny-by-default policy.
-        stamp_headless_gate(env, workspace)
-
-        # agent cfg re-read per run — negligible at cron cadence, keeps run_turn self-contained
-        agent_cfg = _load_agent_cfg()
-        runner = MiniSweAgentRunner(model, env, agent_cfg=agent_cfg)
+        # Applied to the env the builder constructed (runner._env).
+        stamp_headless_gate(runner._env, workspace)
         # Pass the REAL skill_block + base_block (run_traced.py:195-198 parity).
         for _ in runner.run(message, skill_block=ctx.skill_block,
                             persona_block=ctx.persona_block,
