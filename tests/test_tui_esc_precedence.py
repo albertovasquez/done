@@ -148,3 +148,32 @@ def test_esc_during_turn_posts_single_canceling_line():
             f"Expected exactly 1 '— canceling… —' append, got {len(canceling_calls)}: {canceling_calls}"
         )
     asyncio.run(go())
+
+
+def test_esc_closes_agents_drawer_when_focus_on_prompt():
+    """ESC must close the agents drawer even when focus is on the prompt (not the rail).
+
+    Regression: the old guard required `isinstance(self.focused, AgentRail)`,
+    so ESC was silently swallowed when the drawer was open but focus stayed
+    on the prompt area.
+    """
+    async def go():
+        from harness.tui.widgets.agent_rail import AgentRail
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            # Open the drawer via Tab (standard path)
+            app.query_one("#landing-input", PromptArea).focus()
+            await pilot.press("tab")
+            await pilot.pause()
+            assert app._drawer_visible(), "drawer should be visible after Tab"
+            # Move focus back to the prompt (simulates user clicking the input)
+            app.query_one("#landing-input", PromptArea).focus()
+            await pilot.pause()
+            assert not isinstance(app.focused, AgentRail), "focus should be on prompt, not rail"
+            # ESC must close the drawer
+            await pilot.press("escape")
+            await pilot.pause()
+            assert not app._drawer_visible(), "ESC must close drawer even when focus is on prompt"
+
+    asyncio.run(go())

@@ -799,12 +799,10 @@ class HarnessTui(App):
                     event.stop()
                 # Otherwise let Tab do normal focus traversal (don't stop).
                 return
-            # Esc from the rail (when slash menu is closed) → hide rail, return focus.
-            # FIX 4: only close the rail when no turn is active; if a turn is running,
-            # let Esc fall through to action_cancel (the "Cancel turn" binding).
+            # Esc closes the drawer whenever it's visible and no turn is active,
+            # regardless of where focus is. Turn-cancel still takes priority (line 781).
             if event.key == "escape":
-                if self._drawer_visible() and isinstance(self.focused, AgentRail) \
-                        and not self._turn_active:
+                if self._drawer_visible() and not self._turn_active:
                     self._show_drawer(False)
                     self._active_input().focus()
                     event.stop()
