@@ -56,17 +56,28 @@ agent still responds in full voice.
   reads a sub-agent's output (it is returned to the controller as a tool
   result), so output style is free. See "Sub-agent compression".
 
-### Verification gate (input compression of voice files)
+### Voice bleed — watch, don't gate
 
 The load-bearing assumption is that **a compressed identity does not bleed into
-the response style.** This is empirically testable and MUST be verified before
-voice-file input compression is trusted:
+the response style.** We ship voice-file input compression **ON** rather than
+blocking on a formal proof, for two reasons:
 
-- A/B the same prompt with (a) full identity vs (b) compressed identity.
-- Confirm the agent's responses keep their personality / tone in case (b).
-- If voice bleed is observed, fall back to excluding that file from input
-  compression. The mechanism already degrades safely (delete the sibling →
-  verbatim original).
+1. **Prior signal it compartmentalizes.** Heavy `caveman-review` use (~36 runs,
+   no issues) shows the model handles caveman text in one part of the prompt
+   without it leaking into unrelated output. This is *suggestive, not
+   identical* evidence — `caveman-review` is a scoped per-task invocation,
+   whereas a compressed identity is the always-on persona prefix. So it lowers
+   the risk; it does not eliminate it.
+2. **Safe to be wrong.** The design makes bleed cheap to detect and revert:
+   - it is **input-only** (never touches response generation directly);
+   - bleed is **observable** — a flattened persona shows up immediately in real
+     responses;
+   - the off-ramp is **one step**: delete the voice-file sibling(s) → verbatim
+     identity returns, no code change; or flip the toggle off entirely.
+
+**Posture:** ship ON, watch real responses for voice flattening, revert the
+voice-file portion instantly if observed. A formal A/B (full vs compressed
+identity) remains available as a confirmation tool but is **not** a ship gate.
 
 ## The shadow-file pattern
 
@@ -105,8 +116,8 @@ Reuse the existing `caveman-compress` Python scripts
 (`detect → compress via Claude → validate → retry`). The engine is used for
 **input compression only** — it rewrites *files we send into context*, never the
 main agent's response. Its exact-preservation rules make it safe even on
-voice-bearing files (it keeps the substance; see the verification gate under
-"Input vs output"). Its rules already:
+voice-bearing files (it keeps the substance; see "Voice bleed — watch, don't
+gate" under "Input vs output"). Its rules already:
 
 - preserve code blocks, inline code, URLs, file paths, commands, env vars,
   dates, version numbers, and proper nouns **exactly**;
@@ -247,9 +258,10 @@ Per turn (read-only, no LLM) — INPUT side only, never touches response style:
   fixture tree.
 - **Memory write:** asserts compressed-at-write; asserts fallback-to-verbose on
   compression failure (no content loss).
-- **Voice-bleed gate:** A/B harness — same prompt with full vs compressed
-  identity; asserts response personality is preserved (manual/eval check, gates
-  voice-file input compression).
+- **Voice-bleed check (confirmation, not a gate):** optional A/B harness — same
+  prompt with full vs compressed identity; eyeball that response personality is
+  preserved. Available to confirm/diagnose if bleed is ever suspected; does not
+  block shipping.
 - **Sub-agent caveman return:** asserts the dispatch prompt carries the
   compressed-return instruction; asserts a verbose return is still accepted
   (graceful degradation).
@@ -260,8 +272,8 @@ Per turn (read-only, no LLM) — INPUT side only, never touches response style:
   `--status` + memory-write integration + the YOLO-style chip & `done.conf`
   flag. Targets (input compression): **soul / identity / user / `MEMORY.md` /
   `AGENTS.md` / `CLAUDE.md`** — the per-turn prefix files where the compounding
-  token tax lives. Voice-file compression is gated on the voice-bleed
-  verification check.
+  token tax lives. Voice-file compression ships **ON**; bleed is watched for in
+  real responses and reverted per-file if observed (not a pre-ship gate).
 - **Phase 2/3:** `SKILL.md` bodies (same mechanism, lower ROI — loaded only on
   invocation); the on/off whole-prefix comparison tool (excludes memory); and
   **sub-agent caveman returns** (prompt-level — distinct runtime mechanism; can
@@ -275,5 +287,6 @@ freshness (content hash), memory writes (destructive-at-write, accepted),
 toggle (YOLO-style chip, default ON), comparison tool (Phase 2/3, excludes
 memory). **Core principle: compress INPUT everywhere; never compress the main
 agent's RESPONSE (voice is the product); sub-agents may also caveman their
-OUTPUT since no human reads it.** Voice-file *input* compression is gated on a
-verification check that it does not bleed into response style.
+OUTPUT since no human reads it.** Voice-file *input* compression ships ON
+(prior caveman-review use suggests no bleed; it is input-only, observable, and
+one-step reversible per file) — watched in real responses, not pre-ship gated.
