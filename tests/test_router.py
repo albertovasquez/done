@@ -3,7 +3,7 @@ from harness.router import Router, Classification
 from harness.skills import SkillMeta
 
 _CATALOG = [
-    SkillMeta("systematic-debugging", "Use when encountering any bug, test failure, or unexpected behavior"),
+    SkillMeta("systematic-debugging", "Use when there is a REPORTED failing behavior to fix — a bug, failing test, or error. NOT for read-only status checks."),
     SkillMeta("test-driven-development", "Use when implementing any feature or bugfix, before writing implementation code"),
 ]
 
