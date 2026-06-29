@@ -440,9 +440,9 @@ def test_memory_load_emits_after_task_classified(tmp_path):
     assert keys.index("task_classified") < keys.index("memory_load")
 
 
-def test_seeded_default_workspace_is_byte_identical_noop(monkeypatch, tmp_path):
-    # seeding ships only inert templates -> chat path has no system message AND
-    # no persona_load event fires. The Phase A no-op guarantee must survive seeding.
+def test_seeded_default_workspace_injects_done_persona(monkeypatch, tmp_path):
+    # the shipped default ships with the "Done" soul -> the chat path renders a
+    # system message carrying it AND a persona_load event fires.
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     from harness import persona, paths
     persona.seed_default_workspace()
@@ -458,17 +458,15 @@ def test_seeded_default_workspace_is_byte_identical_noop(monkeypatch, tmp_path):
     agent._workspace_dir = paths.default_workspace_dir()   # the SEEDED dir
     sid = asyncio.run(agent.new_session(cwd=".")).session_id
     _prompt(agent, sid, "hi")
-    # base_block is always rendered on the ACP chat path; system message present.
-    # Inert persona templates (HTML-comment-only) add no persona content.
     assert captured["messages"][-1] == {"role": "user", "content": "hi"}
     assert captured["messages"][0]["role"] == "system"  # base_block present
-    # and no persona_load event emitted (inert templates)
-    assert "persona_load" not in _meta_keys_in_order(agent)
+    assert "You're Done." in captured["messages"][0]["content"]  # persona injected
+    assert "persona_load" in _meta_keys_in_order(agent)
 
 
-def test_seeded_default_workspace_memory_is_byte_identical_noop(monkeypatch, tmp_path):
-    # the seeded default (inert templates, NO memory content) must stay
-    # byte-identical: no system message, no persona_load, no memory_load.
+def test_seeded_default_workspace_has_no_memory(monkeypatch, tmp_path):
+    # the seeded default ships a persona (Done) but NO memory content, so a
+    # persona_load fires while memory_load does not.
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     from harness import persona, paths
     persona.seed_default_workspace()
@@ -485,7 +483,7 @@ def test_seeded_default_workspace_memory_is_byte_identical_noop(monkeypatch, tmp
     assert captured["messages"][-1] == {"role": "user", "content": "hi"}
     assert captured["messages"][0]["role"] == "system"  # base_block present
     keys = _meta_keys_in_order(agent)
-    assert "persona_load" not in keys and "memory_load" not in keys
+    assert "persona_load" in keys and "memory_load" not in keys
 
 
 # --------------------------------------------------------------------------

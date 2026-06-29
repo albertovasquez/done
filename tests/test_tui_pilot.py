@@ -5,6 +5,8 @@ import time
 from pathlib import Path
 from types import SimpleNamespace as NS
 
+import pytest
+
 import acp
 from acp import update_agent_message_text, start_tool_call
 from harness.tui.app import HarnessTui, PermissionModal
@@ -21,8 +23,22 @@ FAKE_CMD = [sys.executable, str(REPO / "tests/fake_agent.py")]
 
 # The per-turn run-caption footer marker. The mode word was replaced by the
 # active persona's display name; in mock mode with no --persona that resolves to
-# the default persona, whose persona.toml has no `name` → falls back to "default".
-RUN_CAPTION = "▣ default"
+# the default persona, whose shipped name is "Done" (seeded into an isolated
+# config dir by the autouse fixture below, so this is deterministic on any box).
+RUN_CAPTION = "▣ Done"   # the shipped default persona's display name
+
+
+@pytest.fixture(autouse=True)
+def _isolated_default_persona(monkeypatch, tmp_path_factory):
+    """Point XDG_CONFIG_HOME at a fresh dir and seed the default persona, so the
+    footer caption resolves to the shipped "Done" name regardless of the
+    developer's (or CI's) real ~/.config. Without this, the caption depends on
+    machine state — present-and-named on a dev box, falling back to the id
+    "default" on a clean checkout."""
+    cfg = tmp_path_factory.mktemp("xdg_config")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(cfg))
+    from harness import persona
+    persona.seed_default_workspace()
 
 
 def _md_source(md: Markdown) -> str:
