@@ -37,6 +37,10 @@ event tracer, a request router, a skills layer, and the ACP interface.
   skills. No database, no embeddings, no-op until used (see *Memory* below).
 - **Instructions.** Drop an `AGENTS.md` in your project (or persona, or `~/.config/harness/`)
   and it becomes standing policy in the agent's prompt (see [docs/agents-md.md](docs/agents-md.md)).
+- **Jobs.** Schedule a persona to run work unattended — a nightly backup, an hourly
+  check, a reminder. A background `harness-cron` daemon fires each job *as the persona
+  that owns it* (same model, workspace, and memory), with cost/permission gates at
+  creation time (see [docs/jobs.md](docs/jobs.md)).
 - **You're in control.** The agent asks permission before running commands, and
   you can cancel an in-flight turn at any time.
 - **Fully traceable.** Every run is recorded as structured `events.jsonl` and
@@ -216,6 +220,33 @@ adopting [QMD](https://github.com/tobi/qmd) (a Node sidecar with a ~2 GB model
 download, as OpenClaw uses) and chose to keep memory Python-only and dependency-free;
 because the files stay source of truth, FTS/QMD can be added later as an additive
 layer. See [docs/memory.md](docs/memory.md) for the full reference.
+
+## Jobs (cron)
+
+A **job** runs a persona on a schedule, unattended. Each job is bound to one
+persona via a required `agent_id`, and a background **`harness-cron`** daemon
+fires it *as that persona* — same model, workspace, memory, and AGENTS.md as a
+live turn. If the persona is gone, the job auto-disables instead of running as
+someone else.
+
+You don't type a create command: ask the persona for the job (or press **n** in
+the cron drawer) and the **`create-job` skill** walks four fail-closed gates —
+timeout, min-cadence, max-failures, and permissions — before writing it through
+the single `harness/create_job` door. Schedules are 5-field cron (`0 2 * * *`), a
+fixed interval, or a one-shot timestamp.
+
+```sh
+harness-cron            # run the daemon (ticks every 30 s)
+harness-cron --once     # fire all due jobs once and exit
+```
+
+In the TUI, **Ctrl+J** toggles the cron dashboard (status per job + a run-duration
+chart); `n`/`r`/`t`/`Backspace` create, run-now, toggle, and remove. Jobs live in
+`~/.config/harness/cron/`.
+
+> Phase 1: the permission `grant` is **recorded but not yet enforced at runtime** —
+> a job can currently do whatever its persona could. Prefer narrow, low-privilege
+> tasks. See [docs/jobs.md](docs/jobs.md) for the full reference.
 
 ## Using the TUI
 
