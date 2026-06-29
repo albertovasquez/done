@@ -232,44 +232,45 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 **Files:**
 - Modify: `harness/run_traced.py:111-116` (the dispatch call site), `harness/run_traced.py:197-203` (the `run_agent` closure)
-- Test: `tests/test_run_traced.py` (add a case)
+- Test: `tests/test_run_traced.py` (add two cases + update the `run_agent` spy at `:26`)
 
 **Interfaces:**
 - Consumes: `harness.instance_templates._instance_template_for` (Task 1); `route_and_dispatch(..., run_agent=...)` already calls `run_agent(prompt, skill_block=load.block)` at line 116.
-- Produces: `run_agent` now accepts `task_type: str` and sets `agent_cfg["instance_template"]` before constructing the runner.
+- Produces: `run_traced._instance_template_cfg(agent_cfg, task_type) -> dict` (a COPY with `instance_template` set — never mutates the caller's dict, because `agent_cfg` is shared module/main-scope state built once at `run_traced.py:164`). `run_agent` accepts `task_type: str` and builds the runner from that copy. The `route_and_dispatch` `run_agent` test double must also accept `task_type`.
 
 - [ ] **Step 1: Write the failing test**
 
 Add to `tests/test_run_traced.py`:
 
 ```python
-def test_run_traced_apply_instance_template_observe_first_for_ops_task():
+def test_run_traced_instance_template_cfg_observe_first_for_ops_task():
     """The dev CLI path must apply the observe-first template for ops_task, not the
-    raw mini.yaml work-order (parity with the ACP path; #177). Targets the pure
-    seam the run_agent closure calls."""
+    raw mini.yaml work-order (parity with the ACP path; #177). Returns a COPY — the
+    shared agent_cfg (run_traced.py:164) must not be mutated."""
     import harness.run_traced as rt
     from harness.instance_templates import OBSERVE_FIRST_INSTANCE
 
-    agent_cfg = {"instance_template": "Please solve this issue: {{task}}"}
-    rt._apply_instance_template(agent_cfg, "ops_task")
-    assert agent_cfg["instance_template"] == OBSERVE_FIRST_INSTANCE
+    agent_cfg = {"instance_template": "Please solve this issue: {{task}}", "step_limit": 7}
+    out = rt._instance_template_cfg(agent_cfg, "ops_task")
+    assert out["instance_template"] == OBSERVE_FIRST_INSTANCE
+    assert out["step_limit"] == 7                                  # other keys preserved
+    assert agent_cfg["instance_template"] == "Please solve this issue: {{task}}"  # NOT mutated
 
 
-def test_run_traced_apply_instance_template_leaves_work_order_for_code_fix():
+def test_run_traced_instance_template_cfg_leaves_work_order_for_code_fix():
     import harness.run_traced as rt
 
     default = "Please solve this issue: {{task}}"
-    agent_cfg = {"instance_template": default}
-    rt._apply_instance_template(agent_cfg, "code_fix")
-    assert agent_cfg["instance_template"] == default
+    out = rt._instance_template_cfg({"instance_template": default}, "code_fix")
+    assert out["instance_template"] == default
 ```
 
 > Implementation note: rather than reconstruct the whole `main()` wiring in a test, Task 3 introduces a tiny pure helper `_apply_instance_template(agent_cfg, task_type)` in `run_traced.py` that the `run_agent` closure calls. The test targets that helper (pure, no engine), and the closure/threading is covered by the existing `route_and_dispatch` tests staying green.
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `/Users/alberto/Work/Quiubo/harness/.venv/bin/python -m pytest tests/test_run_traced.py::test_run_traced_apply_instance_template_observe_first_for_ops_task -q`
-Expected: FAIL — `AttributeError: module 'harness.run_traced' has no attribute '_apply_instance_template'`.
+Run: `/Users/alberto/Work/Quiubo/harness/.venv/bin/python -m pytest tests/test_run_traced.py::test_run_traced_instance_template_cfg_observe_first_for_ops_task -q`
+Expected: FAIL — `AttributeError: module 'harness.run_traced' has no attribute '_instance_template_cfg'`.
 
 - [ ] **Step 3: Add the helper and thread task_type**
 
@@ -278,21 +279,24 @@ In `harness/run_traced.py`, add the import near the top (with the other `from ha
 from harness.instance_templates import _instance_template_for
 ```
 
-Add the pure helper (module level, e.g. just above `route_and_dispatch`):
+Add the pure helper (module level, e.g. just above `route_and_dispatch`). It returns a
+COPY — `agent_cfg` (`run_traced.py:164`) is shared main-scope state, so mutating it in
+place would persist across calls; never do that:
 ```python
-def _apply_instance_template(agent_cfg: dict, task_type: str) -> None:
-    """Set agent_cfg['instance_template'] for this task_type (in place). Mirrors the
-    ACP path (acp_agent.py:716) so the dev CLI doesn't fall through to the raw
-    mini.yaml work-order on read-only ops_task requests (#177)."""
-    agent_cfg["instance_template"] = _instance_template_for(
-        task_type, agent_cfg.get("instance_template", ""))
+def _instance_template_cfg(agent_cfg: dict, task_type: str) -> dict:
+    """Return a COPY of agent_cfg with instance_template chosen for this task_type.
+    Mirrors the ACP path (acp_agent.py:716) so the dev CLI doesn't fall through to the
+    raw mini.yaml work-order on read-only ops_task requests (#177). Never mutates the
+    caller's dict — agent_cfg is built once at module scope and reused."""
+    return {**agent_cfg, "instance_template":
+            _instance_template_for(task_type, agent_cfg.get("instance_template", ""))}
 ```
 
-Change the `run_agent` closure (lines 197-203) to accept and apply `task_type`:
+Change the `run_agent` closure (lines 197-203) to accept `task_type` and build from the copy:
 ```python
     def run_agent(prompt, skill_block="", task_type=""):
-        _apply_instance_template(agent_cfg, task_type)
-        runner = MiniSweAgentRunner(model, env, agent_cfg=agent_cfg)
+        runner = MiniSweAgentRunner(model, env,
+                                    agent_cfg=_instance_template_cfg(agent_cfg, task_type))
         try:
             for event in runner.run(prompt, skill_block=skill_block,
                                     persona_block=persona_block,
@@ -306,6 +310,14 @@ Change the `run_agent` closure (lines 197-203) to accept and apply `task_type`:
 In `route_and_dispatch`, change the dispatch call (line 116) to pass the classified task type:
 ```python
         run_agent(prompt, skill_block=load.block, task_type=cls.task_type)
+```
+
+Update the `run_agent` test double in `tests/test_run_traced.py:26` to accept the new
+kwarg (otherwise every existing route test throws `TypeError: unexpected keyword
+'task_type'`):
+```python
+    def run_agent(prompt, skill_block="", task_type=""):
+        calls.append(prompt)
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -394,47 +406,66 @@ In `harness/jobs/executor.py`, in `run_headless_turn` after the `_wall_budget` b
 Run: `/Users/alberto/Work/Quiubo/harness/.venv/bin/python -m pytest tests/jobs/test_executor.py -q`
 Expected: PASS (both new cases + all existing executor tests; the existing injected-`run_turn` doubles don't accept `mode`, so `_accepts_kwarg` correctly skips passing it to them).
 
-- [ ] **Step 5: Apply the template inside the real run_turn**
+- [ ] **Step 5: Add the template helper + unit test (module level)**
 
-Now make the real `run_turn` honor `mode`. In `harness/jobs/executor.py`:
+`run_turn` is nested inside `_default_deps` (`executor.py:95→136`). To avoid a
+closure-scope trap and keep it directly testable, put the helper and its import at
+**module level** (top of `harness/jobs/executor.py`, next to `_accepts_kwarg` at `:64`),
+NOT inside `_default_deps`.
 
-(a) Add the import near the top (with the other in-function or module imports — module level is fine):
+(a) Add the import at module top (with the other top-level imports, NOT inside a function):
 ```python
 from harness.instance_templates import OBSERVE_FIRST_INSTANCE
 ```
 
-(b) Change the `run_turn` signature (line 136-137) to accept `mode`:
+(b) Add the helper at module level (e.g. just below `_accepts_kwarg`):
+```python
+def _observe_or_default_cfg(cfg: dict, mode: str | None) -> dict:
+    """If the job opted into observe mode, return a COPY with the observe-first
+    instance_template; otherwise return cfg untouched (default work-order). (#177)"""
+    if mode == "observe":
+        return {**cfg, "instance_template": OBSERVE_FIRST_INSTANCE}
+    return cfg
+```
+
+(c) Add a direct unit test (the existing `test_default_deps_constructs` never runs a
+turn, so without this a misplaced helper/import wouldn't fail until a real cron fires):
+```python
+def test_observe_or_default_cfg_swaps_only_for_observe():
+    from harness.jobs.executor import _observe_or_default_cfg
+    from harness.instance_templates import OBSERVE_FIRST_INSTANCE
+
+    base = {"instance_template": "Please solve this issue: {{task}}", "step_limit": 9}
+    assert _observe_or_default_cfg(base, "observe")["instance_template"] is OBSERVE_FIRST_INSTANCE
+    assert _observe_or_default_cfg(base, "observe")["step_limit"] == 9       # other keys kept
+    assert _observe_or_default_cfg(base, None) is base                       # default untouched
+    assert base["instance_template"] == "Please solve this issue: {{task}}"  # not mutated
+```
+
+- [ ] **Step 6: Honor `mode` inside the real `run_turn`**
+
+(a) Change the `run_turn` signature (line 136-137) to accept `mode`:
 ```python
     def run_turn(*, model_id: str | None, workspace: Path, persona_block: str,
                  memory_block: str, message: str, wall_budget: int | None = None,
                  mode: str | None = None) -> None:
 ```
 
-(c) Change the `agent_cfg=_load_agent_cfg()` argument to `build_persona_agent` (line 169) so an observe job overrides the template. Replace the single line:
+(b) Change the `agent_cfg=_load_agent_cfg()` argument to `build_persona_agent` (line 169) to run through the helper. Replace:
 ```python
             agent_cfg=_load_agent_cfg(),
 ```
-with a small local that sets the template first:
+with:
 ```python
             agent_cfg=_observe_or_default_cfg(_load_agent_cfg(), mode),
 ```
-and add this helper just above `run_turn` (inside the same enclosing function, or module level):
-```python
-def _observe_or_default_cfg(cfg: dict, mode: str | None) -> dict:
-    """If the job opted into observe mode, swap the work-order instance_template for
-    the observe-first one; otherwise leave cfg untouched (default work-order)."""
-    if mode == "observe":
-        cfg = dict(cfg)
-        cfg["instance_template"] = OBSERVE_FIRST_INSTANCE
-    return cfg
-```
 
-- [ ] **Step 6: Run the full jobs suite to verify no regression**
+- [ ] **Step 7: Run the full jobs suite to verify no regression**
 
 Run: `/Users/alberto/Work/Quiubo/harness/.venv/bin/python -m pytest tests/jobs/ -q`
 Expected: PASS (all). `test_default_deps_constructs` still passes — the real `run_turn` now accepts `mode` but defaults it to `None`.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add harness/jobs/executor.py tests/jobs/test_executor.py
@@ -451,7 +482,7 @@ Add an observe-only precondition at the top of the skill body so the four-phase 
 
 **Files:**
 - Modify: `harness/skills/systematic-debugging/SKILL.md:3` (description), `harness/skills/systematic-debugging/SKILL.md:16-22` (insert precondition before "The Iron Law")
-- Test: `tests/test_system_skills.py` (add content assertions)
+- Test: `tests/test_system_skills.py` (add content assertions), `tests/test_router.py:6` (refresh stale description fixture)
 
 **Interfaces:**
 - Consumes: nothing (markdown). The router reads frontmatter `description` via `skills.py:51`.
@@ -513,15 +544,26 @@ failing test that wasn't reported.** There is nothing to fix until a failure is
 reported.
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [ ] **Step 5: Refresh the stale router-test fixture**
 
-Run: `/Users/alberto/Work/Quiubo/harness/.venv/bin/python -m pytest tests/test_system_skills.py -q`
-Expected: PASS (new test + existing). If an existing test asserts the old description string verbatim, update it to the new text.
+`tests/test_router.py:6` hand-builds a `SkillMeta("systematic-debugging", "Use when
+encountering any bug, test failure, or unexpected behavior")` — the OLD description.
+It's a fixture (not an assertion on the real file), so Task 5 doesn't break it, but it
+now misrepresents the skill. Update the string to the new tightened description so the
+fixture matches reality:
+```python
+    SkillMeta("systematic-debugging", "Use when there is a REPORTED failing behavior to fix — a bug, failing test, or error. NOT for read-only status checks."),
+```
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Run tests to verify they pass**
+
+Run: `/Users/alberto/Work/Quiubo/harness/.venv/bin/python -m pytest tests/test_system_skills.py tests/test_router.py -q`
+Expected: PASS (new test + existing). If any other existing test asserts the old description string verbatim, update it to the new text.
+
+- [ ] **Step 7: Commit**
 
 ```bash
-git add harness/skills/systematic-debugging/SKILL.md tests/test_system_skills.py
+git add harness/skills/systematic-debugging/SKILL.md tests/test_system_skills.py tests/test_router.py
 git commit -m "fix(skill): systematic-debugging observe-only off-ramp + tighter desc (#177)
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
@@ -628,4 +670,4 @@ In a live `dn` session: ask "check if the cron was firing". Expected: it inspect
 
 **Placeholder scan:** No TBD/TODO; every code step shows the full code; every test step shows the assertion and the exact command + expected result.
 
-**Type consistency:** `_instance_template_for(task_type, default)`, `ANSWER_ONLY_INSTANCE`, `OBSERVE_FIRST_INSTANCE` are named identically across Tasks 1–4. `run_turn(..., mode: str | None = None)` matches the dispatch read `job.payload.agent_options.get("mode")` (Task 4). `_apply_instance_template(agent_cfg, task_type)` is defined and consumed only within Task 3.
+**Type consistency:** `_instance_template_for(task_type, default)`, `ANSWER_ONLY_INSTANCE`, `OBSERVE_FIRST_INSTANCE` are named identically across Tasks 1–4. `run_turn(..., mode: str | None = None)` matches the dispatch read `job.payload.agent_options.get("mode")` (Task 4). `_instance_template_cfg(agent_cfg, task_type)` (Task 3) and `_observe_or_default_cfg(cfg, mode)` (Task 4) both RETURN copies — neither mutates the caller's dict (both shared/reused). Each is defined and consumed only within its own task.
