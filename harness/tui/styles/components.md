@@ -492,6 +492,9 @@ Columnar task row from the dashboard: `● TITLE` + `StatusChip` + description +
 Bottom hairline bar; keybinding-hint segments
 (`tab switch · / prompt · q quit`).
 - **When to use:** persistent global controls/keys + cwd + mode. Drawn in `app.py`.
+- **Right segment:** `#statusbar-right` shows context usage from the latest
+  `llm.return` relay, e.g. `ctx 12.3K/1.0M | 987.7K left` (or `ctx --/400.0K`
+  before the first model call). Window size comes from `resolve_ctx_window`.
 
 ---
 

@@ -1239,6 +1239,29 @@ def test_yolo_chip_click_toggles_state():
     asyncio.run(go())
 
 
+def test_status_right_shows_context_used_and_remaining():
+    app = HarnessTui.__new__(HarnessTui)
+    app.model = "vibeproxy"
+    app._worker_model_id = "claude-opus-4-8"
+    app._started = True
+    app._tokens = 12_345
+
+    markup = app._status_right()
+
+    assert "ctx 12.3K/1.0M" in markup
+    assert "| 987.7K left" in markup
+
+
+def test_status_right_shows_context_window_before_usage():
+    app = HarnessTui.__new__(HarnessTui)
+    app.model = "vibeproxy"
+    app._worker_model_id = "gpt-5.4"
+    app._started = True
+    app._tokens = 0
+
+    assert "ctx --/400.0K" in app._status_right()
+
+
 def test_compose_meta_shows_persona_name():
     """The compose-meta line under the input is the active persona's display name
     (bare, no parens) — it replaced the old 'Build' mode word. model/provider

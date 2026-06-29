@@ -54,6 +54,7 @@ from harness.tui.widgets.decision_modal import DecisionModal, TYPE_SOMETHING, CH
 from harness.tui.widgets.status_chip import StatusChip
 from harness.tui.header import icon_markup, header_text_markup
 from harness import config as _config
+from harness.compaction import resolve_ctx_window
 
 
 def _c(name: str, text: str) -> str:
@@ -419,15 +420,27 @@ class HarnessTui(App):
 
     def _status_right(self) -> str:
         # No command palette is bound, so the old 'ctrl+p commands' hint is gone;
-        # the right side now carries the token count (or the version pre-start).
-        right = self._fmt_tokens(self._tokens) if self._tokens else ""
+        # the right side carries context usage (or the version pre-start).
+        right = self._context_tagline()
         if not self._started:
             right = self._version
         return f"[$muted]{right}[/]"
 
     @staticmethod
     def _fmt_tokens(n: int) -> str:
+        if n >= 1_000_000:
+            return f"{n/1_000_000:.1f}M"
         return f"{n/1000:.1f}K" if n >= 1000 else str(n)
+
+    def _context_tagline(self) -> str:
+        # _tokens is the latest llm.return total (prompt+completion for that call),
+        # which tracks current context footprint until the next model call (or compaction).
+        window = resolve_ctx_window(_model_label(self.model, self._worker_model_id))
+        if self._tokens <= 0:
+            return f"ctx --/{self._fmt_tokens(window)}"
+        remaining = max(window - self._tokens, 0)
+        return (f"ctx {self._fmt_tokens(self._tokens)}/{self._fmt_tokens(window)} "
+                f"| {self._fmt_tokens(remaining)} left")
 
     def _refresh_status(self) -> None:
         try:

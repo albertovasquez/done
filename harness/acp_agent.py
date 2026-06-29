@@ -669,24 +669,24 @@ class HarnessAgent(acp.Agent):
         def run_engine() -> dict:
             from harness.tracing_agent import TracingAgent
             from harness.relay_emitter import RelayEmitter
-            # ACP carries the user-facing stream; the engine's own event stream
-            # (llm.call/llm.return/action/action.done/run.*) is normally discarded.
-            # Under --debug, relay each event to the TUI sole-writer over the same
-            # with_meta channel instead of dropping it to /dev/null.
-            # In all modes, capture context.compacted so the TUI can show a note.
-            if self._debug:
-                def _relay(ev: dict) -> None:
-                    if ev["type"] == "context.compacted":
-                        compacted["event"] = ev["data"]
-                    upd = with_meta(message_chunk(""),
-                                    {"trace": {"type": ev["type"],
-                                               "data": {"sid": session_id, **ev["data"]}}})
+            # ACP carries the user-facing stream; most engine trace events stay
+            # internal unless --debug is on. Usage is the exception: it feeds the
+            # always-visible context/usage footer.
+            def _relay(ev: dict) -> None:
+                data = ev.get("data") or {}
+                if ev["type"] == "context.compacted":
+                    compacted["event"] = data
+                meta = {}
+                usage = data.get("usage") if ev["type"] == "llm.return" else None
+                if isinstance(usage, dict) and isinstance(usage.get("total"), int):
+                    meta["usage"] = usage
+                if self._debug:
+                    meta["trace"] = {"type": ev["type"],
+                                     "data": {"sid": session_id, **data}}
+                if meta:
+                    upd = with_meta(message_chunk(""), meta)
                     asyncio.run_coroutine_threadsafe(
                         self._conn.session_update(session_id, upd), loop).result()
-            else:
-                def _relay(ev: dict) -> None:  # type: ignore[misc]
-                    if ev["type"] == "context.compacted":
-                        compacted["event"] = ev["data"]
 
             emitter = RelayEmitter("/dev/null", clock=lambda: 0.0, relay=_relay)
             cfg = dict(self._agent_cfg)

@@ -57,6 +57,15 @@ class RecordingConn:
                 flags.append(True)
         return flags
 
+    def usage_payloads(self):
+        out = []
+        for u in self.updates:
+            meta = getattr(u, "field_meta", None) or {}
+            harness = meta.get("harness", {}) if isinstance(meta, dict) else {}
+            if isinstance(harness, dict) and isinstance(harness.get("usage"), dict):
+                out.append(harness["usage"])
+        return out
+
 
 class _ScriptedRouter:
     """Routes every prompt to the agent path with no skills (so skills.compose is
@@ -208,6 +217,38 @@ def test_agent_path_streams_deltas_as_message_chunks(tmp_path):
     assert conn.reset_flags() == [True], (
         f"expected exactly one stream_reset boundary, got {conn.reset_flags()!r}"
     )
+
+
+def test_agent_path_relays_llm_return_usage_without_debug(tmp_path):
+    """Usage from llm.return must reach the TUI via field_meta even when --debug is off."""
+    out = make_toolcall_output(
+        "done",
+        [{"id": "call_0", "type": "function",
+          "function": {"name": "bash",
+                       "arguments": '{"command": "' + _SUBMIT + '"}'}}],
+        [{"command": _SUBMIT, "tool_call_id": "call_0"}],
+    )
+    out["extra"]["cost"] = 0.0
+    out["extra"]["response"] = {
+        "usage": {
+            "prompt_tokens": 1200,
+            "completion_tokens": 34,
+            "total_tokens": 1234,
+        }
+    }
+    conn = RecordingConn()
+    model = DeterministicToolcallModel(outputs=[out], cost_per_call=0.0)
+    agent = _build(model, conn)
+    assert not agent._debug
+    sid = agent._store.new(cwd=str(tmp_path))
+
+    _prompt(agent, sid, "fix the bug")
+
+    assert conn.usage_payloads() == [{
+        "total": 1234,
+        "prompt": 1200,
+        "completion": 34,
+    }]
 
 
 def test_on_delta_cleared_after_turn(tmp_path):
