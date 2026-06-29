@@ -50,10 +50,19 @@ There is **no `dn jobs list` CLI** in this phase — jobs are viewed in the TUI.
 From inside the TUI (`dn`), press **`Ctrl+J`** to toggle the **cron drawer**. It
 has two parts:
 
+- **Daemon-status header** — a line above the roster showing whether the
+  `harness-cron` daemon is running: `✓ daemon running — jobs will fire` (green),
+  `⚠ daemon running but ticks are failing` / `⚠ daemon stalled …` (yellow), or
+  `✗ daemon not running — scheduled jobs won't fire` (red). This is how you tell
+  at a glance whether your scheduled jobs are actually armed.
 - **Dashboard** — one row per job: `● {name} · {status} · {when}`. Status is one
   of `new`, `due`, `running`, `ok`, `error`, or `disabled`.
 - **Detail chart** — selecting a job draws a bar chart of its recent run
   durations (read from the job's run log).
+
+The header is read each time you open the drawer. It works off a heartbeat the
+daemon writes every tick (`cron/ticker_heartbeat` + `cron/ticker_success`): a
+fresh heartbeat means running, a stale or missing one means stopped/stalled.
 
 Keys while the dashboard is focused:
 
@@ -155,8 +164,9 @@ skill and dashboard so the gates and locking are respected.
   schedules only; an over-frequent `Cron` expression isn't rejected yet.
 - **Job-list / management CLI.** Viewing and managing jobs is TUI-only in this
   phase.
-- **TUI-managed daemon.** The `harness-cron` daemon must be started separately;
-  the TUI neither launches it nor reports whether it's running, so scheduled jobs
-  only fire if you've started the daemon yourself ([#146](https://github.com/albertovasquez/done/issues/146)).
+- **TUI-managed daemon.** The panel now *reports* whether the `harness-cron`
+  daemon is running (the status header above), but the TUI still doesn't *start
+  or stop* it — you launch the daemon yourself, and scheduled jobs only fire while
+  it's running ([#146](https://github.com/albertovasquez/done/issues/146)).
 - **Trace events.** `cron.fire` / `cron.tick` / `cron.error` are reserved in the
   debug-trace model but not yet emitted.
