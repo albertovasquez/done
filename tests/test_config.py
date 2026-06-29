@@ -314,14 +314,31 @@ def test_update_agent_refuses_incomplete_create(isolated_config):
 
 # --- compress_aware: read, write, helper ---
 
-def test_compress_aware_defaults_on_when_unset(tmp_path):
+def test_compress_aware_defaults_on_when_unset(isolated_config):
     # autouse isolated_config already redirects config; no file → default True
     assert config.compress_aware_pinned("default") is True
 
 
-def test_compress_aware_roundtrip(tmp_path):
+def test_compress_aware_roundtrip(isolated_config):
     # set False, confirm, then set True, confirm
     config.set_compress_aware("default", False)
     assert config.compress_aware_pinned("default") is False
     config.set_compress_aware("default", True)
     assert config.compress_aware_pinned("default") is True
+
+
+def test_set_compress_aware_preserves_harness_section(isolated_config):
+    conf = config.conf_path()
+    conf.parent.mkdir(parents=True, exist_ok=True)
+    conf.write_text('schema_version = 1\n\n[harness]\ndebug = true\n')
+    config.set_compress_aware("default", False)
+    txt = conf.read_text()
+    assert "[harness]" in txt and "debug = true" in txt
+    assert config.compress_aware_pinned("default") is False
+
+
+def test_set_compress_aware_preserves_existing_agent_tables(isolated_config):
+    config.update_agent("default", backend="anthropic", model="claude-x")
+    config.set_compress_aware("other", False)   # partial table for a different persona
+    agents = config.load()
+    assert "default" in agents and agents["default"].model == "claude-x"

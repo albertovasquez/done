@@ -103,10 +103,23 @@ def _quote(value: str) -> str:
     return f'"{escaped}"'
 
 
-def _serialize(agents: dict[str, AgentConfig]) -> str:
+def _serialize(
+    agents: dict[str, AgentConfig],
+    *,
+    preserve: dict | None = None,
+    partial: dict[str, dict] | None = None,
+) -> str:
     """Render the flat schema: top-level schema_version then one [agents.<key>]
     table per agent (name only when set). Deterministic key order: the reserved
-    default first, then the rest sorted, so diffs stay stable."""
+    default first, then the rest sorted, so diffs stay stable.
+
+    preserve: raw parsed TOML dict from an existing file. Any top-level keys/
+    sections that are NOT `schema_version` and NOT `agents` are re-emitted
+    verbatim after the agents block, so sections like [harness] survive writes.
+
+    partial: a dict of {agent_key: {field: value}} for incomplete agent tables
+    (those without backend/model) that should be emitted after the complete
+    agent tables. Values are TOML-typed (bool → true/false, str → quoted)."""
     lines = [f"schema_version = {SCHEMA_VERSION}", ""]
     ordered = ([RESERVED_KEY] if RESERVED_KEY in agents else []) + sorted(
         k for k in agents if k != RESERVED_KEY
@@ -123,6 +136,46 @@ def _serialize(agents: dict[str, AgentConfig]) -> str:
         if not cfg.compress_aware:
             lines.append("compress_aware = false")
         lines.append("")
+    # Emit partial (incomplete) agent tables — no backend/model.
+    if partial:
+        for key in sorted(partial.keys()):
+            fields = partial[key]
+            lines.append(f"[agents.{key}]")
+            for field, value in sorted(fields.items()):
+                if isinstance(value, bool):
+                    lines.append(f"{field} = {'true' if value else 'false'}")
+                else:
+                    lines.append(f"{field} = {_quote(str(value))}")
+            lines.append("")
+    # Re-emit any top-level sections/keys from the existing file that we don't own.
+    if preserve:
+        _OWNED = {"schema_version", "agents"}
+        for top_key in sorted(preserve.keys()):
+            if top_key in _OWNED:
+                continue
+            value = preserve[top_key]
+            if isinstance(value, dict):
+                lines.append(f"[{top_key}]")
+                for k, v in sorted(value.items()):
+                    if isinstance(v, bool):
+                        lines.append(f"{k} = {'true' if v else 'false'}")
+                    elif isinstance(v, str):
+                        lines.append(f"{k} = {_quote(v)}")
+                    elif isinstance(v, int):
+                        lines.append(f"{k} = {v}")
+                    else:
+                        lines.append(f"{k} = {_quote(str(v))}")
+                lines.append("")
+            else:
+                # Top-level scalar key (not schema_version or agents)
+                if isinstance(value, bool):
+                    lines.append(f"{top_key} = {'true' if value else 'false'}")
+                elif isinstance(value, str):
+                    lines.append(f"{top_key} = {_quote(value)}")
+                elif isinstance(value, int):
+                    lines.append(f"{top_key} = {value}")
+                else:
+                    lines.append(f"{top_key} = {_quote(str(value))}")
     return "\n".join(lines)
 
 
@@ -163,9 +216,20 @@ def update_agent(
         yolo_pinned=base_pinned if yolo_pinned is None else yolo_pinned,
         compress_aware=base_compress_aware if compress_aware is None else compress_aware,
     )
-    text = _serialize(agents)
-
+    # Read the raw file so _serialize can preserve unknown top-level sections.
     path = conf_path()
+    existing_raw: dict | None = None
+    try:
+        raw = path.read_bytes()
+        if raw.strip():
+            try:
+                existing_raw = tomllib.loads(raw.decode("utf-8"))
+            except (tomllib.TOMLDecodeError, UnicodeDecodeError):
+                existing_raw = None
+    except OSError:
+        existing_raw = None
+    text = _serialize(agents, preserve=existing_raw)
+
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(text, encoding="utf-8")
@@ -236,55 +300,30 @@ def set_compress_aware(persona_id: str, on: bool) -> None:
     """Persist compress_aware=on for persona_id. When a complete agent table (with
     backend+model) exists, overlays via update_agent (preserving all other fields).
     When no complete table exists yet, writes the raw TOML key directly so the value
-    survives until a full config row is written."""
+    survives until a full config row is written. In both cases, unknown top-level
+    sections (e.g. [harness]) are preserved."""
     agents = load()
     if persona_id in agents:
         # Full table exists — overlay compress_aware, preserve all other fields.
         update_agent(persona_id, compress_aware=on)
         return
     # No complete table yet — upsert the key directly in the raw TOML.
+    # Read existing file to preserve top-level sections and complete agent tables.
     path = conf_path()
+    existing_raw: dict | None = None
     try:
-        text = path.read_bytes().decode("utf-8")
+        raw_bytes = path.read_bytes()
+        if raw_bytes.strip():
+            try:
+                existing_raw = tomllib.loads(raw_bytes.decode("utf-8"))
+            except (tomllib.TOMLDecodeError, UnicodeDecodeError):
+                existing_raw = None
     except OSError:
-        text = f"schema_version = {SCHEMA_VERSION}\n"
-    try:
-        existing = tomllib.loads(text)
-    except (tomllib.TOMLDecodeError, UnicodeDecodeError):
-        existing = {"schema_version": SCHEMA_VERSION}
-    # Build minimal TOML that adds [agents.<persona_id>] with compress_aware.
-    # Preserve unrelated top-level keys (schema_version, [harness], etc.) by
-    # re-emitting them verbatim ahead of the agents section we control.
-    if not isinstance(existing.get("agents"), dict):
-        existing["agents"] = {}
-    if not isinstance(existing["agents"].get(persona_id), dict):
-        existing["agents"][persona_id] = {}
-    existing["agents"][persona_id]["compress_aware"] = on
-    # Serialize: emit schema_version + one partial agents table.
-    ca_str = "true" if on else "false"
-    lines = [f"schema_version = {SCHEMA_VERSION}", ""]
-    # Emit any existing complete-agent tables preserved by the full serializer.
-    full_agents = {k: v for k, v in agents.items()}  # from load() above (complete rows)
-    ordered = ([RESERVED_KEY] if RESERVED_KEY in full_agents else []) + sorted(
-        k for k in full_agents if k != RESERVED_KEY
-    )
-    for key in ordered:
-        cfg = full_agents[key]
-        lines.append(f"[agents.{key}]")
-        if cfg.name is not None:
-            lines.append(f"name = {_quote(cfg.name)}")
-        lines.append(f"backend = {_quote(cfg.backend)}")
-        lines.append(f"model = {_quote(cfg.model)}")
-        if cfg.yolo_pinned:
-            lines.append("yolo_pinned = true")
-        if not cfg.compress_aware:
-            lines.append("compress_aware = false")
-        lines.append("")
-    # Emit the partial table for persona_id (no backend/model).
-    lines.append(f"[agents.{persona_id}]")
-    lines.append(f"compress_aware = {ca_str}")
-    lines.append("")
-    text = "\n".join(lines)
+        existing_raw = None
+    # Route through _serialize to avoid duplicating serialization logic.
+    # agents already contains all complete tables from load() above.
+    # The partial table for persona_id is emitted via the partial= argument.
+    text = _serialize(agents, preserve=existing_raw, partial={persona_id: {"compress_aware": on}})
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(text, encoding="utf-8")
