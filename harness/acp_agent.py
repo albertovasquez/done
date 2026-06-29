@@ -36,6 +36,18 @@ from minisweagent.exceptions import UserInterruption
 logger = logging.getLogger("harness.acp_agent")
 
 
+def decide_permission(req, *, yolo: bool, has_elicitation: bool) -> str:
+    """Pure policy: 'allow' (run, no prompt), 'deny' (block), or 'ask' (prompt the
+    client). yolo overrides to allow. In-root file ops (read OR write) are free.
+    Everything else is risky (bash, out-of-root, exec): ask if there is a prompt
+    channel, otherwise fail CLOSED -> deny (#107)."""
+    if yolo:
+        return "allow"
+    if req.kind == "file" and not req.outside_roots:
+        return "allow"                       # in-root read & write are free
+    return "ask" if has_elicitation else "deny"
+
+
 # Answer-only instance template for code_explain turns. The engine's default
 # instance_template (mini.yaml) is injected as the USER turn EVERY step and reads
 # "Please solve this issue: {{task}} … Edit the source code to resolve it" — an
@@ -603,25 +615,25 @@ class HarnessAgent(acp.Agent):
             asyncio.run_coroutine_threadsafe(
                 self._conn.session_update(session_id, plan_update(entries)), loop).result()
 
-        def request_permission(command: str) -> bool:
-            # --yolo: auto-allow everything, no client round-trip, no modal.
-            if self._auto_allow():
+        def check_permission(req) -> bool:
+            yolo = self._auto_allow()
+            has_elicitation = not (
+                self._client_caps is None
+                or getattr(self._client_caps, "elicitation", None) is None
+            )
+            verdict = decide_permission(req, yolo=yolo, has_elicitation=has_elicitation)
+            if verdict == "allow":
                 return True
-            # Auto-allow (standalone path) unless the client advertised it can
-            # handle permission prompts. ACP routes permission via elicitation;
-            # gate on that rather than a bare None-check so a client that sends
-            # capabilities without elicitation support isn't asked to answer a
-            # prompt it can't service.
-            if self._client_caps is None or getattr(self._client_caps, "elicitation", None) is None:
-                return True
+            if verdict == "deny":
+                return False
+            # verdict == "ask": prompt the client
             tc_id = tc["id"]
             options = [
                 PermissionOption(kind="allow_once", name="Allow once", option_id="allow_once"),
                 PermissionOption(kind="reject_once", name="Reject", option_id="reject_once"),
             ]
-            # carry the actual command in title so the client can show it
-            # ("$ <cmd>") instead of the opaque tool_call_id.
-            tool_call = ToolCallUpdate(tool_call_id=tc_id, title=f"$ {command}")
+            title = f"$ {req.command}" if req.kind == "bash" else f"{'write' if req.is_write else 'read'} {req.path}"
+            tool_call = ToolCallUpdate(tool_call_id=tc_id, title=title)
             coro = self._conn.request_permission(
                 options=options, session_id=session_id, tool_call=tool_call
             )
@@ -665,7 +677,7 @@ class HarnessAgent(acp.Agent):
                 }
 
         env = AcpEnvironment(cwd=state.cwd, on_command=on_command,
-                             request_permission=request_permission,
+                             check_permission=check_permission,
                              cancel_flag=state.cancel_flag,
                              client_terminal=client_terminal,
                              on_plan=on_plan)
@@ -673,6 +685,12 @@ class HarnessAgent(acp.Agent):
         # agent_id from it (never from the model). Per-session workspace name, or
         # "default" with no persona. Mirrors the env._loaded_skills stamp pattern.
         env._active_persona = state.workspace_dir.name if state.workspace_dir else "default"
+        # Allowed write/confine roots: the session cwd plus the persona workspace
+        # (which lives OUTSIDE cwd — config_dir()/agents/<id> — so memory writes
+        # must not be classified outside-root). Consumed by permcheck + file tools.
+        from pathlib import Path as _Path
+        env._allowed_roots = [_Path(state.cwd)] + (
+            [state.workspace_dir] if state.workspace_dir else [])
 
         def run_engine() -> dict:
             from harness.tracing_agent import TracingAgent
