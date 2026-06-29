@@ -34,9 +34,9 @@ Screen { layout: vertical; background: $background; layers: base overlay; }
 .compose-meta { color: $muted; padding-top: 1; }
 
 /* ---- LANDING state: vertically centered column ---- */
-#landing { layout: vertical; align: center top; height: 1fr; }
+#landing { align: center middle; height: 1fr; }
+#landing-col { width: 84; height: 1fr; }
 #landing-top { height: 1fr; }
-#landing-col { width: 84; height: auto; }  /* full-width compose box */
 #landing-bot { height: 2fr; }
 /* landing header: the ≡ icon beside name/tagline/model, left-aligned above the
    compose box (Claude Code session-banner style). */
