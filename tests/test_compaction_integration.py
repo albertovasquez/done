@@ -108,19 +108,24 @@ def test_compaction_enabled_long_prior_emits_event(tmp_path):
         "protect_last_n": 2,    # keep tiny tail so middle is large → summary fires
     }
 
-    # The TracingAgent's build_compaction needs a model with .query(); we inject
-    # a stub via a monkey-patch approach: use build_mock_model() for the agent's
-    # reasoning turns (it ends in submission), and supply a stub model for the
-    # compaction summarize call (injected via a custom compaction kwarg wrapping).
-    #
-    # Actually, build_compaction only sees self.model — we need a model that can
-    # BOTH drive the agent turn AND answer summarize queries.
-    # build_mock_model() is a DeterministicToolcallModel whose .query() returns
-    # tool-call responses.  Its response shape has "content" (str) and
-    # "extra": {"cost": float}, which is exactly what build_compaction.summarize uses.
-    # So build_mock_model() works as the compaction model too (it returns content
-    # on each call; the summarize closure only reads content + cost from the dict).
+    # build_mock_model() drives the agent turn (scripted tool-call outputs).
+    # The compaction adapter is rebuilt inside run() (Fix A) using agent.model —
+    # the same DeterministicToolcallModel.  To prevent summarize() from consuming
+    # the scripted outputs, we wrap model.query: calls whose first message contains
+    # COMPRESS_SYSTEM are intercepted and return a canned summary without touching
+    # the scripted output queue; all other calls delegate to the real model.
+    from harness.compaction import COMPRESS_SYSTEM
     model = build_mock_model()
+    _original_query = model.query
+
+    def _patched_query(messages):
+        first_content = (messages[0].get("content") or "") if messages else ""
+        if COMPRESS_SYSTEM in first_content:
+            return {"role": "assistant", "content": "TEST SUMMARY",
+                    "extra": {"cost": 0.0}}
+        return _original_query(messages)
+
+    model.query = _patched_query
 
     agent = _build_agent(tmp_path, model, compaction_cfg=compaction_cfg)
     prior = _long_prior(60)   # 60 pairs × 2 = 120 messages, ~24K chars
@@ -138,8 +143,8 @@ def test_compaction_enabled_long_prior_emits_event(tmp_path):
     assert ev["after_msgs"] < ev["before_msgs"], (
         f"after_msgs ({ev['after_msgs']}) should be < before_msgs ({ev['before_msgs']})"
     )
-    assert ev["method"] in ("summary", "truncated"), (
-        f"method must be 'summary' or 'truncated', got: {ev['method']!r}"
+    assert ev["method"] == "summary", (
+        f"method must be 'summary' (summarize path ran via patched query), got: {ev['method']!r}"
     )
     assert ev["before_tokens"] > 0
     assert ev["after_tokens"] >= 0

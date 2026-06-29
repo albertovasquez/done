@@ -93,10 +93,13 @@ class TracingAgent(DefaultAgent):
             # ONLY divergence from upstream: `prior` injected between the fresh
             # system message and the fresh instance message.
             self.extra_template_vars |= {"task": task, **kwargs}
-            # C2: build the compaction adapter lazily here, AFTER {{task}} is set,
+            # C2: rebuild the compaction adapter every turn, AFTER {{task}} is set,
             # so _render_template (StrictUndefined) does not raise on the instance
-            # template used to estimate fixed_overhead_tokens.
-            if self._compaction_cfg and self._compaction is None:
+            # template used to estimate fixed_overhead_tokens.  Rebuilt per-turn so
+            # persona/skill/memory changes (and per-session model swaps) are reflected
+            # in the fixed_overhead_tokens estimate and model reference.
+            self._compaction = None
+            if self._compaction_cfg:
                 rendered_system = self._render_template(self.config.system_template)
                 rendered_instance = self._render_template(self.config.instance_template)
                 fixed_overhead_tokens = _compaction.estimate_tokens(
