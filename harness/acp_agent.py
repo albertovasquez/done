@@ -430,7 +430,7 @@ class HarnessAgent(acp.Agent):
             q = cls.clarifying_question or "Could you clarify the task?"
             chunk = message_chunk(q)
             if cls.options:
-                # Attach structured options so the TUI renders DecisionPrompt.
+                # Attach structured options so the TUI renders the DecisionModal.
                 # Empty options => plain chunk, byte-identical to prior behavior.
                 chunk = with_meta(chunk, {"decision": {
                     "question": q,

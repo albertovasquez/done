@@ -54,7 +54,7 @@ def test_usage_notes_have_single_source_in_components_md():
     # the generator). Parser finds several; each shipped component we mock has one.
     notes = brandbook._parse_usage_notes()
     for name in ("StatusChip", "ActivityStatus", "ToolCallRow", "SelectModal",
-                 "DecisionPrompt"):
+                 "DecisionModal"):
         assert name in notes and notes[name], f"no usage note parsed for {name}"
 
 

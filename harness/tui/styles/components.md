@@ -285,36 +285,40 @@ Columnar task row from the mockups: `TASK · STATUS · PROGRESS · ELAPSED`.
 
 ## D. Decisions needed
 
-### `DecisionPrompt`  ⭐
-The "grill-me" clarification UI. **One model, two render targets:** inline in the
-transcript for refinement questions; escalates to a **modal** only when the agent is
-truly blocked.
+### `DecisionModal`  ⭐
+The "grill-me" clarification UI, rendered as a centered modal overlay (shares
+`SelectModal`'s box styling). Dims the conversation and owns focus, so it reads as
+"I'm blocked, pick one" rather than a dim inline block.
 - **In:** `DecisionView` (question, options[title + dimmed rationale], fallbacks)
-- Keyboard: number / ↑↓ / enter. Fallbacks: `Type something`, `Chat about this`.
-- The answer persists in the transcript as a record.
+- Keyboard: number / ↑↓ / enter; esc cancels. Fallbacks: `Type something`, `Chat about this`.
+- The first option is marked `(recommended)` (router emits options best-first; an
+  explicit flag is GH #117).
+- Dismisses with the chosen option index (or `TYPE_SOMETHING` / `CHAT_ABOUT_IT` /
+  `None`); the app maps that to submit-title / focus / prefill / close.
 - **When to use:** when the agent wants *richer input than yes/no* (pick an option,
-  refine a plan) and isn't hard-blocked — it's inline & non-blocking. Use
-  `PermissionModal` instead for a blocking allow/reject before a command runs.
+  refine a plan). For a per-command allow/reject before a command runs use
+  `PermissionModal` instead.
 
 ```
-Where should the streaming seam live?  …
-
-› 1. Our own streaming model wrapper
-     A LitellmModel subclass that overrides query… Recommended.
-  2. Thread callback through TracingAgent.query()
-     Mixes agent-loop concerns with model-call concerns…
-  3. Patch upstream litellm_model.py
-     Simplest diff, but edits vendored code…
-  4. Type something
-  5. Chat about this
+╭─ Where should the streaming seam live? ───── esc ─╮
+│ › 1. Our own streaming model wrapper  (recommended)│
+│      A LitellmModel subclass that overrides query… │
+│   2. Thread callback through TracingAgent.query()  │
+│      Mixes agent-loop concerns with model-call…    │
+│   3. Patch upstream litellm_model.py               │
+│      Simplest diff, but edits vendored code…       │
+│   4. Type something                                │
+│   5. Chat about this                               │
+│ ↑↓ move · enter select · esc cancel                │
+╰────────────────────────────────────────────────────╯
 ```
 
 ### `PermissionModal`  *(exists today — kept)*
-Command-permission modal. Sibling of `DecisionPrompt` ("agent needs your input");
+Command-permission modal. Sibling of `DecisionModal` ("agent needs your input");
 shares footer / keybinding styling.
 - **When to use:** for a *blocking* per-command yes/no that must be answered before
   the agent proceeds. For a persistent "always allow" posture use
-  `StatusChip.for_yolo`; for non-blocking richer input use `DecisionPrompt`.
+  `StatusChip.for_yolo`; for richer option-picking use `DecisionModal`.
 
 ### `SelectModal`  *(exists today — kept)*
 Search + scrollable list modal; the base both modals extend.
@@ -544,7 +548,7 @@ Verified against `harness/tui/app.py` + `harness/tui/widgets/`. Tags:
 | **D** decisions | `PermissionModal` | ✅ shipped | wired in `app.py` |
 | | `SelectModal` | ✅ shipped | wired in `app.py` |
 | | `NewPersonaModal` | ✅ shipped | `widgets/new_persona_modal.py`; opened by `n` in the rail (persona-create) |
-| | `DecisionPrompt` | 🟡 built·unwired | class exists; reducer fills `decision`, but no mount |
+| | `DecisionModal` | ✅ shipped | `widgets/decision_modal.py`; pushed from `app.py` on a decision meta |
 | **—** input/nav | `SlashMenu` | ✅ shipped | wired in `app.py` |
 | | `PromptArea` | ✅ shipped | wired in `app.py` |
 | | `StatusBar` / footer meta | ◻ inlined | drawn in `app.py` |
