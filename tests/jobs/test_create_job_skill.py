@@ -30,7 +30,7 @@ def test_create_job_skill_has_required_content():
         "min-cadence",
         "consecutive",
         "fail closed",
-        "harness/create_job",
+        "create_job",          # the agent tool (replaces the old harness/create_job ext-method ref)
     ]
 
     for substring in required_substrings:
