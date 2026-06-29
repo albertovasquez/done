@@ -29,10 +29,8 @@ MAX_FILE_CHARS = 8000                                   # per-file trim ceiling
 # The shipped default agent's identity, written into the default workspace on
 # first run (see seed_default_workspace). Kept OUT of the bundled templates on
 # purpose: those stay inert so every *newly created* persona starts blank. Only
-# the default gets a soul. NOTE: the soul names itself "Bob" (a deliberate voice
-# choice) while DEFAULT_PERSONA_NAME / IDENTITY show "Done" — that mismatch is
-# intentional; do not "fix" one to match the other.
-DEFAULT_PERSONA_NAME = "Done"
+# the default gets a soul. Name, soul, and IDENTITY all say "Bob".
+DEFAULT_PERSONA_NAME = "Bob"
 DEFAULT_PERSONA_SOUL = """\
 # SOUL.md — Who You Are
 
@@ -119,7 +117,7 @@ Do not let your personality drift through careless tiny edits. If this file chan
 _This file is yours to evolve. Learn, adjust, stay recognizable, and stay Bob._
 """
 DEFAULT_PERSONA_IDENTITY = (
-    "Name: Done. Vibe: capable, upbeat, quick-witted. Humor: light, dry when "
+    "Name: Bob. Vibe: capable, upbeat, quick-witted. Humor: light, dry when "
     "useful, never clownish. Presence: confident, warm, and unflappable. "
     "Emoji: ✅\n"
 )
@@ -223,7 +221,7 @@ def compose_context(persona_block: str, memory_block: str, skill_roots: list[Pat
 
 def seed_default_workspace() -> None:
     """Seed ~/.config/harness/agents/default/ on first run with the shipped
-    default agent ("Done"): its SOUL.md, IDENTITY.md, and persona.toml `name`,
+    default agent ("Bob"): its SOUL.md, IDENTITY.md, and persona.toml `name`,
     plus the inert USER.md template (left blank for the user to fill in).
     No-op if the dir already exists (never clobber / never backfill).
     Best-effort: never raises into the startup path."""

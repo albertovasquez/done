@@ -440,8 +440,8 @@ def test_memory_load_emits_after_task_classified(tmp_path):
     assert keys.index("task_classified") < keys.index("memory_load")
 
 
-def test_seeded_default_workspace_injects_done_persona(monkeypatch, tmp_path):
-    # the shipped default ships with the "Done" soul -> the chat path renders a
+def test_seeded_default_workspace_injects_bob_persona(monkeypatch, tmp_path):
+    # the shipped default ships with the "Bob" soul -> the chat path renders a
     # system message carrying it AND a persona_load event fires.
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     from harness import persona, paths
@@ -465,7 +465,7 @@ def test_seeded_default_workspace_injects_done_persona(monkeypatch, tmp_path):
 
 
 def test_seeded_default_workspace_has_no_memory(monkeypatch, tmp_path):
-    # the seeded default ships a persona (Done) but NO memory content, so a
+    # the seeded default ships a persona (Bob) but NO memory content, so a
     # persona_load fires while memory_load does not.
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     from harness import persona, paths

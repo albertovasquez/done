@@ -23,15 +23,15 @@ FAKE_CMD = [sys.executable, str(REPO / "tests/fake_agent.py")]
 
 # The per-turn run-caption footer marker. The mode word was replaced by the
 # active persona's display name; in mock mode with no --persona that resolves to
-# the default persona, whose shipped name is "Done" (seeded into an isolated
+# the default persona, whose shipped name is "Bob" (seeded into an isolated
 # config dir by the autouse fixture below, so this is deterministic on any box).
-RUN_CAPTION = "▣ Done"   # the shipped default persona's display name
+RUN_CAPTION = "▣ Bob"   # the shipped default persona's display name
 
 
 @pytest.fixture(autouse=True)
 def _isolated_default_persona(monkeypatch, tmp_path_factory):
     """Point XDG_CONFIG_HOME at a fresh dir and seed the default persona, so the
-    footer caption resolves to the shipped "Done" name regardless of the
+    footer caption resolves to the shipped "Bob" name regardless of the
     developer's (or CI's) real ~/.config. Without this, the caption depends on
     machine state — present-and-named on a dev box, falling back to the id
     "default" on a clean checkout."""

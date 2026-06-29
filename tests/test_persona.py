@@ -164,11 +164,11 @@ def test_seed_creates_trio_when_absent(monkeypatch, tmp_path):
     for name in ("SOUL.md", "IDENTITY.md", "USER.md"):
         assert (ws / name).is_file(), name
     # the default ships with a soul -> compose injects its SOUL/IDENTITY;
-    # USER.md stays inert (blank) for the user to fill in. The soul names itself
-    # "Bob" (deliberate voice) while IDENTITY shows the display name "Done".
+    # USER.md stays inert (blank) for the user to fill in. Name, soul, and
+    # IDENTITY all say "Bob".
     block = compose_persona(ws).block
     assert "You're Bob." in block       # soul body
-    assert "Name: Done." in block       # IDENTITY display name
+    assert "Name: Bob." in block        # IDENTITY display name
 
 
 def test_seed_does_not_clobber_existing_dir(monkeypatch, tmp_path):
@@ -275,17 +275,17 @@ def test_seed_default_noop_when_exists_does_not_backfill(isolated_config):
     assert not (dest / "IDENTITY.md").exists()
 
 
-def test_seed_default_seeds_done_soul_on_first_run(isolated_config):
+def test_seed_default_seeds_bob_soul_on_first_run(isolated_config):
     persona.seed_default_workspace()
     dest = paths.default_workspace_dir()
-    # SOUL/IDENTITY carry the shipped "Done" persona; USER.md stays inert.
+    # SOUL/IDENTITY carry the shipped "Bob" persona; USER.md stays inert.
     assert (dest / "SOUL.md").read_text(encoding="utf-8") == persona.DEFAULT_PERSONA_SOUL
     assert (dest / "IDENTITY.md").read_text(encoding="utf-8") == persona.DEFAULT_PERSONA_IDENTITY
     src = paths.bundled_persona_templates_dir()
     assert (dest / "USER.md").read_bytes() == (src / "USER.md").read_bytes()
-    # the display name resolves to "Done"
+    # the display name resolves to "Bob"
     from harness import persona_config
-    assert persona_config.read_name(dest) == "Done"
+    assert persona_config.read_name(dest) == "Bob"
 
 
 def test_seed_default_never_raises_on_oserror(isolated_config, monkeypatch):
