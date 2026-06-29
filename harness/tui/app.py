@@ -160,7 +160,6 @@ class HarnessTui(App):
         provider = _provider_label(self.model)
         with Container(id="landing"):
             with Vertical(id="landing-col"):
-                yield Static("", id="landing-top")
                 with Horizontal(id="landing-header"):
                     yield Static(self._header_markup(), id="header-text", markup=True)
                 with Vertical(id="landing-compose", classes="compose"):
@@ -169,7 +168,6 @@ class HarnessTui(App):
                     yield Static(self._compose_meta_markup(model_label, provider),
                                  classes="compose-meta", markup=True)
                 yield Static("[b]tab[/b] agents", id="hint", markup=True)
-                yield Static("", id="landing-bot")
         yield self._status_bar()
         from harness.tui.widgets.quick_keys import QuickKeysPanel
         drawer = Vertical(AgentRail(id="agent-rail"), QuickKeysPanel(), id="agent-drawer")
