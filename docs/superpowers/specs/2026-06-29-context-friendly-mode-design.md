@@ -6,10 +6,14 @@
 
 ## Goal
 
-Cut the per-turn token tax of prose context files (soul / identity / user /
-memory / AGENTS.md / CLAUDE.md) by loading pre-compressed **shadow copies**,
-without ever mutating the human-facing originals, without any on-the-fly
-compression on the hot path, and with a clean opt-out.
+Cut the per-turn token tax of **factual/structural** context files
+(`MEMORY.md`, `AGENTS.md`, `CLAUDE.md`) by loading pre-compressed **shadow
+copies**, without ever mutating the human-facing originals, without any
+on-the-fly compression on the hot path, and with a clean opt-out.
+
+**Voice-bearing files (soul / identity / user) are excluded from compression
+entirely** — see "Voice files are off-limits" below. The agent's personality
+is the product's core differentiator and must come through verbatim.
 
 Done is an opinionated system: this mode is **ON by default**. Users can turn it
 off (live) and pin the preference.
@@ -20,9 +24,29 @@ off (live) and pin the preference.
   assembled into a prompt. All compression is offline. (Explicitly rejected
   during brainstorming: per-turn LLM compression adds latency to the
   two-process hot path and can silently corrupt agent behavior.)
-- **No mutation of human-authored files.** Soul / identity / user / AGENTS.md /
-  CLAUDE.md originals are never overwritten. (Memory is the one exception — see
-  below.)
+- **No mutation of human-authored files.** AGENTS.md / CLAUDE.md originals are
+  never overwritten. (Memory is the one exception — see below.)
+- **No compression of voice-bearing files.** Soul / identity / user are never
+  compressed and never mutated — see "Voice files are off-limits".
+
+## Voice files are off-limits
+
+Soul / identity / user files define the agent's **personality** — and in Done,
+**the phrasing IS the function.** The whole value of the product is that each
+agent has a distinct personality that comes through in its responses.
+
+The `caveman-compress` engine does not merely shorten; it rewrites prose into
+telegraphic "caveman-speak" (dropped articles, fragments, flattened tone). That
+is fine for a factual index where every line is already terse signal — but
+applied to a soul/identity file it would feed the model *"be terse caveman"* as
+its personality definition, and the agent's responses would inherit that
+flattened voice. That trades the product's core differentiator for tokens — an
+unacceptable trade.
+
+**Hard rule:** soul / identity / user files are **never** compressed. No sibling
+is ever generated for them; they always load verbatim. This is not a default the
+user can flip — it is a fixed exclusion. Compression applies only to
+factual/structural files where voice does not matter.
 
 ## The shadow-file pattern
 
@@ -58,7 +82,10 @@ For any `FOO.md`, an optional sibling `FOO.compressed.md`.
 ## Compression engine
 
 Reuse the existing `caveman-compress` Python scripts
-(`detect → compress via Claude → validate → retry`). Its rules already:
+(`detect → compress via Claude → validate → retry`). **The engine only ever sees
+factual/structural files** (`MEMORY.md`, `AGENTS.md`, `CLAUDE.md`) — never
+voice-bearing files (see "Voice files are off-limits"), so its telegraphic
+caveman style is appropriate by construction. Its rules already:
 
 - preserve code blocks, inline code, URLs, file paths, commands, env vars,
   dates, version numbers, and proper nouns **exactly**;
@@ -107,15 +134,17 @@ Two distinct tools — kept separate because they measure different things:
 
 1. **`dn compress --status` (Phase 1)** — static, cheap, no model call. Walks
    the sibling pairs and reports per-file and total byte/token delta
-   ("soul 1,240→380, −69% … total saved/turn: X") plus a list of stale pairs.
+   ("AGENTS.md 980→410, −58% … total saved/turn: X") plus a list of stale pairs.
    Measures files **in isolation** (sum of per-file savings).
 
 2. **On/off prefix-comparison tool (Phase 2/3)** — assembles the **real composed
-   prompt prefix both ways** (compressed-off vs compressed-on) across *all*
-   injected context and reports the true end-to-end per-turn token delta a user
-   would actually see. Heavier; this is the honest "should I turn it on?" number.
-   **Excludes memory:** memory is destructive-at-write, so there is no "off"
-   version to compare against — an on/off diff is undefined for memory.
+   prompt prefix both ways** (compressed-off vs compressed-on) across the
+   **compressible** injected context (`AGENTS.md`, `CLAUDE.md`) and reports the
+   true end-to-end per-turn token delta a user would actually see. Heavier; this
+   is the honest "should I turn it on?" number.
+   **Excludes voice files** (soul / identity / user — never compressed) **and
+   memory** (destructive-at-write, so there is no "off" version to compare
+   against — an on/off diff is undefined for it).
 
 ## Components (isolated units)
 
@@ -141,7 +170,8 @@ Memory write (destructive):
   agent writes memory --> compressor --> validate --> persisted compressed memory
 
 Per turn (read-only, no LLM):
-  context chokepoint --> for each target file:
+  context chokepoint --> for each file:
+      voice file (soul/identity/user)? --> ALWAYS load original (hard exclusion)
       mode OFF? --> load original
       sibling missing? --> load original
       sibling stale (hash mismatch)? --> load original, mark for rebuild
@@ -176,15 +206,18 @@ Per turn (read-only, no LLM):
 
 - **Phase 1:** shadow-file pattern + loader hook + freshness + `dn compress` /
   `--status` + memory-write integration + the YOLO-style chip & `done.conf`
-  flag. Targets: soul / identity / user / memory / AGENTS.md / CLAUDE.md — the
-  per-turn prefix files where the compounding token tax lives.
+  flag. Targets: **`MEMORY.md` / `AGENTS.md` / `CLAUDE.md`** — the per-turn
+  prefix files where voice does not matter and the compounding token tax lives.
+  Voice files (soul / identity / user) are **excluded by design**, not deferred.
 - **Phase 2/3:** `SKILL.md` bodies (same mechanism, lower ROI — loaded only on
-  invocation), **and** the on/off whole-prefix comparison tool (excluding
-  memory).
+  invocation), **and** the on/off whole-prefix comparison tool (excludes voice
+  files and memory).
 
 ## Open questions
 
 None at design time. All forks resolved during brainstorming:
 engine (reuse caveman-compress), home (bundled in harness), freshness
 (content hash), memory writes (destructive-at-write, accepted), toggle
-(YOLO-style chip, default ON), comparison tool (Phase 2/3, excludes memory).
+(YOLO-style chip, default ON), comparison tool (Phase 2/3, excludes voice +
+memory), **voice files (soul/identity/user) excluded from compression entirely
+to preserve agent personality.**
