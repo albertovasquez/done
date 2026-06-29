@@ -59,6 +59,17 @@ uv tool install .
 uv tool install --editable .
 ```
 
+If you used the non-editable `uv tool install .`, the tool keeps its own pinned
+virtualenv — a `git pull` updates your checkout but **not** that environment. So
+whenever a pull adds or changes a dependency (you'll see a `ModuleNotFoundError`
+on launch), refresh the installed tool:
+
+```bash
+uv tool install --reinstall --force --from . quiubo-done
+```
+
+(The `--editable` install runs live source and never needs this.)
+
 Configure VibeProxy by putting your settings in `~/.config/harness/.env`
 (see `.env.example`), or drop a `.env` in the project directory you run `dn`
 from. Add your own skills in `~/.config/harness/skills/` (global) or a project's
