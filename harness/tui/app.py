@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import signal
 import time
 from typing import Any
 
@@ -1138,6 +1139,21 @@ class HarnessTui(App):
     @staticmethod
     def _escape(s: str) -> str:
         return s.replace("[", "\\[")
+
+    @staticmethod
+    def _format_exit(returncode: int | None) -> str:
+        """Render a subprocess returncode as a human-readable exit cause.
+        POSIX: None = not reaped, >=0 = exit code, <0 = killed by signal -rc."""
+        if returncode is None:
+            return "exit status unknown"
+        if returncode >= 0:
+            return f"exited with code {returncode}"
+        signum = -returncode
+        try:
+            name = signal.Signals(signum).name
+        except ValueError:
+            return f"killed by signal {signum}"
+        return f"killed by {name}"
 
     async def _send_prompt(self, text: str) -> None:
         # The prior answer's stream was already closed by _add_user_message (which
