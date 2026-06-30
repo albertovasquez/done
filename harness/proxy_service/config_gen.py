@@ -4,7 +4,16 @@ import secrets
 from harness.proxy_service import paths
 
 
-_NEURALWATT_GLM_MODEL = "zai-org/GLM-4.6"   # OPEN ITEM: confirm exact id via NeuralWatt /v1/models
+# NeuralWatt upstream models exposed via the proxy, as (upstream model id, alias).
+# The alias is what the harness/router requests (e.g. ROUTER_MODEL=openai/qwen).
+# Upstream ids must match NeuralWatt's /v1/models exactly — confirm with:
+#   curl -s https://api.neuralwatt.com/v1/models -H "Authorization: Bearer $NEURALWATT_API_KEY"
+# and update here if they differ. (IDs below are from NeuralWatt's docs as of
+# 2026-06-30; the GLM id in particular is unverified against a live key.)
+_NEURALWATT_MODELS = [
+    ("zai-org/GLM-4.6", "glm"),
+    ("Qwen/Qwen3-Coder-480B-A35B-Instruct", "qwen"),
+]
 
 
 def generate(port: int = 8317, *, env=None) -> str:
@@ -29,6 +38,10 @@ def generate(port: int = 8317, *, env=None) -> str:
     )
     nw_key = env.get("NEURALWATT_API_KEY")
     if nw_key:
+        models_yaml = "".join(
+            f'      - name: "{model_id}"\n        alias: "{alias}"\n'
+            for model_id, alias in _NEURALWATT_MODELS
+        )
         base += (
             "openai-compatibility:\n"
             '  - name: "neuralwatt"\n'
@@ -36,8 +49,7 @@ def generate(port: int = 8317, *, env=None) -> str:
             "    api-key-entries:\n"
             f'      - api-key: "{nw_key}"\n'
             "    models:\n"
-            f'      - name: "{_NEURALWATT_GLM_MODEL}"\n'
-            '        alias: "glm"\n'
+            f"{models_yaml}"
         )
     return base
 

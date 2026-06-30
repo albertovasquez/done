@@ -25,7 +25,19 @@ def test_generate_includes_neuralwatt_when_key_set():
     y = config_gen.generate(env={"NEURALWATT_API_KEY": "nw-123"})
     assert "openai-compatibility" in y
     assert "api.neuralwatt.com/v1" in y
-    assert "alias: \"glm\"" in y or "alias: glm" in y
+    # both NeuralWatt aliases registered (glm + qwen), and the qwen upstream id
+    assert 'alias: "glm"' in y
+    assert 'alias: "qwen"' in y
+    assert "Qwen3-Coder" in y
+
+
+def test_generate_neuralwatt_yaml_is_valid():
+    import yaml
+    y = config_gen.generate(env={"NEURALWATT_API_KEY": "nw-123"})
+    d = yaml.safe_load(y)
+    models = d["openai-compatibility"][0]["models"]
+    aliases = {m["alias"] for m in models}
+    assert aliases == {"glm", "qwen"}
 
 
 def test_generate_omits_neuralwatt_when_key_absent():
