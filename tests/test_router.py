@@ -75,14 +75,16 @@ def test_2_low_confidence_and_ambiguous_set_gate():
 
 
 def test_3_unparseable_and_fenced_json(caplog):
-    # (a) garbage -> safe ambiguous, no raise — AND a warning (so a garbage-
-    # spewing cheap model is diagnosable, not just silently "ambiguous").
+    # (a) garbage -> DEGRADE TO WORKER (chat_question, no refusal), no raise — AND
+    # a warning (so a garbage-spewing cheap model is diagnosable). The router is
+    # best-effort triage: it must never hard-gate a turn just because the cheap
+    # classifier returned non-JSON.
     with caplog.at_level("WARNING", logger="harness.router"):
         c = Router(_stub("I cannot help with that, here's some prose."),
                    catalog=_CATALOG).classify("x")
-    assert c.task_type == "ambiguous"
+    assert c.task_type == "chat_question"          # → worker, NOT 'ambiguous'
     assert c.confidence == 0.0
-    assert c.needs_clarification is True
+    assert c.needs_clarification is False          # never refuses
     assert any("unparseable" in r.message for r in caplog.records), \
         f"unparseable router output must warn; got {[r.message for r in caplog.records]}"
 
@@ -214,3 +216,36 @@ def test_stub_complete_classifies_command_regardless_of_history():
     # A question stays chat_question with AND without history.
     assert r.classify("what is 1+1").task_type == "chat_question"
     assert r.classify("what is 1+1", history=hist).task_type == "chat_question"
+
+
+def test_system_prompt_routes_greetings_to_chat_not_ambiguous():
+    """A greeting must be classified chat_question (→ the active persona answers
+    in character), never 'ambiguous' (which strips personalization). Regression
+    for the soulless "I couldn't interpret that" reply to "hi"."""
+    from harness.router import _system_prompt
+    p = _system_prompt([]).lower()
+    # the prompt must steer greetings to chat_question and explicitly NOT ambiguous
+    assert "greeting" in p
+    assert "chat_question" in p
+    assert "persona" in p                         # persona-neutral (not "Bob")
+    # and it must NOT name a specific persona — the router is persona-agnostic
+    assert "bob" not in p
+
+
+def test_unparseable_classification_degrades_to_worker_not_refusal():
+    """The router is best-effort: when the cheap model returns non-JSON (a chatty
+    fallback, a cooling-down provider), DON'T refuse — route to chat_question so
+    the active persona handles it. Regression for the 'I couldn't interpret that'
+    storm when the router fallback model misbehaves."""
+    r = Router(_stub("Hi! I'm an assistant. How can I help?"), catalog=_CATALOG)
+    c = r.classify("Hi there")
+    assert c.task_type == "chat_question"          # → worker, not 'ambiguous'
+    assert c.needs_clarification is False          # never refuses
+    assert "interpret" not in (c.clarifying_question or "").lower()
+
+
+def test_unparseable_partial_json_also_degrades_to_worker():
+    r = Router(_stub("garbage { not really json"), catalog=_CATALOG)
+    c = r.classify("fix the bug")
+    assert c.task_type == "chat_question"
+    assert c.needs_clarification is False
