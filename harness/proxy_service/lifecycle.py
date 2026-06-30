@@ -335,12 +335,22 @@ def login(provider: str | None = None) -> str:
         return f"dn proxy login: choose a provider from: {', '.join(sorted(_LOGIN_PROVIDERS))}"
     pw = config_gen.ensure_management_password()
     if not management.is_ready(pw):
+        # Try to bring the service up. If it was never installed, start() just
+        # returns a failure string we don't propagate — the readiness check below
+        # is the real gate.
         start()
         # Brief readiness wait — give the daemon a moment to come up.
         for _ in range(10):
             if management.is_ready(pw):
                 break
             time.sleep(1)
+    # If the proxy still isn't reachable, there's nothing to authenticate
+    # against. Return a clear instruction instead of letting the auth-url HTTP
+    # call crash with a ConnectionRefused traceback.
+    if not management.is_ready(pw):
+        return ("dn proxy login: CLIProxyAPI is not running on localhost:8317. "
+                "Run `dn proxy install` first (it downloads and starts the proxy), "
+                "then re-run `dn proxy login`.")
     from harness.proxy_service import login as login_mod
     ok = login_mod.run_cli_login(provider, pw)
     return f"{provider}: authenticated" if ok else f"{provider}: sign-in not completed"
