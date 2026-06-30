@@ -60,8 +60,8 @@ Each command resolves its model independently, in this precedence:
      rule);
    - tells you its pick and why;
    - **asks to confirm** before running;
-   - on confirm, **offers to pin it** to `done.conf` (via a `config.set_*`
-     writer, like `set_compress_aware`) so it stops asking.
+   - on confirm, **offers to pin it** to `done.conf` (via the generic
+     `config.set_harness_setting(key, value)` writer) so it stops asking.
 
 ### No independence enforcement
 
@@ -99,8 +99,7 @@ Identical mechanism. They differ only in:
    flow. These are the user-facing `/review` / `/quick-review` entry points.
 4. **Proposal/persist UX** — when the resolver returns None: pick from `/models`
    (prefer different-from-author + the command's tier), announce, confirm, run,
-   offer to pin via a `config.set_review_model` / `set_quick_review_model`
-   writer.
+   offer to pin via `config.set_harness_setting("review_model"|"quick_review_model", model)`.
 
 ## Data flow
 
@@ -139,9 +138,9 @@ QUICK_REVIEW_MODEL / fast tier).
 - **Dispatcher:** inject a fake model callable (the same pattern compress uses) →
   assert the caveman-review prompt + content are passed and findings returned;
   assert it runs on the *given* model name (no implicit fallback to author).
-- **Pin writer:** `set_review_model` / `set_quick_review_model` round-trip in an
-  isolated `done.conf`; assert `[harness]` and other sections are preserved
-  (the `_serialize(preserve=)` path).
+- **Pin writer:** `set_harness_setting` round-trip in an isolated `done.conf`;
+  assert `[harness]` and other sections are preserved (the `_serialize(preserve=)`
+  path).
 - **No-model path:** asserts the "unavailable / propose" branch is taken and
   nothing crashes when no model is configured.
 
