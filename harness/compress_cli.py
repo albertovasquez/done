@@ -59,20 +59,33 @@ def _default_targets() -> list[Path]:
     return [p for p in candidates if p.exists()]
 
 
+def _compress_model_name() -> str | None:
+    """The model name to use for compression.
+
+    Compression is a cheap, mechanical task, so it prefers a dedicated
+    COMPRESS_MODEL (set this to a small/fast model, e.g. a haiku id your
+    VibeProxy serves) and falls back to VIBEPROXY_MODEL. Returns None when
+    neither is set, so the caller can report "unavailable" and exit cleanly.
+    """
+    return os.environ.get("COMPRESS_MODEL") or os.environ.get("VIBEPROXY_MODEL") or None
+
+
 def _build_call_model():
     """Return a (prompt: str) -> str callable backed by litellm/vibeproxy.
 
-    Returns None when VIBEPROXY_MODEL is not set — callers should treat that
-    as "compression unavailable" and exit cleanly without crashing.
+    Returns None when no compression model is configured (neither
+    COMPRESS_MODEL nor VIBEPROXY_MODEL) — callers should treat that as
+    "compression unavailable" and exit cleanly without crashing.
     """
-    if not os.environ.get("VIBEPROXY_MODEL"):
+    name = _compress_model_name()
+    if not name:
         return None
 
     # Lazy import: vibeproxy intentionally does not import litellm at module level.
     import litellm
     from harness import vibeproxy
 
-    model = vibeproxy.model_id(os.environ["VIBEPROXY_MODEL"])
+    model = vibeproxy.model_id(name)
     kwargs = vibeproxy.completion_kwargs()
 
     def call_model(prompt: str) -> str:
@@ -94,6 +107,13 @@ def run(argv: list[str]) -> int:
     ap.add_argument("paths", nargs="*", help="source files to process (default: cwd AGENTS.md/CLAUDE.md)")
     ns = ap.parse_args(argv)
 
+    # Load .env (process env -> project/.env -> config/.env, override=False) so a
+    # model configured in ~/.config/harness/.env is visible here. The `compress`
+    # subcommand is intercepted in tui_main before the TUI loads .env, so we must
+    # load it ourselves or COMPRESS_MODEL/VIBEPROXY_MODEL would never be seen.
+    from harness import paths
+    paths.load_env(os.getcwd())
+
     targets = [Path(p) for p in ns.paths] if ns.paths else _default_targets()
 
     if ns.status:
@@ -104,7 +124,7 @@ def run(argv: list[str]) -> int:
     # Rebuild mode
     call_model = _build_call_model()
     if call_model is None:
-        print("compression unavailable: set VIBEPROXY_MODEL")
+        print("compression unavailable: set COMPRESS_MODEL (or VIBEPROXY_MODEL)")
         return 0
 
     today = datetime.date.today().isoformat()
