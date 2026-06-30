@@ -38,7 +38,7 @@ def test_generate_neuralwatt_yaml_is_valid():
     d = yaml.safe_load(y)
     models = d["openai-compatibility"][0]["models"]
     aliases = {m["alias"] for m in models}
-    assert aliases == {"glm", "qwen"}
+    assert aliases == {"glm", "qwen", "glm-fast"}
 
 
 def test_generate_omits_neuralwatt_when_key_absent():
