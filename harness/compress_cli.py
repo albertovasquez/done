@@ -65,7 +65,7 @@ def _compress_model_name() -> str | None:
       1. COMPRESS_MODEL env            — explicit one-off override
       2. done.conf [harness] compress_model  — the persistent home (set this to a
                                           small/fast model, e.g. a haiku id)
-      3. VIBEPROXY_MODEL env           — fall back to the main worker model
+      3. PROXY_MODEL / VIBEPROXY_MODEL env — fall back to the main worker model
       4. done.conf default agent model — so compression works out of the box with
                                           no extra config
 
@@ -80,7 +80,8 @@ def _compress_model_name() -> str | None:
     conf_model = config.harness_setting("compress_model")
     if conf_model:
         return conf_model
-    vibeproxy_env = os.environ.get("VIBEPROXY_MODEL")
+    from harness import vibeproxy
+    vibeproxy_env = vibeproxy.model_value(os.environ)
     if vibeproxy_env:
         return vibeproxy_env
     default_agent = config.load().get("default")
@@ -195,7 +196,7 @@ def run(argv: list[str]) -> int:
     call_model = _build_call_model()
     if call_model is None:
         print("compression unavailable: set [harness] compress_model in done.conf "
-              "(or COMPRESS_MODEL / VIBEPROXY_MODEL)")
+              "(or COMPRESS_MODEL / PROXY_MODEL / VIBEPROXY_MODEL)")
         return 0
 
     today = datetime.date.today().isoformat()

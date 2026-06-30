@@ -108,13 +108,14 @@ async def _main(argv=None) -> None:
             pass                          # logging setup must never break startup
 
     cwd = str(Path(args.cwd).resolve()) if args.cwd else os.getcwd()
-    # Capture whether VIBEPROXY_MODEL came from the real SHELL env BEFORE load_env
-    # may fill it from a .env file. Mirrors tui_main: the precedence we want is
-    # shell env > done.conf[persona] > .env > engine default. load_env uses
+    # Capture whether PROXY_MODEL/VIBEPROXY_MODEL came from the real SHELL env BEFORE
+    # load_env may fill it from a .env file. Mirrors tui_main: the precedence we want
+    # is shell env > done.conf[persona] > .env > engine default. load_env uses
     # override=False, so a .env value only lands in os.environ when the shell did
     # NOT already set it — but we must still distinguish the two, because a
     # .env-derived value must NOT outrank the persona's persisted model.
-    shell_set_model = "VIBEPROXY_MODEL" in os.environ
+    from harness import vibeproxy
+    shell_set_model = vibeproxy.model_set_in(os.environ)
     paths.load_env(cwd)               # BEFORE importing engine-touching modules
 
     import sys
@@ -138,7 +139,7 @@ async def _main(argv=None) -> None:
     from harness import skills
 
     from harness.persona_sessions import resolve_session_model
-    shell_env = os.getenv("VIBEPROXY_MODEL")        # shell OR .env at this point
+    shell_env = vibeproxy.model_value(os.environ)   # shell OR .env at this point
     worker_model_id = resolve_session_model(
         workspace_dir.name,
         shell_set_model=shell_set_model,
@@ -165,7 +166,7 @@ async def _main(argv=None) -> None:
         workspace_dir=workspace_dir,
         cwd=cwd,
         shell_set_model=shell_set_model,
-        shell_env=os.getenv("VIBEPROXY_MODEL"),
+        shell_env=vibeproxy.model_value(os.environ),
         debug=debug,
     )
     await acp.run_agent(agent)

@@ -46,12 +46,13 @@ def _effective_worker_model_id(backend: str, persona_id: str | None,
     on a fresh launch. Resolves the launch persona's model the same way the child
     (acp_main) does — via resolve_session_model — so the footer matches the agent
     without depending on VIBEPROXY_MODEL being pre-seeded."""
+    from harness import vibeproxy
     from harness.persona_sessions import resolve_session_model
     return resolve_session_model(
         persona_id or "default",
         shell_set_model=shell_set_model,
-        shell_env=os.getenv("VIBEPROXY_MODEL"),
-        dotenv=os.getenv("VIBEPROXY_MODEL"),
+        shell_env=vibeproxy.model_value(os.environ),
+        dotenv=vibeproxy.model_value(os.environ),
         backend=backend,
     )
 
@@ -92,6 +93,9 @@ def main(argv=None) -> int | None:
     if raw and raw[0] == "compress":
         from harness import compress_cli
         return compress_cli.run(raw[1:])
+    if raw and raw[0] == "proxy":
+        from harness.proxy_service import cli as proxy_cli
+        return proxy_cli.run(raw[1:])
     parser = argparse.ArgumentParser(description="Harness Textual ACP client")
     parser.add_argument("--model", choices=["mock", "vibeproxy"], default=None)
     parser.add_argument("--cwd", default=None,
@@ -105,12 +109,13 @@ def main(argv=None) -> int | None:
     args = parser.parse_args(argv)
 
     cwd = str(Path(args.cwd).resolve()) if args.cwd else os.getcwd()
-    # Capture whether VIBEPROXY_MODEL came from the real shell env BEFORE load_env
+    # Capture whether PROXY_MODEL/VIBEPROXY_MODEL came from the real shell env BEFORE load_env
     # may fill it from a .env file. Precedence we want: shell env > done.conf >
     # .env > default. load_env uses override=False, so a .env value only lands in
     # os.environ here when the shell did NOT already set it.
-    shell_set_model = "VIBEPROXY_MODEL" in os.environ
-    paths.load_env(cwd)               # resolve VIBEPROXY_* before spawning the agent
+    from harness import vibeproxy
+    shell_set_model = vibeproxy.model_set_in(os.environ)
+    paths.load_env(cwd)               # resolve VIBEPROXY_* / PROXY_MODEL before spawning the agent
     backend, model_override = _resolve_model(args.model, args.persona)
     args.model = backend              # normalize so _relaunch_args carries the resolved backend
     yolo = _resolve_yolo(args.yolo, args.persona)
