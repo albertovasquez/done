@@ -16,6 +16,13 @@ _NEURALWATT_MODELS = [
 ]
 
 
+def alias_to_upstream() -> dict:
+    """Public {alias: upstream_model_id} map for the NeuralWatt upstreams. Used by
+    the TUI to show the full model name next to its short alias in the model menu
+    (the proxy's /v1/models only exposes the alias)."""
+    return {alias: model_id for model_id, alias in _NEURALWATT_MODELS}
+
+
 def generate(port: int = 8317, *, env=None) -> str:
     # localhost-bound; client auth disabled (empty api-keys) since localhost-only;
     # management reachability comes from the injected MANAGEMENT_PASSWORD env, so

@@ -949,7 +949,15 @@ class HarnessTui(App):
 
     @staticmethod
     def _pretty_model(model_id: str) -> str:
-        return model_id
+        # For a NeuralWatt alias (glm/qwen/glm-fast), show the full upstream model
+        # name next to it so it's clear exactly which model the alias points at —
+        # the proxy's /v1/models only exposes the short alias.
+        try:
+            from harness.proxy_service import config_gen
+            full = config_gen.alias_to_upstream().get(model_id)
+        except Exception:
+            full = None
+        return f"{model_id} — {full}" if full and full != model_id else model_id
 
     async def _apply_model(self, model_id: str) -> None:
         # hot-swap on the agent for subsequent turns (no restart)
