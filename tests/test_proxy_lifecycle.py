@@ -60,16 +60,41 @@ def test_install_aborts_on_checksum_mismatch(monkeypatch):
     assert "verif" in out.lower() or "checksum" in out.lower() or "fail" in out.lower()
 
 
-def test_login_autostarts_then_runs(monkeypatch):
+def test_login_stops_runs_foreground_then_restarts(monkeypatch, tmp_path):
+    """The proven flow: stop the service, run the binary's foreground -<provider>-login
+    as the sole instance (so it owns its callback), then restart the service."""
     seq = []
-    monkeypatch.setattr(lifecycle.management, "is_ready",
-                        lambda pw: (seq.append("check") or len(seq) > 1))  # False first, True after start
+    binp = tmp_path / "cli-proxy-api"; binp.write_text("x")
+    monkeypatch.setattr(lifecycle.binary, "target_path", lambda: binp)
+    monkeypatch.setattr(lifecycle.config_gen, "ensure_management_password", lambda: "pw")
+    monkeypatch.setattr(lifecycle.paths, "config_path", lambda: tmp_path / "config.yaml")
+    monkeypatch.setattr(lifecycle, "stop", lambda: seq.append("stop") or "stopped")
     monkeypatch.setattr(lifecycle, "start", lambda: seq.append("start") or "started")
-    import harness.proxy_service.login as login_mod
-    monkeypatch.setattr(login_mod, "run_cli_login", lambda *a, **k: seq.append("login") or True)
+    captured = {}
+    def _fake_interactive(argv):
+        seq.append("login"); captured["argv"] = argv; return (0, "")
+    monkeypatch.setattr(lifecycle, "_run_interactive", _fake_interactive)
+    out = lifecycle.login("claude")               # alias → anthropic → -claude-login
+    assert seq == ["stop", "login", "start"]      # order matters
+    assert "-claude-login" in captured["argv"]
+    assert "authenticated" in out.lower()
+
+
+def test_login_restarts_service_even_when_login_fails(monkeypatch, tmp_path):
+    """A failed/aborted login must still bring the service back up — never leave
+    the proxy down."""
+    seq = []
+    binp = tmp_path / "cli-proxy-api"; binp.write_text("x")
+    monkeypatch.setattr(lifecycle.binary, "target_path", lambda: binp)
+    monkeypatch.setattr(lifecycle.config_gen, "ensure_management_password", lambda: "pw")
+    monkeypatch.setattr(lifecycle.paths, "config_path", lambda: tmp_path / "config.yaml")
+    monkeypatch.setattr(lifecycle, "stop", lambda: seq.append("stop") or "stopped")
+    monkeypatch.setattr(lifecycle, "start", lambda: seq.append("start") or "started")
+    monkeypatch.setattr(lifecycle, "_run_interactive",
+                        lambda argv: (seq.append("login") or (1, "user aborted")))
     out = lifecycle.login("codex")
-    assert "start" in seq and "login" in seq
-    assert "codex" in out.lower() or "authenticated" in out.lower()
+    assert "start" in seq                         # service restarted despite failure
+    assert "did not complete" in out.lower()
 
 
 def test_login_rejects_unknown_provider():
@@ -77,19 +102,12 @@ def test_login_rejects_unknown_provider():
     assert "unknown" in out.lower() or "choose" in out.lower()
 
 
-def test_login_bails_cleanly_when_proxy_never_starts(monkeypatch):
-    """Regression: `dn proxy login` before `dn proxy install` must NOT crash with
-    a ConnectionRefused traceback — it should return a clear instruction and never
-    reach the auth-url network call."""
+def test_login_requires_installed_binary(monkeypatch, tmp_path):
+    """Before `dn proxy install` the binary is absent — guide the user, don't crash
+    and don't stop a (nonexistent) service."""
     seq = []
-    # is_ready always False (proxy not installed/running); start() is a no-op string.
-    monkeypatch.setattr(lifecycle.management, "is_ready", lambda pw: False)
-    monkeypatch.setattr(lifecycle, "start", lambda: "start failed: no service")
-    monkeypatch.setattr(lifecycle, "time", type("T", (), {"sleep": staticmethod(lambda s: None)}))
-    import harness.proxy_service.login as login_mod
-    monkeypatch.setattr(login_mod, "run_cli_login",
-                        lambda *a, **k: seq.append("login") or True)
+    monkeypatch.setattr(lifecycle.binary, "target_path", lambda: tmp_path / "nope")
+    monkeypatch.setattr(lifecycle, "stop", lambda: seq.append("stop") or "")
     out = lifecycle.login("claude")
-    assert "login" not in seq                     # never reached the network call
-    assert "dn proxy install" in out              # clear instruction
-    assert "not running" in out.lower()
+    assert "stop" not in seq                       # didn't touch the service
+    assert "dn proxy install" in out
