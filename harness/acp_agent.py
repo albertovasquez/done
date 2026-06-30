@@ -651,11 +651,13 @@ class HarnessAgent(acp.Agent):
                     "exception_info": "",
                 }
 
+        from harness.output_filters.dispatch import filter_output
         env = AcpEnvironment(cwd=state.cwd, on_command=on_command,
                              check_permission=check_permission,
                              cancel_flag=state.cancel_flag,
                              client_terminal=client_terminal,
-                             on_plan=on_plan)
+                             on_plan=on_plan,
+                             output_filter=filter_output)
         # Bind the active persona onto the env so the create_job tool can resolve
         # agent_id from it (never from the model). Per-session workspace name, or
         # "default" with no persona. Mirrors the env._loaded_skills stamp pattern.
