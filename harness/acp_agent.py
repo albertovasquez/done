@@ -565,12 +565,17 @@ class HarnessAgent(acp.Agent):
                         chat_prose["buf"] += piece
 
             async def _chat_flush_loop() -> None:
-                try:
-                    while True:
+                while True:
+                    try:
                         await asyncio.sleep(0.08)
                         await _chat_flush()
-                except asyncio.CancelledError:
-                    return
+                    except asyncio.CancelledError:
+                        return
+                    except Exception:
+                        # transient session_update failure must not permanently
+                        # stop mid-turn delivery; the turn-end flush still runs
+                        # so no data is lost — just keep ticking.
+                        logger.exception("stream flush loop error (turn-end flush still delivers)")
 
             chat_flush_task = loop.create_task(_chat_flush_loop())
             try:
@@ -833,6 +838,12 @@ class HarnessAgent(acp.Agent):
                     meta["trace"] = {"type": ev["type"],
                                      "data": {"sid": session_id, **data}}
                 if meta:
+                    # Intentionally NOT flushed-before: this chunk's text is always
+                    # "" (nothing to paint) and its payload (usage/trace) is
+                    # order-independent relative to prose — _maybe_update_tokens
+                    # just sets self._tokens regardless of arrival order. So
+                    # usage-vs-prose is commutative; flushing here would only add
+                    # RPC round-trips with no visible benefit.
                     upd = with_meta(message_chunk(""), meta)
                     asyncio.run_coroutine_threadsafe(
                         self._conn.session_update(session_id, upd), loop).result()
@@ -920,12 +931,17 @@ class HarnessAgent(acp.Agent):
         async def _flush_loop() -> None:
             # ~80ms cadence matches the TUI's 12Hz render; finer delivery is
             # invisible (the TUI buffers and paints on its own timer).
-            try:
-                while True:
+            while True:
+                try:
                     await asyncio.sleep(0.08)
                     await _flush_prose()
-            except asyncio.CancelledError:
-                return
+                except asyncio.CancelledError:
+                    return
+                except Exception:
+                    # transient session_update failure must not permanently
+                    # stop mid-turn delivery; the turn-end flush still runs
+                    # so no data is lost — just keep ticking.
+                    logger.exception("stream flush loop error (turn-end flush still delivers)")
 
         flush_task = loop.create_task(_flush_loop())
         try:
