@@ -69,12 +69,15 @@ Implications:
 
 All in `harness/skills.py`:
 
-- **Body read:** `_parse_skill_md(path) -> (frontmatter_dict, body)` at lines
-  67–77 — the single place a `SKILL.md` is read (`path.read_text`). This is the
-  swap point: read via `compress.loader.load_context_file(path, mode_on=...,
-  strict_encoding=True)` instead of raw `read_text`.
-- **Body compose:** `compose(roots, names) -> SkillLoad` (lines 134–161) calls
-  `_parse_skill_md` at line 146 — so swapping `_parse_skill_md`'s read covers it.
+- **Body read — the swap point is `compose()` at line 146, NOT `_parse_skill_md`.**
+  `_parse_skill_md(path) -> (frontmatter_dict, body)` (lines 67–77) is shared by
+  BOTH the per-turn menu/catalog scan (`load_catalog_with_skips`, line 109) and
+  the body-compose path (`compose`, line 146). Hooking `_parse_skill_md` itself
+  would compress the menu too (see "RESOLVED" finding below). Leave
+  `_parse_skill_md` reading the ORIGINAL; apply the compressed swap ONLY at the
+  body read driven by `compose(roots, names) -> SkillLoad` (lines 134–161, the
+  `_parse_skill_md` call at line 146) — i.e. compress the body that gets injected
+  on `load_skill`, while the catalog frontmatter scan stays original-only.
 - **CRITICAL — frontmatter must stay byte-exact.** `_parse_skill_md` splits on
   the `---` fences and `yaml.safe_load`s the frontmatter. Compression must apply
   to the **body only**; the compressed sibling's frontmatter must be preserved
@@ -114,25 +117,35 @@ to do now.
   answer: correct, skip it — frontmatter is unsafe to compress and the size is
   trivial.)
 
-## Review findings (caveman-review, 2026-06-30) — resolve before building
+## Review findings (caveman-review, 2026-06-30)
 
-These poke holes in the design above. Two could invalidate stated conclusions
-(marked MUST-VERIFY); resolve each in the Phase-2 plan.
+These poke holes in the design above. The two MUST-VERIFY items have now been
+**resolved against live code** (2026-06-30); resolutions below. (A Codex review
+of #188 was requested but the companion only returned an async task handle, not
+findings — these two were verified directly instead.)
 
-- **MUST-VERIFY — ROI claim rests on "once per session per skill" (§ROI).**
-  `env._loaded_skills` dedup may be **per-turn**, not per-session: the
-  `load_skill.py` note says "loaded ONCE per turn, never re-read if already
-  loaded," and the skills exploration said "different turn = reloaded from disk."
-  If dedup is per-TURN, a skill used across N turns reloads N times → body ROI is
-  **higher** than this doc states, and the per-turn vs on-demand framing shifts.
-  Pin the actual scope before finalizing the ROI argument.
-- **MUST-VERIFY — the hook compresses the menu too (§Technical hook points).**
-  Swapping the read inside `_parse_skill_md` routes BOTH surfaces through the
-  loader: the per-turn menu (`compose_menu → load_catalog → _parse_skill_md`
-  reads every skill's frontmatter each turn) AND the body. That contradicts
-  "compress bodies, not menu." Resolve: the catalog/frontmatter scan must read
-  the **original** (or ignore the sibling), while only the body path gets the
-  compressed swap. The single-read-point hook as written is too broad.
+- **RESOLVED — dedup is per-TURN; body ROI is HIGHER than §ROI claims.**
+  `harness/tracing_agent.py:155-159` resets `env._loaded_skills = set()` **each
+  run (turn)** — explicit comment: "load_skill dedup is per-turn... a long-lived
+  ACP session can re-pull a skill on a later turn." So a skill invoked across N
+  turns is re-read from disk **N times**, not once per session. **Correction to
+  §ROI:** body compression pays off on *every turn the skill is used*, not once —
+  meaningfully higher ROI than "intermittent, once per session." Still lower than
+  the always-on per-turn files (a skill is only read on turns it's invoked), but
+  the gap is smaller than the spec states. Soften the "lower/intermittent"
+  framing accordingly.
+- **RESOLVED — the naive hook WOULD compress the menu; use line-146's read, not
+  `_parse_skill_md`.** Confirmed: `load_catalog_with_skips` (the per-turn
+  menu/catalog scan) calls `_parse_skill_md(child/"SKILL.md")` at
+  `harness/skills.py:109` — the **same function** the body-compose path uses at
+  `skills.py:146`. The catalog discards the body (`data, _ =`) but reads the whole
+  file. So swapping the read **inside `_parse_skill_md`** would route the per-turn
+  menu scan through the compressed sibling — the exact "compress bodies, not menu"
+  contradiction. **Correct seam:** leave `_parse_skill_md` reading the ORIGINAL
+  (the catalog needs exact frontmatter every turn); apply the compressed swap
+  ONLY at the **body read in `compose()` (skills.py:146)** — e.g. a separate
+  body-only read path, or read the sibling's body there while `_parse_skill_md`
+  stays original-only. Do NOT hook `_parse_skill_md`.
 - **Sibling SHAPE is underspecified.** Decide: body-only sibling (no frontmatter)
   vs whole-file sibling. `load_context_file` returns the sibling's bytes; if
   whole-file, the compressor must be forbidden from touching the frontmatter
