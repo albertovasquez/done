@@ -44,3 +44,14 @@ def test_run_review_passes_prompt_and_content():
 def test_run_review_rejects_empty_content():
     with pytest.raises(ValueError):
         review.run_review("   ", quick=False, call_model=lambda p: "x")
+
+
+def test_bundled_review_skills_parse():
+    from pathlib import Path
+    from harness import skills
+    root = Path(__file__).resolve().parent.parent / "harness" / "skills"
+    for name in ("review", "quick-review"):
+        data, body = skills._parse_skill_md(root / name / "SKILL.md")
+        assert data.get("name") == name           # frontmatter name matches dir
+        assert data.get("description")
+        assert "review" in body.lower()
