@@ -143,6 +143,7 @@ def compose(roots: list[Path], names: list[str]) -> SkillLoad:
     valid SKILL.md for it wins. Records failures in skipped; never raises."""
     load = SkillLoad()
     bodies: list[str] = []
+    _compress = _compress_skills_on()
     for name in names:
         chosen_body = None
         for root in roots:
@@ -161,7 +162,7 @@ def compose(roots: list[Path], names: list[str]) -> SkillLoad:
             continue
         # Compress-aware: swap in the cached compressed body when fresh. Miss or
         # mode-off -> original. Read-only, no LLM (rebuild is `dn compress --skills`).
-        if _compress_skills_on():
+        if _compress:
             cached = _skill_cache.cached_body(chosen_body)
             if cached is not None:
                 chosen_body = cached
