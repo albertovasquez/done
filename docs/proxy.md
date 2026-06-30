@@ -28,16 +28,14 @@ Once CLIProxyAPI is installed, authenticate with your chosen LLM provider:
 ```bash
 # Browser-based login (Claude/Anthropic, Codex, Antigravity)
 dn proxy login anthropic     # Opens your browser
+dn proxy login claude        # Alias for anthropic — opens your browser
 dn proxy login codex         # Opens your browser
 dn proxy login antigravity   # Opens your browser
-
-# CLI-flag login (Grok/xAI, Kimi)
-# These do not have a browser flow; instead, pass the API key as an environment
-# variable when launching Done. See the provider-specific setup below.
-
-# Gemini (Google)
-# Gemini uses API-key authentication only. No browser login exists; see below.
 ```
+
+If you don't have a browser (headless/SSH), the login command prints the OAuth URL
+and polls for authentication — copy the URL to a browser on another machine and
+return to complete the flow.
 
 Check which providers are authenticated:
 
@@ -52,53 +50,107 @@ authentication state.
 
 | Provider | Auth method | Command | Notes |
 |----------|-------------|---------|-------|
-| **Claude (Anthropic)** | Browser OAuth | `dn proxy login anthropic` | Automatic; opens your browser |
+| **Claude (Anthropic)** | Browser OAuth | `dn proxy login anthropic` or `dn proxy login claude` | Opens your browser; `claude` is an alias for `anthropic` |
 | **Codex (Anthropic)** | Browser OAuth | `dn proxy login codex` | Separate from Claude/Anthropic |
 | **Antigravity** | Browser OAuth | `dn proxy login antigravity` | Web-based auth flow |
 | **Grok (xAI)** | API key | `export PROXY_GROK_API_KEY=...` | Pass via environment; no `dn proxy login` |
 | **Kimi (Moonshot)** | API key | `export PROXY_KIMI_API_KEY=...` | Pass via environment; no `dn proxy login` |
 | **Gemini (Google)** | API key | `.env` file only | See *Adding an API-key upstream* below |
 
-## Adding an API-key upstream (example: NeuralWatt → GLM)
+## Adding NeuralWatt for GLM access
 
-To add a new LLM provider that uses API keys (not browser OAuth), edit
-`~/.config/harness/cliproxy.yaml` and append an `openai-compatibility` upstream
-block. This example adds NeuralWatt as a CLIProxyAPI upstream for GLM access:
+CLIProxyAPI supports GLM (via NeuralWatt) automatically when you set the
+`NEURALWATT_API_KEY` environment variable.
 
-```yaml
-# At the end of ~/.config/harness/cliproxy.yaml, add:
+### Setup
 
-openai-compatibility:
-  - name: "neuralwatt"
-    base-url: "https://api.neuralwatt.com/v1"
-    api-key-entries:
-      - "${NEURALWATT_API_KEY}"
-    models:
-      - model-id: "<GLM-MODEL-ID>"    # Replace with actual GLM model ID, e.g. "glm-4-turbo"
-        aliases:
-          - "glm"
-```
-
-Then set your NeuralWatt API key in `~/.config/harness/.env`:
+Set your NeuralWatt API key in your shell environment or in `~/.config/harness/.env`:
 
 ```bash
-NEURALWATT_API_KEY=your_neuralwatt_api_key_here
+export NEURALWATT_API_KEY=your_neuralwatt_api_key_here
 ```
 
-Once configured, you can reference the GLM model via its alias:
+Then run `dn proxy install` (or `dn proxy upgrade` if already installed):
 
 ```bash
-dn --model gpt-4-turbo    # Route to NeuralWatt's GLM-4-Turbo via the "glm" alias
+dn proxy install
 ```
 
-**To find the correct GLM model ID:** visit NeuralWatt's API endpoint directly:
+This automatically appends the NeuralWatt `openai-compatibility` upstream to
+`~/.config/harness/cliproxy.yaml`. The proxy restarts and GLM becomes available.
+
+### Verify GLM is available
+
+Check that CLIProxyAPI recognizes GLM:
+
+```bash
+dn proxy status
+```
+
+Then list available models:
+
+```bash
+curl -s http://localhost:8317/v1/models | jq .
+```
+
+You should see an entry with alias `"glm"` for the NeuralWatt upstream.
+
+### Use GLM
+
+Once authenticated, route a persona to GLM via the `"glm"` alias:
+
+```bash
+dn --model glm    # Use GLM as the default model
+```
+
+**To find the current GLM model ID:** visit NeuralWatt's API endpoint directly:
 
 ```bash
 curl -s https://api.neuralwatt.com/v1/models \
   -H "Authorization: Bearer $NEURALWATT_API_KEY" | jq '.data[].id'
 ```
 
-This lists all available models; use the exact model ID in the `openai-compatibility` block above.
+The CLIProxyAPI config uses `zai-org/GLM-4.6` by default; if NeuralWatt lists a different
+model ID, update the `name` field in the `~/.config/harness/cliproxy.yaml`
+`openai-compatibility` block under `neuralwatt.models`.
+
+## Service management
+
+### Start and stop the service
+
+Control CLIProxyAPI via the OS service manager:
+
+```bash
+# Start the CLIProxyAPI daemon
+dn proxy start
+
+# Stop the daemon
+dn proxy stop
+
+# Check status (including per-provider auth)
+dn proxy status
+```
+
+### Upgrade CLIProxyAPI
+
+To update to the latest pinned binary version:
+
+```bash
+dn proxy upgrade
+```
+
+This downloads the new binary and restarts the service.
+
+### Uninstall CLIProxyAPI
+
+To remove CLIProxyAPI entirely:
+
+```bash
+dn proxy uninstall
+```
+
+This stops the daemon, deregisters the OS service, and removes the data directory
+(including the binary, configuration, management password, and cached auth tokens).
 
 ## Migrating from VibeProxy
 
@@ -119,6 +171,7 @@ Authenticate with each provider you use:
 ```bash
 # Browser-based providers
 dn proxy login anthropic
+dn proxy login claude      # Alias for anthropic
 dn proxy login codex
 dn proxy login antigravity
 
@@ -151,9 +204,9 @@ but updating to `PROXY_*` is recommended for clarity.
 
 ### Step 4: Add custom upstreams (optional)
 
-If you used NeuralWatt or other API-key upstreams with VibeProxy, add them to
-the `openai-compatibility` section of `~/.config/harness/cliproxy.yaml` (see
-*Adding an API-key upstream* above).
+If you used NeuralWatt with VibeProxy, set the `NEURALWATT_API_KEY` environment
+variable and run `dn proxy install` or `dn proxy upgrade` — the configuration
+is automatically updated (see *Adding NeuralWatt for GLM access* above).
 
 ### Step 5: Verify and launch
 
@@ -177,22 +230,28 @@ VibeProxy.
 
 ### CLIProxyAPI not running
 
-If `dn proxy status` shows "not running", try starting it manually:
+If `dn proxy status` shows "not running", try starting it:
 
 ```bash
-# macOS
-launchctl start me.router.cliproxy
-
-# Linux
-systemctl --user start cliproxy
+dn proxy start
 ```
 
-Or restart your machine — the OS service should auto-start on boot.
+If the start command fails, you can also restart your machine — the OS service
+is registered to auto-start on boot. Check the system logs if start fails:
+
+```bash
+# macOS — view launchd logs
+log show --predicate 'process == "cliproxy"' --level debug
+
+# Linux — view systemd logs
+journalctl --user -u cliproxy -n 20
+```
 
 ### Provider authentication failed
 
-Run `dn proxy login <provider>` again. If the browser doesn't open, copy the
-URL from the terminal manually and paste it into your browser.
+Run `dn proxy login <provider>` again. If the browser doesn't open (e.g., in a
+headless environment), copy the URL from the terminal, paste it into a browser
+on another machine, complete the OAuth flow, and wait for the poll to succeed.
 
 ### Model not found
 
@@ -203,22 +262,24 @@ curl -s http://localhost:8317/v1/models | jq .
 ```
 
 The model list depends on which providers are authenticated. If you expect a
-model and don't see it, check `dn proxy status` to confirm the provider is
-logged in.
+model and don't see it:
 
-### API key not working
+1. Check `dn proxy status` to confirm the provider is logged in
+2. For GLM: verify `echo $NEURALWATT_API_KEY` is set, then run `dn proxy upgrade` to pick up the config
+3. Restart the proxy: `dn proxy stop && dn proxy start`
 
-If using an API-key upstream (e.g., NeuralWatt), verify:
+### NeuralWatt / GLM not appearing
 
-1. The environment variable is set: `echo $NEURALWATT_API_KEY`
-2. The `openai-compatibility` block in `cliproxy.yaml` is correctly formatted
-3. Restart CLIProxyAPI after editing the config:
+If you set `NEURALWATT_API_KEY` after installing CLIProxyAPI, you must run:
 
 ```bash
-# macOS
-launchctl stop me.router.cliproxy
-launchctl start me.router.cliproxy
+dn proxy upgrade
+```
 
-# Linux
-systemctl --user restart cliproxy
+This re-downloads the binary and regenerates the config to include the NeuralWatt
+upstream. If still not visible after `dn proxy status` shows "running", check
+that the `NEURALWATT_API_KEY` environment variable is set and restart:
+
+```bash
+dn proxy stop && dn proxy start
 ```
