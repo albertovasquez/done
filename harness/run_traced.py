@@ -10,7 +10,6 @@ Run via ./run.sh so PYTHONPATH includes upstream/src.
 from __future__ import annotations
 
 import argparse
-import os
 import platform
 import sys
 import time
@@ -31,7 +30,6 @@ from harness.runner import MiniSweAgentRunner  # noqa: E402
 from harness.router import Router, complete  # noqa: E402
 from harness import skills  # noqa: E402
 from harness import persona as _persona  # noqa: E402
-from harness import paths as _paths_persona  # noqa: E402
 from harness import memory as _memory  # noqa: E402
 from harness import base_prompt  # noqa: E402
 from harness.chat_handler import ChatHandler  # noqa: E402
