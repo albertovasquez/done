@@ -57,6 +57,18 @@ logger = logging.getLogger("harness.acp_agent")
 from harness.jobs.create import handle_create_job  # noqa: E402,F401
 
 
+def _resolve_output_filter():
+    """Return the output-filter callable, or None when the operator has disabled
+    filtering via ``[harness] output_filter = "false"`` in done.conf.
+
+    Default-on: absent key, ``"true"``, or any other value → filtering active.
+    Only the exact string ``"false"`` disables it.
+    """
+    if config.harness_setting("output_filter") == "false":
+        return None
+    return filter_output
+
+
 class HarnessAgent(acp.Agent):
     def __init__(self, *, model_factory, agent_cfg, skills_dir: list[Path], router: Router,
                  worker_model_id, yolo: bool = False, backend: str = "vibeproxy",
@@ -657,7 +669,7 @@ class HarnessAgent(acp.Agent):
                              cancel_flag=state.cancel_flag,
                              client_terminal=client_terminal,
                              on_plan=on_plan,
-                             output_filter=filter_output)
+                             output_filter=_resolve_output_filter())
         # Bind the active persona onto the env so the create_job tool can resolve
         # agent_id from it (never from the model). Per-session workspace name, or
         # "default" with no persona. Mirrors the env._loaded_skills stamp pattern.
