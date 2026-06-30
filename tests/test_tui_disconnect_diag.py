@@ -86,6 +86,8 @@ def test_stderr_tail_is_bounded_to_20():
 def _drive_report(app, exc):
     """Run _report_disconnect on a bare app under a fresh loop, capturing
     every _append_line call into app._captured_lines."""
+    app._running = True               # a bare app is _running=False; the handler's
+                                      # teardown guard would otherwise early-return
     app._captured_lines = []
     app._append_line = lambda s: app._captured_lines.append(s)
 
@@ -122,6 +124,7 @@ def test_report_disconnect_flushes_drain_before_reading_tail():
         app._stderr_tail.append("LATE crash line")
 
     async def go():
+        app._running = True            # not in teardown: let the handler do its DOM work
         app._captured_lines = []
         app._append_line = lambda s: app._captured_lines.append(s)
         app._stderr_task = asyncio.create_task(slow_drain())
@@ -154,6 +157,7 @@ def test_report_disconnect_propagates_outer_cancellation():
     app._proc = _Proc(None, returncode=-signal.SIGSEGV)
 
     async def go():
+        app._running = True            # not in teardown: handler must reach the shielded wait
         app._captured_lines = []
         app._append_line = lambda s: app._captured_lines.append(s)
         drain_task = asyncio.create_task(asyncio.sleep(10))
@@ -184,3 +188,18 @@ def test_report_disconnect_propagates_outer_cancellation():
     assert isinstance(raised, asyncio.CancelledError), raised   # not swallowed
     assert not drain_was_cancelled, "shield() must protect the drain task from the outer cancel"
     assert not drain_was_done, "drain task should still be pending (shielded)"
+
+
+def test_report_disconnect_skips_dom_when_not_running():
+    """During app teardown (_running False) the transcript is going away —
+    the handler must mount NOTHING rather than risk a mount-on-dying-screen crash."""
+    app = _bare_app()
+    app._running = False                          # simulate teardown/unmount in progress
+    app._proc = _Proc(None, returncode=-signal.SIGSEGV)
+    app._stderr_task = None
+    app._stderr_tail.extend(["should not be shown"])
+    app._captured_lines = []
+    app._append_line = lambda s: app._captured_lines.append(s)
+
+    asyncio.run(asyncio.wait_for(app._report_disconnect(ConnectionError("x")), timeout=5.0))
+    assert app._captured_lines == [], app._captured_lines   # early-returned, no DOM work

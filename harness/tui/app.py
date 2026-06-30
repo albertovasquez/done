@@ -1147,7 +1147,7 @@ class HarnessTui(App):
     @staticmethod
     def _format_exit(returncode: int | None) -> str:
         """Render a subprocess returncode as a human-readable exit cause.
-        POSIX: None = not reaped, >=0 = exit code, <0 = killed by signal -rc."""
+        POSIX: None = not yet exited/unreaped, >=0 = exit code, <0 = killed by signal -rc."""
         if returncode is None:
             return "exit status unknown"
         if returncode >= 0:
@@ -1199,6 +1199,11 @@ class HarnessTui(App):
         """Surface WHY the agent subprocess died: exit code / signal + last
         stderr lines. Flushes the concurrent stderr drain first so the final
         crash lines (which race the stdout-EOF that triggered `e`) are present."""
+        # If the app is tearing down (unmount/clear), the transcript is going
+        # away — mounting the diagnostic onto a dying screen can raise. Mirrors
+        # _send_prompt's finally `if not self._running` guard; skip the DOM work.
+        if not self._running:
+            return
         # 1) Flush the drain so the last stderr lines land in the buffer.
         #    shield() so a timeout here never CANCELS the drain task — it is
         #    owned by _teardown, not by this best-effort handler.
