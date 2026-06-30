@@ -1,20 +1,22 @@
 """Lifecycle orchestrator for CLIProxyAPI.
 
-status()  — fully implemented: checks management liveness + auth status.
-install() — composed: describes the real steps (config write + OS unit register);
-            actual binary download and launchctl/systemctl shell-out are guarded
-            so unit/routing tests pass without a live proxy.
-Other commands (uninstall, start, stop, upgrade, login) — stubbed with a clear
-human-readable message; each is a thin call site that will be fleshed out once
-the install path is validated end-to-end.
+status()    — fully implemented: checks management liveness + auth status.
+install()   — downloads binary, writes config, registers OS service, starts.
+upgrade()   — re-downloads binary then stop + start.
+uninstall() — stop + deregister OS service + remove data dir.
+start()     — start via OS service manager.
+stop()      — stop via OS service manager.
+login()     — browser-auth stub (follow-up task).
 """
 from __future__ import annotations
 
 import os
 import platform
+import shutil
 import subprocess
+import time
 
-from harness.proxy_service import config_gen, management, paths
+from harness.proxy_service import binary, config_gen, download, management, paths
 
 
 # ---------------------------------------------------------------------------
@@ -46,43 +48,97 @@ def status() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Composed (describes real steps; guarded shell-out / binary download)
+# Install / upgrade / uninstall
 # ---------------------------------------------------------------------------
 
 def install() -> str:
-    """Describe the install steps and perform the safe ones (config write).
+    """Download the binary, write config, register OS service, and start.
 
-    Binary download and OS-service registration are guarded by checking whether
-    the binary exists on disk; if not present, those steps are skipped so routing
-    tests do not require a live environment.
+    Returns a step log. ChecksumMismatch during download is caught and
+    reported; no further steps execute if download fails.
     """
     pw = config_gen.ensure_management_password()
-    config_text = config_gen.generate()
-    cfg_path = paths.config_path()
 
-    lines = ["CLIProxyAPI install:"]
+    # Step 1 — download binary.
+    try:
+        bin_path = download.download_and_install(binary.PINNED_VERSION)
+    except download.ChecksumMismatch as exc:
+        return f"CLIProxyAPI install: binary verification failed — {exc}"
+    except Exception as exc:
+        return f"CLIProxyAPI install: download error — {exc}"
 
-    # Step 1 — write config (always safe).
-    cfg_path.write_text(config_text)
-    lines.append(f"  [ok] config written to {cfg_path}")
+    # Step 2 — write config.
+    try:
+        config_text = config_gen.generate()
+        cfg_path = paths.config_path()
+        cfg_path.write_text(config_text)
+    except Exception as exc:
+        return f"CLIProxyAPI install: config write failed — {exc}"
 
-    # Step 2 — binary download (guarded).
-    from harness.proxy_service import binary as _binary
-    bin_path = _binary.target_path()
-    if bin_path.exists():
-        lines.append(f"  [ok] binary already present at {bin_path}")
-    else:
-        lines.append(f"  [skip] binary not present at {bin_path} — run `dn proxy upgrade` to download")
+    # Step 3 — register OS service.
+    try:
+        _register_os_service(str(bin_path), str(cfg_path), pw)
+    except Exception as exc:
+        return f"CLIProxyAPI install: OS service registration failed — {exc}"
 
-    # Step 3 — register OS service (guarded: skip if binary missing).
-    if bin_path.exists():
-        _result = _register_os_service(str(bin_path), str(cfg_path), pw)
-        lines.append(f"  [os-service] {_result}")
-    else:
-        lines.append("  [skip] OS service registration skipped (no binary)")
+    # Step 4 — start.
+    try:
+        start()
+    except Exception as exc:
+        return f"CLIProxyAPI install: start failed — {exc}"
 
-    return "\n".join(lines)
+    # Step 5 — readiness poll (a few attempts, short sleep).
+    _MAX_ATTEMPTS = 5
+    _SLEEP_SECS = 0.5
+    for _ in range(_MAX_ATTEMPTS):
+        if management.is_ready(pw):
+            return "CLIProxyAPI install: running"
+        time.sleep(_SLEEP_SECS)
 
+    return "CLIProxyAPI install: started (readiness check timed out — may still be starting)"
+
+
+def upgrade() -> str:
+    """Re-download the pinned binary then stop + start to pick it up.
+
+    Returns a status string. Errors are caught and returned as strings.
+    """
+    try:
+        download.download_and_install(binary.PINNED_VERSION)
+    except download.ChecksumMismatch as exc:
+        return f"CLIProxyAPI upgrade: binary verification failed — {exc}"
+    except Exception as exc:
+        return f"CLIProxyAPI upgrade: download error — {exc}"
+
+    stop_result = stop()
+    start_result = start()
+    return f"CLIProxyAPI upgrade: complete ({stop_result}; {start_result})"
+
+
+def uninstall() -> str:
+    """Stop the service, deregister it, and remove all proxy data.
+
+    The data directory contains the binary, config, management password,
+    and any downloaded auth tokens — all are removed.
+    """
+    stop()
+    _deregister_os_service()
+
+    data = paths.data_dir()
+    try:
+        shutil.rmtree(data)
+    except Exception as exc:
+        return f"CLIProxyAPI uninstall: data dir removal failed — {exc}"
+
+    return (
+        f"CLIProxyAPI uninstall: removed proxy data dir {data} "
+        "(includes binary, config, management password, and downloaded auth tokens)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# OS service helpers
+# ---------------------------------------------------------------------------
 
 def _register_os_service(binary: str, config_path: str, mgmt_password: str) -> str:
     """Write the OS service unit file and attempt to register it.
@@ -142,6 +198,74 @@ def _register_systemd(binary: str, config_path: str, mgmt_password: str) -> str:
         return f"systemctl failed: {exc.stderr.decode().strip()}"
 
 
+def _deregister_os_service() -> str:
+    """Remove the OS service unit file and unregister / disable the service.
+
+    Mirrors _register_os_service: handles Darwin (launchd) and Linux (systemd).
+    Returns a status string; failures are caught and reported, never raised.
+    """
+    sysname = platform.system()
+    try:
+        if sysname == "Darwin":
+            return _deregister_launchd()
+        elif sysname == "Linux":
+            return _deregister_systemd()
+        else:
+            return f"unsupported platform: {sysname}"
+    except Exception as exc:
+        return f"error: {exc}"
+
+
+def _deregister_launchd() -> str:
+    from pathlib import Path
+    from harness.proxy_service import service_launchd
+
+    label = service_launchd.LABEL
+    plist_path = Path.home() / "Library" / "LaunchAgents" / f"{label}.plist"
+
+    try:
+        subprocess.run(
+            ["launchctl", "bootout", f"gui/{os.getuid()}/{label}"],
+            check=True, capture_output=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        # Not fatal — unit may already be unloaded.
+        pass  # noqa: S110
+
+    if plist_path.exists():
+        plist_path.unlink()
+        return f"launchd: removed {label}"
+    return f"launchd: plist not found at {plist_path} (already removed?)"
+
+
+def _deregister_systemd() -> str:
+    from pathlib import Path
+    from harness.proxy_service import service_systemd
+
+    label = service_systemd.LABEL
+    unit_path = Path.home() / ".config" / "systemd" / "user" / f"{label}.service"
+
+    try:
+        subprocess.run(
+            ["systemctl", "--user", "disable", "--now", f"{label}.service"],
+            check=True, capture_output=True,
+        )
+    except subprocess.CalledProcessError:
+        pass  # noqa: S110
+
+    if unit_path.exists():
+        unit_path.unlink()
+        try:
+            subprocess.run(
+                ["systemctl", "--user", "daemon-reload"],
+                check=True, capture_output=True,
+            )
+        except subprocess.CalledProcessError:
+            pass  # noqa: S110
+        return f"systemd: disabled + removed {label}.service"
+    return f"systemd: unit file not found at {unit_path} (already removed?)"
+
+
 # ---------------------------------------------------------------------------
 # Service control via OS manager (launchctl/systemctl)
 # ---------------------------------------------------------------------------
@@ -185,16 +309,8 @@ def stop() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Stubbed — clear message, will be fleshed out once install is validated
+# Stubbed — browser-auth flow (follow-up task)
 # ---------------------------------------------------------------------------
-
-def uninstall() -> str:
-    return "dn proxy uninstall: not yet implemented — coming in a follow-up task"
-
-
-def upgrade() -> str:
-    return "dn proxy upgrade: not yet implemented — binary download coming in a follow-up task"
-
 
 def login(provider: str | None = None) -> str:
     if provider is None:
