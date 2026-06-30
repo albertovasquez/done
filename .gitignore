@@ -3,6 +3,9 @@
 *.pdf
 harness/runs/
 __pycache__/
+# compress-aware shadow files — generated from source via `dn compress`,
+# rebuilt on demand, never the source of truth (see docs/compress-aware.md).
+*.compressed.md
 *.pyc
 *.egg-info/
 build/
