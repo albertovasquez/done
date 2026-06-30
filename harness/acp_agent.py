@@ -625,17 +625,18 @@ class HarnessAgent(acp.Agent):
         # failure-case transcript). Prose accumulates here on the worker thread and
         # is drained to the wire at ~80ms (matching the TUI's 12Hz render), so we
         # stop blocking the worker thread on a per-token RPC round-trip. Ordering
-        # vs. boundaries/tool/plan events is preserved by flushing this buffer
-        # BEFORE any of those events (the flush-before-send chokepoint).
+        # vs. boundaries/tool/plan events will be preserved once those emitters
+        # flush this buffer first (a later task wires _flush_prose_sync into
+        # them); for now the only flush is at turn end.
         prose = {"buf": ""}
         prose_lock = threading.Lock()
 
         async def _flush_prose() -> None:
             # loop-side: atomically take the pending prose and send it as one chunk.
             with prose_lock:
-                text, prose["buf"] = prose["buf"], ""
-            if text:
-                await self._conn.session_update(session_id, message_chunk(text))
+                chunk, prose["buf"] = prose["buf"], ""
+            if chunk:
+                await self._conn.session_update(session_id, message_chunk(chunk))
 
         def _flush_prose_sync() -> None:
             # worker-thread-callable: marshal the flush to the loop and block, the

@@ -216,11 +216,6 @@ def test_agent_path_streams_deltas_as_message_chunks(tmp_path):
         f"expected exactly one stream_reset boundary, got {conn.reset_flags()!r}"
     )
 
-    # exactly one step boundary (one model call → one new n_calls value)
-    assert conn.reset_flags() == [True], (
-        f"expected exactly one stream_reset boundary, got {conn.reset_flags()!r}"
-    )
-
 
 def test_agent_path_relays_llm_return_usage_without_debug(tmp_path):
     """Usage from llm.return must reach the TUI via field_meta even when --debug is off."""
