@@ -113,3 +113,44 @@ to do now.
 - Is the ~1.3 KB menu truly not worth a per-turn compression pass? (Current
   answer: correct, skip it — frontmatter is unsafe to compress and the size is
   trivial.)
+
+## Review findings (caveman-review, 2026-06-30) — resolve before building
+
+These poke holes in the design above. Two could invalidate stated conclusions
+(marked MUST-VERIFY); resolve each in the Phase-2 plan.
+
+- **MUST-VERIFY — ROI claim rests on "once per session per skill" (§ROI).**
+  `env._loaded_skills` dedup may be **per-turn**, not per-session: the
+  `load_skill.py` note says "loaded ONCE per turn, never re-read if already
+  loaded," and the skills exploration said "different turn = reloaded from disk."
+  If dedup is per-TURN, a skill used across N turns reloads N times → body ROI is
+  **higher** than this doc states, and the per-turn vs on-demand framing shifts.
+  Pin the actual scope before finalizing the ROI argument.
+- **MUST-VERIFY — the hook compresses the menu too (§Technical hook points).**
+  Swapping the read inside `_parse_skill_md` routes BOTH surfaces through the
+  loader: the per-turn menu (`compose_menu → load_catalog → _parse_skill_md`
+  reads every skill's frontmatter each turn) AND the body. That contradicts
+  "compress bodies, not menu." Resolve: the catalog/frontmatter scan must read
+  the **original** (or ignore the sibling), while only the body path gets the
+  compressed swap. The single-read-point hook as written is too broad.
+- **Sibling SHAPE is underspecified.** Decide: body-only sibling (no frontmatter)
+  vs whole-file sibling. `load_context_file` returns the sibling's bytes; if
+  whole-file, the compressor must be forbidden from touching the frontmatter
+  region; if body-only, the freshness `body-sha` + "header stripped" logic need
+  rethinking for skills. This interacts with the storage-location fork.
+- **Side cache must preserve the 3-part freshness contract.** A side cache has no
+  in-file header to carry `source-sha` + `engine/rules-version` + `body-sha`.
+  Encode all three in the cache key/metadata, or the rules-staleness leg (the
+  #186 Codex-#3 fix) silently regresses for skills.
+- **Project-skill flag ownership (§Mode flag).** A skill can come from a project
+  root while the active persona is non-`default`. The doc assumes the `default`
+  `compress_aware` flag always governs — confirm that's intended for project
+  skills, not just convenient.
+- **Bundled package-data globs.** Confirm whether `pyproject` `skills/**/*`
+  package-data would sweep a stray `*.compressed.md` into the wheel. Either way it
+  reinforces "bundled = build-time only, never runtime siblings."
+- **`dn compress` surface: pick `--skills`, not `_default_targets`.**
+  `_default_targets` is cwd-only (the #186 deferral); skill roots are global.
+  A `--skills` flag is the clean fit; conflating the two scopes is not.
+- **State savings per-invoked-skill, not the 43 KB aggregate.** You never load
+  all 8 bundled skills at once; the aggregate overstates the real win.
