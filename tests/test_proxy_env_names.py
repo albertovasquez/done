@@ -23,6 +23,19 @@ def test_default_model_reads_proxy_first(monkeypatch):
     assert vibeproxy.default_model() == "p"
 
 
+def test_compress_cli_honors_proxy_model(monkeypatch):
+    monkeypatch.delenv("VIBEPROXY_MODEL", raising=False)
+    monkeypatch.delenv("COMPRESS_MODEL", raising=False)
+    monkeypatch.setenv("PROXY_MODEL", "haiku-x")
+    from harness import compress_cli
+    # Patch out the config reads so the function reaches the env-var fallback.
+    monkeypatch.setattr("harness.config.harness_setting", lambda *a, **kw: None)
+    monkeypatch.setattr("harness.config.load", lambda: {})
+    # _compress_model_name falls back to the worker model env when COMPRESS_MODEL
+    # is unset; assert PROXY_MODEL is now seen.
+    assert compress_cli._compress_model_name() == "haiku-x"
+
+
 def test_base_url_and_api_key_dual_name(monkeypatch):
     monkeypatch.delenv("VIBEPROXY_BASE_URL", raising=False)
     monkeypatch.setenv("PROXY_BASE_URL", "http://x/v1")
