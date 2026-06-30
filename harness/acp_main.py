@@ -27,11 +27,23 @@ def _load_agent_cfg() -> dict:
 
 def _stub_complete(system: str, user: str) -> str:
     """Deterministic, offline replacement for the Router's `complete` (used only
-    when HARNESS_ROUTER_STUB=1). Returns a fixed chat_question classification as
-    JSON — no VibeProxy call — so tests are fast and non-flaky."""
+    when HARNESS_ROUTER_STUB=1) — no VibeProxy call, so tests are fast and
+    non-flaky.
+
+    Prompt-aware so it serves BOTH chat and agent test paths: an imperative
+    prompt (starts with a task verb like "fix"/"add"/"implement") classifies as
+    `code_fix` (→ the agent/dispatch path); anything else stays `chat_question`
+    (→ the chat path). This is a coarse heuristic for tests, not the real
+    classifier — questions ("what is 1+1") stay chat; commands ("Fix the failing
+    test…") route to the agent."""
     import json
+    _TASK_VERBS = ("fix", "add", "implement", "create", "write", "refactor",
+                   "rename", "remove", "delete", "update", "change", "build",
+                   "make", "patch", "generate")
+    first = user.strip().split(None, 1)[0].lower() if user.strip() else ""
+    task_type = "code_fix" if first in _TASK_VERBS else "chat_question"
     return json.dumps({
-        "task_type": "chat_question",
+        "task_type": task_type,
         "skills": [],
         "confidence": 1.0,
         "suggested_model": None,
