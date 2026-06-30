@@ -32,3 +32,20 @@ def test_cached_body_misses_when_source_changes(monkeypatch, tmp_path):
 def test_cached_body_never_raises_on_missing_dir(monkeypatch, tmp_path):
     _redirect(monkeypatch, tmp_path / "does-not-exist")
     assert skill_cache.cached_body("anything") is None
+
+
+def test_cached_body_never_raises_on_corrupt_file(monkeypatch, tmp_path):
+    _redirect(monkeypatch, tmp_path)
+    skill_cache.store_body("src", "valid")
+    path = skill_cache.cache_path("src")
+    path.write_bytes(b"\x80\x81\x82")   # invalid UTF-8
+    assert skill_cache.cached_body("src") is None    # must return None, not raise
+
+
+def test_cached_body_misses_when_rules_version_changes(monkeypatch, tmp_path):
+    _redirect(monkeypatch, tmp_path)
+    src = "my body"
+    skill_cache.store_body(src, "compressed v1")
+    assert skill_cache.cached_body(src) == "compressed v1"
+    monkeypatch.setattr(rules, "rules_sha256", lambda: "1" * 64)
+    assert skill_cache.cached_body(src) is None       # rules bump -> key change -> miss

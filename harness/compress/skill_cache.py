@@ -20,7 +20,7 @@ def cache_dir() -> Path:
 def cache_key(source_body: str) -> str:
     src_sha = hashlib.sha256(source_body.encode()).hexdigest()
     material = (src_sha + rules.rules_sha256()).encode()
-    return hashlib.sha256(material).hexdigest()[:16]
+    return hashlib.sha256(material).hexdigest()[:16]  # 64-bit entropy (first 16 hex chars)
 
 
 def cache_path(source_body: str) -> Path:
@@ -31,7 +31,7 @@ def cached_body(source_body: str) -> str | None:
     """The compressed body for this source+rules, or None on miss/error."""
     try:
         return cache_path(source_body).read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return None
 
 
