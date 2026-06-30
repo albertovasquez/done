@@ -234,6 +234,52 @@ def test_registry_has_yolo():
     assert "yolo" in names
 
 
+def test_registry_has_compress_aware():
+    names = {c.name for c in build_registry()}
+    assert "compress-aware" in names
+
+
+def test_resolve_compress_aware_by_name():
+    from harness.tui.commands import resolve_command
+    cmds = build_registry()
+    cmd = resolve_command(cmds, "compress-aware")
+    assert cmd is not None and cmd.name == "compress-aware"
+
+
+def test_compress_aware_handler_dispatches_on_arg():
+    import asyncio
+    from harness.tui.commands import build_registry
+
+    class _App:
+        def __init__(self): self.calls = []
+        def action_toggle_compress_aware(self): self.calls.append("toggle")
+        def action_compress_aware_pin(self): self.calls.append("pin")
+        def action_compress_aware_unpin(self): self.calls.append("unpin")
+        def _notify_line(self, m): self.calls.append(("notify", m))
+
+    reg = {c.name: c for c in build_registry()}
+    app = _App()
+    asyncio.run(reg["compress-aware"].handler(app, ""))
+    asyncio.run(reg["compress-aware"].handler(app, "pin"))
+    asyncio.run(reg["compress-aware"].handler(app, "unpin"))
+    assert app.calls[:3] == ["toggle", "pin", "unpin"]
+
+
+def test_compress_aware_handler_unknown_arg_notifies():
+    import asyncio
+    from harness.tui.commands import build_registry
+
+    class _App:
+        def __init__(self): self.calls = []
+        def _notify_line(self, m): self.calls.append(("notify", m))
+
+    reg = {c.name: c for c in build_registry()}
+    app = _App()
+    asyncio.run(reg["compress-aware"].handler(app, "badarg"))
+    assert app.calls and app.calls[0][0] == "notify"
+    assert "usage" in app.calls[0][1]
+
+
 def test_yolo_handler_dispatches_on_arg():
     import asyncio
     from harness.tui.commands import build_registry

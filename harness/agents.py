@@ -10,9 +10,16 @@ from dataclasses import dataclass, field
 import logging
 from pathlib import Path
 
+from harness import config as _config
+from harness.compress import loader as _compress_loader
 from harness.textgate import _meaningful, _trim
 
 logger = logging.getLogger("harness.agents")
+
+
+def _compress_on_dir(dir_) -> bool:
+    """Tier dirs aren't persona-keyed; use the default pinned flag."""
+    return _config.compress_aware_pinned("default")
 
 AGENTS_FILE = "AGENTS.md"
 MAX_AGENTS_CHARS = 8000          # per-tier trim cap (memory's order of magnitude)
@@ -37,7 +44,7 @@ def _read_tier(dir_: Path | None, label: str, load: AgentsLoad) -> str | None:
         return None
     path = Path(dir_) / AGENTS_FILE
     try:
-        raw = path.read_text(encoding="utf-8")
+        raw = _compress_loader.load_context_file(path, mode_on=_compress_on_dir(dir_), strict_encoding=True)
     except FileNotFoundError:
         return None
     except (OSError, UnicodeDecodeError) as e:

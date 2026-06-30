@@ -89,6 +89,9 @@ def main(argv=None) -> int | None:
     if raw and raw[0] == "cron":
         from harness.jobs import cli
         return cli.run(raw[1:])
+    if raw and raw[0] == "compress":
+        from harness import compress_cli
+        return compress_cli.run(raw[1:])
     parser = argparse.ArgumentParser(description="Harness Textual ACP client")
     parser.add_argument("--model", choices=["mock", "vibeproxy"], default=None)
     parser.add_argument("--cwd", default=None,

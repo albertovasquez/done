@@ -111,6 +111,9 @@ class HarnessTui(App):
         # launched with `--persona fred` shows fred's pin. (Also used to highlight the
         # launched persona in the rail before the first turn — see _current_persona.)
         self._yolo_pinned = _config.yolo_pinned(self._launch_persona)
+        # Compress-aware mode: default ON; pinned value IS the launch default.
+        self._compress_aware = _config.compress_aware_pinned(self._launch_persona)
+        self._compress_aware_pinned = self._compress_aware
         self._client = TuiClient(self)
         self._conn = None
         self._cm = None                       # the spawn_agent_process context manager
@@ -411,6 +414,9 @@ class HarnessTui(App):
         chip = StatusChip.for_yolo(self._yolo, self._yolo_pinned)
         chip.id = "statusbar-mode"
         await bar.mount(chip)
+        ca_chip = StatusChip.for_compress_aware(self._compress_aware, self._compress_aware_pinned)
+        ca_chip.id = "statusbar-compress-aware"
+        await bar.mount(ca_chip)
         await bar.mount(Static(self._status_persona(), id="statusbar-persona", markup=True))
         await bar.mount(Static(self._status_left(), id="statusbar-left", markup=True))
         await bar.mount(Static(self._status_right(), id="statusbar-right", markup=True))
@@ -547,12 +553,52 @@ class HarnessTui(App):
         except Exception:
             return None
 
+    # ---- Compress-aware mode chip (clickable footer chip; mirrors YOLO pattern) ----
+
+    def _refresh_compress_aware_chip(self) -> None:
+        """Re-render the compress-aware footer chip in place from the current live
+        + pin state (mirrors _refresh_yolo_chip: update one widget, no full re-render)."""
+        try:
+            chip = self.query_one("#statusbar-compress-aware", StatusChip)
+        except Exception:
+            return
+        fresh = StatusChip.for_compress_aware(self._compress_aware, self._compress_aware_pinned)
+        chip._label = fresh._label
+        chip._token = fresh._token
+        chip.update(fresh._Static__content)
+
+    def action_toggle_compress_aware(self) -> None:
+        """Flip the live compress-aware gate. Persisting is a separate gesture
+        (action_compress_aware_pin); a click never changes the pin."""
+        self._compress_aware = not self._compress_aware
+        self._refresh_compress_aware_chip()
+
+    def action_compress_aware_pin(self) -> None:
+        """Persist 'always launch with compress-aware on'. Sets the live value and
+        pin marker, then writes to config. Honors the YOLO contract: pin is a
+        deliberate separate gesture, not triggered by a plain toggle/click."""
+        self._compress_aware = True
+        self._compress_aware_pinned = True
+        self._refresh_compress_aware_chip()
+        _config.set_compress_aware(self._launch_persona, True)
+
+    def action_compress_aware_unpin(self) -> None:
+        """Stop auto-launching with compress-aware. Leaves the live state alone."""
+        self._compress_aware_pinned = False
+        self._refresh_compress_aware_chip()
+        _config.set_compress_aware(self._launch_persona, False)
+
     def on_click(self, event) -> None:
         # Footer mode chip: a click anywhere on it toggles YOLO. Guard on the id
         # so other clicks are unaffected.
         widget = getattr(event, "widget", None)
         if widget is not None and getattr(widget, "id", None) == "statusbar-mode":
             self.action_toggle_yolo()
+            return
+        # Compress-aware chip: a click toggles the live gate (never persists —
+        # same YOLO contract: pin is a separate gesture via /compress-aware pin).
+        if widget is not None and getattr(widget, "id", None) == "statusbar-compress-aware":
+            self.action_toggle_compress_aware()
             return
         # Turn footer: a click copies that turn's response and flips "(copy)" to
         # "(copied)". Guard on the _copyable marker so only turn footers respond.

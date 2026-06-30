@@ -6,6 +6,11 @@ CONTENT-GATED: it is empty unless at least one memory file has real content, so 
 seeded-but-unused default persona stays byte-identical (the Phase A no-op). When
 non-empty, the block carries a protocol preamble teaching the agent how to write
 to its memory via plain shell.
+
+``compress_on_write`` is the SANCTIONED helper for writing memory files with
+optional compression. It is intentionally exposed but NOT wired into any
+Write/Edit tool dispatch path — routing the agent's memory writes through it is
+a deferred follow-up (tracked in issue #186).
 """
 
 from __future__ import annotations
@@ -17,6 +22,9 @@ from pathlib import Path
 
 import yaml
 
+from harness import config as _config
+from harness.compress import engine as _compress_engine
+from harness.compress import loader as _compress_loader
 from harness.textgate import _meaningful, _trim
 
 MEMORY_FILE = "MEMORY.md"
@@ -26,6 +34,37 @@ MAX_MEMORY_CHARS = 8000
 # Daily notes are YYYY-MM-DD[.-slug].md; typed facts are arbitrary slugs. The
 # manifest lists facts only, so daily notes are excluded by this shape.
 _DAILY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}")
+
+
+def _compress_on(workspace_dir) -> bool:
+    """Return whether compress-aware mode is active for the given workspace."""
+    persona_id = workspace_dir.name if workspace_dir else "default"
+    return _config.compress_aware_pinned(persona_id)
+
+
+def compress_on_write(path: Path, text: str, *, call_model) -> None:
+    """Write ``text`` to ``path``, compressing first when compress-aware mode is ON.
+
+    Safety invariant: if compression raises ``CompressionError`` (e.g. the model
+    dropped a URL), the original verbose ``text`` is written instead — content is
+    never lost on failure.  When mode is OFF, ``text`` is written verbatim.
+
+    This is the SANCTIONED helper for memory file writes.  Routing the agent's
+    own Write/Edit tool calls through this helper is deferred (issue #186).
+
+    Non-CompressionError exceptions (e.g. call_model raising) propagate and leave
+    memory UNWRITTEN — caller must handle (documented, intentional; spec only
+    guarantees fallback on CompressionError).
+    """
+    path = Path(path)
+    if not _compress_on(path.parent):  # path.parent is workspace dir; path.name would be "MEMORY.md" (wrong key)
+        path.write_text(text)
+        return
+    try:
+        out = _compress_engine.compress_text(text, call_model=call_model)
+    except _compress_engine.CompressionError:
+        out = text  # fallback: never lose content on failure
+    path.write_text(out)
 
 
 @dataclass
@@ -209,12 +248,12 @@ def _protocol(workspace: Path) -> str:
 
 
 def _read_section(workspace: Path, rel: str, label: str,
-                  load: MemoryLoad) -> str | None:
+                  load: MemoryLoad, *, mode_on: bool = False) -> str | None:
     """Read one memory file; return its '## label\\nbody' section, or None when
     missing/blank/inert/unreadable (recording skips). Never raises."""
     path = workspace / rel
     try:
-        raw = path.read_text(encoding="utf-8")
+        raw = _compress_loader.load_context_file(path, mode_on=mode_on, strict_encoding=True)
     except FileNotFoundError:
         return None
     except (OSError, UnicodeDecodeError) as e:
@@ -246,7 +285,9 @@ def resolve_memory(workspace_dir: Path | None, *, today: date) -> MemoryLoad:
         (f"{MEMORY_DIR}/{today.isoformat()}.md", f"memory/{today.isoformat()}"),
         (f"{MEMORY_DIR}/{yesterday.isoformat()}.md", f"memory/{yesterday.isoformat()}"),
     ]:
-        section = _read_section(workspace, rel, label, load)
+        is_memory_file = rel == MEMORY_FILE
+        section = _read_section(workspace, rel, label, load,
+                                mode_on=_compress_on(workspace) if is_memory_file else False)
         if section is not None:
             sections.append(section)
     # The typed-fact MENU makes per-fact files DISCOVERABLE — without it the agent

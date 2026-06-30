@@ -16,12 +16,21 @@ from harness import paths
 from harness import persona_config
 from harness import persona_select   # _VALID_ID, RESERVED_KEY, InvalidPersonaId
 from harness import skills
+from harness import config as _config
+from harness.compress import loader as _compress_loader
 # Content-gate helpers live in the leaf textgate module so agents.py can reuse
 # them without importing persona (which would cycle). Re-exported here for any
 # existing `from harness.persona import _meaningful/_trim` caller (e.g. memory).
 from harness.textgate import _meaningful, _trim, _HTML_COMMENT  # noqa: F401
 
 logger = logging.getLogger("harness.persona")
+
+
+def _compress_on(workspace_dir) -> bool:
+    """Return whether compress-aware mode is active for the given workspace."""
+    persona_id = workspace_dir.name if workspace_dir else "default"
+    return _config.compress_aware_pinned(persona_id)
+
 
 PERSONA_FILES = ["SOUL.md", "IDENTITY.md", "USER.md"]   # order = injection order
 MAX_FILE_CHARS = 8000                                   # per-file trim ceiling
@@ -252,7 +261,7 @@ def compose_persona(workspace_dir: Path) -> PersonaLoad:
     for name in PERSONA_FILES:
         path = workspace_dir / name
         try:
-            raw = path.read_text(encoding="utf-8")   # OSError if missing, UnicodeDecodeError if binary
+            raw = _compress_loader.load_context_file(path, mode_on=_compress_on(workspace_dir), strict_encoding=True)
         except FileNotFoundError:
             continue                                  # missing file is silent (like skills)
         except (OSError, UnicodeDecodeError) as e:
