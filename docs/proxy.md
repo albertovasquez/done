@@ -32,9 +32,11 @@ dn proxy login claude        # Alias for anthropic — opens your browser
 dn proxy login codex         # Opens your browser
 ```
 
-If you don't have a browser (headless/SSH), the login command prints the OAuth URL
-and polls for authentication — copy the URL to a browser on another machine and
-return to complete the flow.
+`dn proxy login` briefly stops the proxy, runs CLIProxyAPI's own foreground OAuth
+login (which opens your browser and prints the OAuth URL if no browser is
+available), then restarts the proxy so it picks up the new credentials. The
+service must be stopped during login — a running proxy collides with the OAuth
+callback — so a quick restart is normal and expected.
 
 Check which providers are authenticated:
 

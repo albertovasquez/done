@@ -14,10 +14,16 @@ def generate(port: int = 8317, *, env=None) -> str:
     # bcrypt-hashed on boot and unusable thereafter).
     if env is None:
         env = os.environ
+    # auth-dir pins where OAuth tokens (auths/*.json) are written and read. Without
+    # it CLIProxyAPI defaults to ./auths relative to the process cwd, so the
+    # `dn proxy login` foreground process and the background service would write to
+    # different places and not share credentials. Pin both to the harness data dir.
+    auths_dir = paths.data_dir() / "auths"
     base = (
         'host: "127.0.0.1"\n'
         f"port: {port}\n"
         "api-keys: []\n"
+        f'auth-dir: "{auths_dir}"\n'
         "remote-management:\n"
         "  allow-remote: false\n"
     )

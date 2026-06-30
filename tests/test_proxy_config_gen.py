@@ -31,3 +31,11 @@ def test_generate_includes_neuralwatt_when_key_set():
 def test_generate_omits_neuralwatt_when_key_absent():
     y = config_gen.generate(env={})
     assert "openai-compatibility" not in y
+
+
+def test_generate_pins_auth_dir(tmp_path, monkeypatch):
+    """auth-dir must be set so the foreground login and the background service
+    share the same auths/ token directory (otherwise tokens diverge by cwd)."""
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path)
+    y = config_gen.generate(env={})
+    assert f'auth-dir: "{tmp_path / "auths"}"' in y

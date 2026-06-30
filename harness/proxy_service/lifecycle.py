@@ -6,7 +6,7 @@ upgrade()   — re-downloads binary then stop + start.
 uninstall() — stop + deregister OS service + remove data dir.
 start()     — start via OS service manager.
 stop()      — stop via OS service manager.
-login()     — browser-OAuth (anthropic/codex, claude alias): auto-start + run_cli_login.
+login()     — stop service, run foreground `cli-proxy-api -<provider>-login`, restart.
 """
 from __future__ import annotations
 
@@ -287,6 +287,16 @@ def _run(argv: list[str]) -> tuple[int, str]:
     return p.returncode, (p.stderr or p.stdout).strip()
 
 
+def _run_interactive(argv: list[str]) -> tuple[int, str]:
+    """Shell-out seam for an INTERACTIVE child (the OAuth login): inherits the
+    terminal so the user sees "Opening browser…/Authentication successful!" and
+    the browser opens. Separate from _run (which captures, for quiet service
+    commands). Tests monkeypatch this to avoid launching a real browser.
+    """
+    p = subprocess.run(argv)                     # no capture: child uses our stdio
+    return p.returncode, ""
+
+
 def start() -> str:
     """Start the CLIProxyAPI service via OS manager."""
     sysname = platform.system()
@@ -319,38 +329,51 @@ def stop() -> str:
 # Browser-auth login (browser-OAuth providers: anthropic, codex)
 # ---------------------------------------------------------------------------
 
-_LOGIN_PROVIDERS = {"anthropic", "codex"}   # browser-OAuth set in scope (claude=anthropic)
+# Provider id → the binary's foreground login flag. "claude" is an alias for
+# "anthropic". These run the OAuth flow IN the binary process (it opens the
+# browser, owns its own callback listener, and saves the token), which is the
+# only reliable mechanism: the management-API auth-url + poll flow fails because
+# the running service and the callback collide.
+_LOGIN_FLAGS = {"anthropic": "-claude-login", "codex": "-codex-login"}
 
 
 def login(provider: str | None = None) -> str:
-    """Start the browser-OAuth login flow for the given provider.
+    """Authenticate a provider via CLIProxyAPI's foreground OAuth login.
 
-    Auto-starts the proxy if it is not yet running. Accepts "claude" as an
-    alias for "anthropic" (Claude's provider id in CLIProxyAPI).
+    Stops the background service, runs `cli-proxy-api -<provider>-login` (which
+    opens the browser and owns its own callback), then restarts the service so it
+    picks up the new token. The service MUST be stopped during login — a running
+    service collides with the foreground callback and the redirect is refused.
+
+    Accepts "claude" as an alias for "anthropic".
     """
-    # Friendly alias: "claude" → "anthropic"
+    # Friendly alias: "claude" → "anthropic".
     if provider == "claude":
         provider = "anthropic"
-    if provider is None or provider not in _LOGIN_PROVIDERS:
-        return f"dn proxy login: choose a provider from: {', '.join(sorted(_LOGIN_PROVIDERS))}"
-    pw = config_gen.ensure_management_password()
-    if not management.is_ready(pw):
-        # Try to bring the service up. If it was never installed, start() just
-        # returns a failure string we don't propagate — the readiness check below
-        # is the real gate.
-        start()
-        # Brief readiness wait — give the daemon a moment to come up.
-        for _ in range(10):
-            if management.is_ready(pw):
-                break
-            time.sleep(1)
-    # If the proxy still isn't reachable, there's nothing to authenticate
-    # against. Return a clear instruction instead of letting the auth-url HTTP
-    # call crash with a ConnectionRefused traceback.
-    if not management.is_ready(pw):
-        return ("dn proxy login: CLIProxyAPI is not running on localhost:8317. "
-                "Run `dn proxy install` first (it downloads and starts the proxy), "
-                "then re-run `dn proxy login`.")
-    from harness.proxy_service import login as login_mod
-    ok = login_mod.run_cli_login(provider, pw)
-    return f"{provider}: authenticated" if ok else f"{provider}: sign-in not completed"
+    if provider is None or provider not in _LOGIN_FLAGS:
+        valid = ", ".join(sorted(_LOGIN_FLAGS))
+        return f"dn proxy login: choose a provider from: {valid}"
+
+    bin_path = binary.target_path()
+    if not bin_path.exists():
+        return ("dn proxy login: CLIProxyAPI binary not found. "
+                "Run `dn proxy install` first, then re-run `dn proxy login`.")
+
+    # Stop the service so the foreground login owns its callback. Restart it
+    # afterward no matter what, so a failed login never leaves the proxy down.
+    config_gen.ensure_management_password()      # ensure config/secret exist
+    stop()
+    try:
+        flag = _LOGIN_FLAGS[provider]
+        cfg = str(paths.config_path())
+        try:
+            rc, err = _run_interactive([str(bin_path), flag, "-config", cfg])
+        except Exception as exc:                 # pragma: no cover - defensive
+            rc, err = 1, str(exc)
+    finally:
+        start()                                  # bring the service back up
+
+    if rc == 0:
+        return (f"{provider}: authenticated. The proxy has been restarted and now "
+                f"serves this provider's models.")
+    return f"{provider}: sign-in did not complete ({err}). Re-run `dn proxy login {provider}`."
