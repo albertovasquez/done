@@ -425,7 +425,7 @@ def test_load_session_replays_history(tmp_path):
     Uses HARNESS_ROUTER_STUB=1 so classification is deterministic and OFFLINE —
     the replay logic this test exercises is classification-independent, and the
     previous live-VibeProxy classification round-trips made it slow + flaky. The
-    agent subprocess inherits this env var.
+    agent subprocess receives this env var explicitly via spawn's env= (see below).
     """
     # spawn_agent_process builds the child env from acp.default_environment() and
     # only merges what's passed via env=; it does NOT inherit the parent process

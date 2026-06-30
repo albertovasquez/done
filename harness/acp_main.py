@@ -35,12 +35,20 @@ def _stub_complete(system: str, user: str) -> str:
     `code_fix` (→ the agent/dispatch path); anything else stays `chat_question`
     (→ the chat path). This is a coarse heuristic for tests, not the real
     classifier — questions ("what is 1+1") stay chat; commands ("Fix the failing
-    test…") route to the agent."""
+    test…") route to the agent.
+
+    Router.classify wraps the prompt with a history preamble when prior turns
+    exist ("Recent context …\n\nClassify THIS request: <prompt>"). Read the actual
+    request after that marker so a follow-up COMMAND classifies the same with or
+    without history — otherwise the first word would be "Recent" and every
+    follow-up would mis-route to chat."""
     import json
+    _MARKER = "Classify THIS request:"
+    request = user.rsplit(_MARKER, 1)[-1] if _MARKER in user else user
     _TASK_VERBS = ("fix", "add", "implement", "create", "write", "refactor",
                    "rename", "remove", "delete", "update", "change", "build",
                    "make", "patch", "generate")
-    first = user.strip().split(None, 1)[0].lower() if user.strip() else ""
+    first = request.strip().split(None, 1)[0].lower() if request.strip() else ""
     task_type = "code_fix" if first in _TASK_VERBS else "chat_question"
     return json.dumps({
         "task_type": task_type,
