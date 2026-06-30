@@ -62,6 +62,22 @@ def test_rebuild_one_writes_fresh_sibling(tmp_path):
     assert sibling.freshness(src.read_text(), sib.read_text()) == "fresh"
 
 
+def test_rebuild_one_returns_error_on_model_failure(tmp_path):
+    # A model/network failure (e.g. the proxy is down) must NOT crash the CLI.
+    # rebuild_one returns a single-line "error: <reason>" status and writes no
+    # sibling, so `dn compress` can print it cleanly instead of a stack trace.
+    src = tmp_path / "AGENTS.md"
+    src.write_text("some prose")
+
+    def boom(prompt):
+        raise RuntimeError("Connection refused")   # stand-in for litellm InternalServerError
+
+    out = compress_cli.rebuild_one(src, call_model=boom, today="2026-06-29")
+    assert out.startswith("error:")
+    assert "Connection refused" in out
+    assert not sibling.sibling_path(src).exists()   # no sibling written on failure
+
+
 def test_status_line_reports_stale(tmp_path):
     src = tmp_path / "AGENTS.md"
     src.write_text("original")

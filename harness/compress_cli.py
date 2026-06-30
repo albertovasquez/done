@@ -18,9 +18,13 @@ def rebuild_one(source: Path, *, call_model, today: str) -> str:
     """Compress *source* and write its sibling.
 
     Returns:
-      "built"   — sibling written successfully.
-      "skipped" — source does not exist.
-      "failed"  — compress_text raised CompressionError (sibling NOT written).
+      "built"          — sibling written successfully.
+      "skipped"        — source does not exist.
+      "failed"         — compress_text raised CompressionError (sibling NOT written).
+      "error: <reason>" — the model call failed (e.g. the proxy is down / a network
+                          error). Single-line, no sibling written. Returned rather
+                          than raised so `dn compress` prints a clean line instead of
+                          a traceback.
     """
     source = Path(source)
     if not source.exists():
@@ -30,6 +34,11 @@ def rebuild_one(source: Path, *, call_model, today: str) -> str:
         body = engine.compress_text(original, call_model=call_model)
     except engine.CompressionError:
         return "failed"
+    except Exception as e:
+        # Model/network failure (litellm InternalServerError, connection refused,
+        # etc.). Degrade gracefully: report a one-line reason, write no sibling.
+        reason = str(e).splitlines()[0] if str(e) else type(e).__name__
+        return f"error: {reason[:200]}"
     sibling.write_sibling(source, body, today=today)
     return "built"
 
