@@ -297,3 +297,74 @@ def test_failure_records_streamed_buffer_not_prior_turn(tmp_path, caplog):
     assert any(m["content"] == "OLD ANSWER" for m in transcript), (
         "prior transcript must be preserved, not overwritten"
     )
+
+
+class _TwoStepStreamingModel(DeterministicToolcallModel):
+    """Two real model outputs → two query() calls → two real n_calls increments
+    (TracingAgent.query() bumps n_calls BEFORE model.query() fires on_delta — see
+    tracing_agent.py query(): `self.n_calls += 1` precedes `self.model.query(...)`).
+    Step 1 streams 'A' then returns a non-submit echo so the loop continues; step 2
+    streams 'B' then returns the submit echo so the loop exits. This gives a real
+    step boundary between 'A' and 'B', exercised the same way the production loop
+    advances n_calls per step — no hand-mutated counters."""
+
+    def __init__(self):
+        out1 = make_toolcall_output(
+            "A",
+            [{"id": "call_0", "type": "function",
+              "function": {"name": "bash",
+                           "arguments": '{"command": "echo step1"}'}}],
+            [{"command": "echo step1", "tool_call_id": "call_0"}],
+        )
+        out1["extra"]["cost"] = 0.0
+        out2 = make_toolcall_output(
+            "B",
+            [{"id": "call_1", "type": "function",
+              "function": {"name": "bash",
+                           "arguments": '{"command": "' + _SUBMIT + '"}'}}],
+            [{"command": _SUBMIT, "tool_call_id": "call_1"}],
+        )
+        out2["extra"]["cost"] = 0.0
+        super().__init__(outputs=[out1, out2], cost_per_call=0.0)
+        self._deltas = ["A", "B"]
+        self.on_delta = None
+
+    def query(self, messages, **kw):
+        # current_index is -1 before the first call → this call's step's prose.
+        idx = self.current_index + 1
+        if self.on_delta and idx < len(self._deltas):
+            self.on_delta(self._deltas[idx])
+        return super().query(messages, **kw)
+
+
+def test_prose_flushed_before_step_boundary(tmp_path):
+    """A step boundary must never overtake prose buffered before it: on the wire,
+    'A' (step-1 prose) precedes the stream_reset boundary, which precedes 'B'
+    (step-2 prose)."""
+    conn = RecordingConn()
+    model = _TwoStepStreamingModel()
+    agent = _build(model, conn)
+    sid = agent._store.new(cwd=str(tmp_path))
+
+    resp = _prompt(agent, sid, "fix the bug")
+    assert resp.stop_reason == "end_turn", f"unexpected stop_reason: {resp.stop_reason}"
+
+    # Build the ordered event stream: each update is either prose text or a boundary.
+    seq = []
+    for u in conn.updates:
+        txt = getattr(getattr(u, "content", None), "text", "") or ""
+        meta = getattr(u, "field_meta", None) or {}
+        harness = meta.get("harness", {}) if isinstance(meta, dict) else {}
+        is_boundary = isinstance(harness, dict) and harness.get("stream_reset")
+        if is_boundary:
+            seq.append("<RESET>")
+        elif txt:
+            seq.append(txt)
+
+    a_idx = next(i for i, s in enumerate(seq) if s != "<RESET>" and "A" in s)
+    b_idx = next(i for i, s in enumerate(seq) if s != "<RESET>" and "B" in s)
+    reset_idxs = [i for i, s in enumerate(seq) if s == "<RESET>"]
+    assert reset_idxs, f"expected at least one stream_reset boundary, got seq = {seq!r}"
+    assert a_idx < reset_idxs[-1] < b_idx, (
+        f"boundary reordered relative to prose: seq = {seq!r}"
+    )

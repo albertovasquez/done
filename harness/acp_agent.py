@@ -625,9 +625,9 @@ class HarnessAgent(acp.Agent):
         # failure-case transcript). Prose accumulates here on the worker thread and
         # is drained to the wire at ~80ms (matching the TUI's 12Hz render), so we
         # stop blocking the worker thread on a per-token RPC round-trip. Ordering
-        # vs. boundaries/tool/plan events will be preserved once those emitters
-        # flush this buffer first (a later task wires _flush_prose_sync into
-        # them); for now the only flush is at turn end.
+        # vs. boundaries/tool/plan events is preserved because emit_step_boundary,
+        # on_command, and on_plan all flush this buffer first (see
+        # _flush_prose_sync calls below), plus a final flush at turn end.
         prose = {"buf": ""}
         prose_lock = threading.Lock()
 
@@ -644,6 +644,9 @@ class HarnessAgent(acp.Agent):
             asyncio.run_coroutine_threadsafe(_flush_prose(), loop).result()
 
         def emit_step_boundary() -> None:
+            # Drain pending prose FIRST so this boundary lands after the prose that
+            # preceded it on the wire (ordering invariant). Then emit the boundary.
+            _flush_prose_sync()
             # tell the TUI: a NEW prose block begins (close any open one).
             upd = with_meta(message_chunk(""), {"stream_reset": True})
             asyncio.run_coroutine_threadsafe(
@@ -675,7 +678,10 @@ class HarnessAgent(acp.Agent):
                 prose["buf"] += piece
 
         def on_command(phase: str, command: str, out: dict | None) -> None:
-            # runs on the worker thread → marshal to the loop and block until sent
+            # runs on the worker thread → marshal to the loop and block until sent.
+            # Flush pending prose FIRST so a tool-call event never overtakes the
+            # prose that preceded it.
+            _flush_prose_sync()
             if phase == "start":
                 tc["n"] += 1
                 tc["id"] = f"tc{tc['n']}"
@@ -692,7 +698,9 @@ class HarnessAgent(acp.Agent):
 
         def on_plan(entries: list[tuple[str, str]]) -> None:
             # runs on the worker thread → marshal the ACP plan update to the loop.
-            # Full-snapshot replace: the agent re-emits the whole list each time.
+            # Flush pending prose FIRST (ordering invariant). Full-snapshot replace:
+            # the agent re-emits the whole list each time.
+            _flush_prose_sync()
             asyncio.run_coroutine_threadsafe(
                 self._conn.session_update(session_id, plan_update(entries)), loop).result()
 
