@@ -144,3 +144,43 @@ def test_report_disconnect_unknown_when_returncode_none():
 
     out = _drive_report(app, ConnectionError("x"))
     assert "exit status unknown" in out, out
+
+
+def test_report_disconnect_propagates_outer_cancellation():
+    """Cancelling the WORKER running _report_disconnect (e.g. workers.cancel_all()
+    during teardown) must actually stop it — not be swallowed by the flush guard.
+    The shielded drain task itself must be left running (shield's whole point)."""
+    app = _bare_app()
+    app._proc = _Proc(None, returncode=-signal.SIGSEGV)
+
+    async def go():
+        app._captured_lines = []
+        app._append_line = lambda s: app._captured_lines.append(s)
+        drain_task = asyncio.create_task(asyncio.sleep(10))
+        app._stderr_task = drain_task
+
+        report_task = asyncio.create_task(app._report_disconnect(ConnectionError("x")))
+        await asyncio.sleep(0.05)          # let the handler park at the shielded wait_for
+        report_task.cancel()
+
+        raised = None
+        try:
+            await report_task
+        except asyncio.CancelledError as e:
+            raised = e
+
+        was_cancelled = drain_task.cancelled()
+        was_done = drain_task.done()
+
+        drain_task.cancel()                # cleanup: avoid "task was destroyed" warnings
+        try:
+            await drain_task
+        except asyncio.CancelledError:
+            pass
+
+        return raised, was_cancelled, was_done
+
+    raised, drain_was_cancelled, drain_was_done = asyncio.run(go())
+    assert isinstance(raised, asyncio.CancelledError), raised   # not swallowed
+    assert not drain_was_cancelled, "shield() must protect the drain task from the outer cancel"
+    assert not drain_was_done, "drain task should still be pending (shielded)"

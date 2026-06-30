@@ -1206,11 +1206,13 @@ class HarnessTui(App):
         if task is not None and not task.done():
             try:
                 await asyncio.wait_for(asyncio.shield(task), timeout=0.5)
-            # CancelledError is BaseException-derived (NOT caught by Exception in
-            # 3.11, verified) — list it explicitly so a cancel while we wait is
-            # swallowed too. Diagnostics are best-effort: never block or re-raise.
-            except (asyncio.CancelledError, Exception):
-                pass
+            except TimeoutError:
+                pass                    # 0.5s budget expired; drain keeps running (shielded)
+            except Exception:
+                pass                    # drain task itself raised; nothing to do here
+            # NOTE: do NOT catch asyncio.CancelledError — it is BaseException-derived
+            # and must propagate so cancellation of THIS worker (e.g. workers.cancel_all()
+            # during teardown) actually takes effect. shield() already protects the drain.
         # 2) Resolve the exit cause. (asyncio.TimeoutError IS an Exception in
         #    3.11 — it is the builtin TimeoutError — so `except Exception` covers
         #    the wait() timeout; a None rc just renders "exit status unknown".)
