@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import asyncio
 import os
+import signal
 import time
+from collections import deque
 from typing import Any
 
 import acp
@@ -121,6 +123,7 @@ class HarnessTui(App):
         self._conn = None
         self._cm = None                       # the spawn_agent_process context manager
         self._proc = None                     # the agent subprocess (for stderr drain)
+        self._stderr_tail = deque(maxlen=20)  # last agent stderr lines, for disconnect diagnostics
         self._stderr_task = None              # background task draining the agent's stderr
         self._session_id = None
         self._gen = 0                         # session generation; bumped each _connect
@@ -283,6 +286,7 @@ class HarnessTui(App):
         # write — mid-turn, after streaming chat.done but before writing the prompt
         # RESPONSE frame — so our await prompt() never resolves ("Responding…"
         # sticks, composer locks). Continuously drain it so the buffer never fills.
+        self._stderr_tail.clear()  # fresh buffer per process: never misattribute a prior process's stderr
         self._stderr_task = asyncio.create_task(self._drain_stderr(self._proc))
         try:
             await self._conn.initialize(
@@ -308,9 +312,10 @@ class HarnessTui(App):
                 line = await stderr.readline()
                 if not line:
                     break                              # EOF: agent exited
+                text = line.decode("utf-8", "replace").rstrip("\n")
+                self._stderr_tail.append(text)         # always buffer (independent of --debug)
                 if self._tracer is not None:
-                    self._tracer.emit("agent", "stderr",
-                                      text=line.decode("utf-8", "replace").rstrip("\n"))
+                    self._tracer.emit("agent", "stderr", text=text)
         except asyncio.CancelledError:
             raise                                      # teardown cancelled us — propagate
         except Exception:
@@ -1139,6 +1144,21 @@ class HarnessTui(App):
     def _escape(s: str) -> str:
         return s.replace("[", "\\[")
 
+    @staticmethod
+    def _format_exit(returncode: int | None) -> str:
+        """Render a subprocess returncode as a human-readable exit cause.
+        POSIX: None = not yet exited/unreaped, >=0 = exit code, <0 = killed by signal -rc."""
+        if returncode is None:
+            return "exit status unknown"
+        if returncode >= 0:
+            return f"exited with code {returncode}"
+        signum = -returncode
+        try:
+            name = signal.Signals(signum).name
+        except ValueError:
+            return f"killed by signal {signum}"
+        return f"killed by {name}"
+
     async def _send_prompt(self, text: str) -> None:
         # The prior answer's stream was already closed by _add_user_message (which
         # runs before this on a new turn). Closing keeps the widget reference so a
@@ -1158,7 +1178,7 @@ class HarnessTui(App):
                 self._append_line(_c("muted", f"— turn ended: {resp.stop_reason} —"))
         except Exception as e:
             self._apply(TurnEnded(ok=False))
-            self._append_line(_c("error", f"agent disconnected — restart to continue ({e})"))
+            await self._report_disconnect(e)
         finally:
             self._turn_active = False
             if not self._running:                 # app shut down mid-turn: skip DOM ops
@@ -1174,6 +1194,46 @@ class HarnessTui(App):
                 switched = self._apply_pending_persona()  # honor a mid-turn switch request first…
                 if not switched:                          # …drain immediately only when no switch
                     self._drain_queue()                   # (switch worker drains after it resolves)
+
+    async def _report_disconnect(self, e: BaseException) -> None:
+        """Surface WHY the agent subprocess died: exit code / signal + last
+        stderr lines. Flushes the concurrent stderr drain first so the final
+        crash lines (which race the stdout-EOF that triggered `e`) are present."""
+        # If the app is tearing down (unmount/clear), the transcript is going
+        # away — mounting the diagnostic onto a dying screen can raise. Mirrors
+        # _send_prompt's finally `if not self._running` guard; skip the DOM work.
+        if not self._running:
+            return
+        # 1) Flush the drain so the last stderr lines land in the buffer.
+        #    shield() so a timeout here never CANCELS the drain task — it is
+        #    owned by _teardown, not by this best-effort handler.
+        task = self._stderr_task
+        if task is not None and not task.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=0.5)
+            except TimeoutError:
+                pass                    # 0.5s budget expired; drain keeps running (shielded)
+            except Exception:
+                pass                    # drain task itself raised; nothing to do here
+            # NOTE: do NOT catch asyncio.CancelledError — it is BaseException-derived
+            # and must propagate so cancellation of THIS worker (e.g. workers.cancel_all()
+            # during teardown) actually takes effect. shield() already protects the drain.
+        # 2) Resolve the exit cause. (asyncio.TimeoutError IS an Exception in
+        #    3.11 — it is the builtin TimeoutError — so `except Exception` covers
+        #    the wait() timeout; a None rc just renders "exit status unknown".)
+        rc = getattr(self._proc, "returncode", None)
+        if rc is None and self._proc is not None:
+            try:
+                rc = await asyncio.wait_for(self._proc.wait(), timeout=0.5)
+            except Exception:
+                rc = None
+        # 3) Build the multi-line message.
+        self._append_line(_c("error", f"agent disconnected — restart to continue ({e})"))
+        self._append_line(_c("error", f"process: {self._format_exit(rc)}"))
+        if self._stderr_tail:
+            self._append_line(_c("muted", "last stderr:"))
+            for ln in self._stderr_tail:
+                self._append_line(_c("muted", f"  {ln}"))
 
     def _drain_queue(self) -> None:
         """Start the next message the user queued mid-turn. FIFO, one per turn —
