@@ -93,26 +93,45 @@ Then list available models:
 curl -s http://localhost:8317/v1/models | jq .
 ```
 
-You should see an entry with alias `"glm"` for the NeuralWatt upstream.
+You should see entries with aliases `"glm"` and `"qwen"` for the NeuralWatt upstream.
 
-### Use GLM
+### Use GLM or Qwen
 
-Once authenticated, route a persona to GLM via the `"glm"` alias:
+Once authenticated, route a persona to a NeuralWatt model via its alias:
 
 ```bash
-dn --model glm    # Use GLM as the default model
+dn --model glm     # GLM-4.6
+dn --model qwen    # Qwen3-Coder-480B-A35B-Instruct
 ```
 
-**To find the current GLM model ID:** visit NeuralWatt's API endpoint directly:
+### Use a NeuralWatt model as the cheap ROUTER model
+
+The router classifies every turn with a cheap model (default `gpt-5.4-mini`).
+That model lives behind Codex and rate-limits on a personal account. A
+NeuralWatt model like Qwen is a good alternative — fast, JSON-reliable, and
+independent of your Codex limits. Point the router at it via env vars (set in
+your `.env` or shell):
+
+```bash
+ROUTER_MODEL=openai/qwen          # primary router model (the proxy alias)
+ROUTER_FALLBACK_MODEL=openai/glm  # used if the primary is unavailable
+```
+
+(The `openai/` prefix is litellm's tag for the OpenAI-compatible proxy — it does
+not mean the model is an OpenAI model.)
+
+**To confirm the exact NeuralWatt model IDs your key serves:**
 
 ```bash
 curl -s https://api.neuralwatt.com/v1/models \
   -H "Authorization: Bearer $NEURALWATT_API_KEY" | jq '.data[].id'
 ```
 
-The CLIProxyAPI config uses `zai-org/GLM-4.6` by default; if NeuralWatt lists a different
-model ID, update the `name` field in the `~/.config/harness/cliproxy.yaml`
-`openai-compatibility` block under `neuralwatt.models`.
+The proxy config registers `zai-org/GLM-4.6` (alias `glm`) and
+`Qwen/Qwen3-Coder-480B-A35B-Instruct` (alias `qwen`) by default. If NeuralWatt
+lists different IDs, update `_NEURALWATT_MODELS` in
+`harness/proxy_service/config_gen.py` and re-run `dn proxy install` to regenerate
+the config.
 
 ## Service management
 
