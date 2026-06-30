@@ -190,6 +190,36 @@ def test_chat_path_prompt_returns(tmp_path):
     assert resp.stop_reason == "end_turn", f"chat prompt() did not end cleanly: {resp}"
 
 
+def test_chat_path_coalesces_and_delivers_full_answer(tmp_path, monkeypatch):
+    """The chat pump must buffer pieces and deliver the full answer (coalesced),
+    and the turn must resolve."""
+    conn = RecordingConn()
+    agent = build_harness_agent(
+        model_factory=lambda *a, **k: None,
+        agent_cfg=_agent_cfg(),
+        skills_dir=__import__("pathlib").Path("skills"),
+        router=_ChatRouter(),
+        worker_model_id=None,
+    )
+    agent._conn = conn
+    agent._client_caps = None
+    sid = agent._store.new(cwd=str(tmp_path))
+
+    # Force a multi-piece answer stream regardless of model: patch ChatHandler.
+    import harness.acp_agent as mod
+    pieces = ["Hello", ", ", "world", "."]
+
+    class _FakeHandler:
+        def __init__(self, *a, **k): pass
+        def answer_stream(self, text, history=None):
+            yield from pieces
+    monkeypatch.setattr(mod, "ChatHandler", _FakeHandler)
+
+    resp = _prompt_with_timeout(agent, sid, "hi")
+    assert resp.stop_reason == "end_turn"
+    assert "Hello, world." in "".join(conn.message_texts())
+
+
 def test_agent_path_streams_deltas_as_message_chunks(tmp_path):
     """The agent-path turn must deliver all prose to the connection as message
     chunks, in order, preceded by exactly one step-boundary signal. After

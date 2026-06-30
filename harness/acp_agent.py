@@ -543,21 +543,36 @@ class HarnessAgent(acp.Agent):
                                   skipped=_catalog_load.skipped,
                                   shadowed=_catalog_load.shadowed)
             pieces: list[str] = []
+            chat_prose = {"buf": ""}
+            chat_lock = threading.Lock()
+
+            async def _chat_flush() -> None:
+                with chat_lock:
+                    text_out, chat_prose["buf"] = chat_prose["buf"], ""
+                if text_out:
+                    await self._conn.session_update(session_id, message_chunk(text_out))
 
             def pump() -> None:
                 # answer_stream is a blocking generator (litellm); run it on the
-                # worker thread and marshal each piece back to the loop as its own
-                # message_chunk — same idiom as the tool-call path above. Accumulate
-                # the pieces so the full answer can be written to the transcript.
+                # worker thread. transcript source (pieces) stays per-piece; delivery
+                # is buffered and drained by the timer + the final flush below.
                 # cancel_flag: ESC aborts a stalled/streaming chat answer (raises
                 # UserInterruption from answer_stream, caught below).
                 for piece in handler.answer_stream(text, history=transcript,
                                                    cancel_flag=state.cancel_flag):
                     pieces.append(piece)
-                    asyncio.run_coroutine_threadsafe(
-                        self._conn.session_update(session_id, message_chunk(piece)),
-                        loop).result()
+                    with chat_lock:
+                        chat_prose["buf"] += piece
 
+            async def _chat_flush_loop() -> None:
+                try:
+                    while True:
+                        await asyncio.sleep(0.08)
+                        await _chat_flush()
+                except asyncio.CancelledError:
+                    return
+
+            chat_flush_task = loop.create_task(_chat_flush_loop())
             try:
                 await loop.run_in_executor(None, pump)
             except UserInterruption:
@@ -565,6 +580,9 @@ class HarnessAgent(acp.Agent):
                 # disconnect). Persist nothing partial; the TUI clears on turn-end.
                 await self._trace(session_id, "chat.cancelled", sid=session_id)
                 return acp.PromptResponse(stop_reason="cancelled")
+            finally:
+                await _chat_flush()          # deliver the tail
+                chat_flush_task.cancel()     # no leftover timer into the next turn
             answer = "".join(pieces)
             self._store.record(session_id, {"prompt": text, "stop_reason": "end_turn",
                                             "kind": "chat"})
