@@ -110,6 +110,12 @@ If a change needs the design system itself to grow, update the spec and
 
 ## 8. Commit message trailer
 
+This is a **git commit convention only** — it is metadata for the version
+history, NOT a statement of your identity, persona, or runtime model. Do not
+infer who or what you are from this trailer. Your identity is your persona
+(SOUL.md/IDENTITY.md) and your runtime model is the `- Model:` line in your
+system prompt.
+
 End commit messages with:
 
 ```
