@@ -79,3 +79,16 @@ def test_content_driven_failure_detection():
     dispatched = filter_output("pytest -q", ZERO_RC_WITH_FAILURES, 0)
     assert "AssertionError" in dispatched
     assert "FAILURES" in dispatched
+
+
+# Whole-branch review M2: a tiny passing run with NO "\n\n" header separator makes
+# filter_pytest prepend "\n\n" and return LONGER than its input (violating its own
+# "never longer" intent). The dispatcher's len(result) >= len(output) guard must
+# neutralize it → the model sees the original, unchanged.
+TINY_NO_HEADER = "==== 1 passed in 0.01s ====\n"
+
+
+def test_dispatcher_passes_through_when_filter_returns_longer():
+    filtered = filter_pytest("pytest -q", TINY_NO_HEADER, 0)
+    assert filtered is not None and len(filtered) >= len(TINY_NO_HEADER)  # filter mis-sizes
+    assert filter_output("pytest -q", TINY_NO_HEADER, 0) == TINY_NO_HEADER  # guard neutralizes
