@@ -118,11 +118,49 @@ def _build_call_model():
     return call_model
 
 
+def _skill_roots_for_rebuild() -> list[Path]:
+    """Skill roots to (re)build cache for. cwd project roots + user/global/bundled."""
+    from harness import paths
+    return paths.skills_dirs(project_cwd=os.getcwd())
+
+
+def rebuild_skill_cache(*, call_model) -> dict:
+    """Compress each skill's body across the roots into the side cache.
+    Returns counts. Later roots override earlier by name (same as compose)."""
+    from harness import skills
+    from harness.compress import engine, skill_cache
+    seen: dict[str, Path] = {}
+    for root in _skill_roots_for_rebuild():
+        if not Path(root).is_dir():
+            continue
+        for child in sorted(Path(root).iterdir()):
+            md = child / "SKILL.md"
+            if md.is_file():
+                seen[child.name] = md          # later root wins
+    built = skipped = failed = 0
+    for name, md in seen.items():
+        try:
+            _, body = skills._parse_skill_md(md)
+        except Exception:
+            skipped += 1
+            continue
+        try:
+            compressed = engine.compress_text(body, call_model=call_model)
+        except engine.CompressionError:
+            failed += 1
+            continue
+        skill_cache.store_body(body, compressed)
+        built += 1
+    return {"built": built, "skipped": skipped, "failed": failed}
+
+
 def run(argv: list[str]) -> int:
     """Entrypoint for `dn compress [--status] [paths...]`."""
     ap = argparse.ArgumentParser(prog="dn compress")
     ap.add_argument("--status", action="store_true",
                     help="report freshness + size delta without rebuilding")
+    ap.add_argument("--skills", action="store_true",
+                    help="(re)build the compressed-skill-body side cache")
     ap.add_argument("paths", nargs="*", help="source files to process (default: cwd AGENTS.md/CLAUDE.md)")
     ns = ap.parse_args(argv)
 
@@ -132,6 +170,16 @@ def run(argv: list[str]) -> int:
     # load it ourselves or COMPRESS_MODEL/VIBEPROXY_MODEL would never be seen.
     from harness import paths
     paths.load_env(os.getcwd())
+
+    if ns.skills:
+        call_model = _build_call_model()
+        if call_model is None:
+            print("compression unavailable: set [harness] compress_model in done.conf "
+                  "(or COMPRESS_MODEL / VIBEPROXY_MODEL)")
+            return 0
+        res = rebuild_skill_cache(call_model=call_model)
+        print(f"skills: built {res['built']}, skipped {res['skipped']}, failed {res['failed']}")
+        return 0
 
     targets = [Path(p) for p in ns.paths] if ns.paths else _default_targets()
 

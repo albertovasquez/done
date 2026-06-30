@@ -80,3 +80,18 @@ def test_status_line_handles_missing_source(tmp_path):
     # Now call status_line with missing source (but existing sibling)
     line = compress_cli.status_line(src)
     assert "missing" in line.lower()   # returns a message, does not raise
+
+
+def test_rebuild_skill_cache_builds_entries(tmp_path, monkeypatch):
+    from harness import compress_cli, skills, paths
+    from harness.compress import skill_cache
+    monkeypatch.setattr(paths, "config_dir", lambda: tmp_path / "cfg")
+    root = tmp_path / "skills"
+    d = root / "foo"; d.mkdir(parents=True)
+    (d / "SKILL.md").write_text("---\nname: foo\ndescription: d\n---\nYou should really read https://x.io")
+    monkeypatch.setattr(compress_cli, "_skill_roots_for_rebuild", lambda: [root], raising=False)
+    res = compress_cli.rebuild_skill_cache(call_model=lambda p: "read https://x.io")
+    assert res["built"] == 1
+    # the cached body is now retrievable for foo's source body
+    _, body = skills._parse_skill_md(d / "SKILL.md")
+    assert skill_cache.cached_body(body) == "read https://x.io"
