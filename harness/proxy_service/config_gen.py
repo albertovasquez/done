@@ -12,7 +12,10 @@ from harness.proxy_service import paths
 # 2026-06-30; the GLM id in particular is unverified against a live key.)
 _NEURALWATT_MODELS = [
     ("zai-org/GLM-4.6", "glm"),
-    ("Qwen/Qwen3-Coder-480B-A35B-Instruct", "qwen"),
+    # `qwen` is wired for use as the cheap ROUTER model (ROUTER_MODEL=openai/qwen).
+    # Upstream id set per user request; CONFIRM against NeuralWatt /v1/models once a
+    # key is set — if it 404s, this id is the place to fix.
+    ("qwen3.5-397b-fast", "qwen"),
 ]
 
 

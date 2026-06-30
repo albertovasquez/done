@@ -28,7 +28,7 @@ def test_generate_includes_neuralwatt_when_key_set():
     # both NeuralWatt aliases registered (glm + qwen), and the qwen upstream id
     assert 'alias: "glm"' in y
     assert 'alias: "qwen"' in y
-    assert "Qwen3-Coder" in y
+    assert "qwen3.5-397b-fast" in y          # the router model upstream id
 
 
 def test_generate_neuralwatt_yaml_is_valid():
