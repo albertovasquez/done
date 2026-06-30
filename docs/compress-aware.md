@@ -23,7 +23,7 @@ AGENTS.compressed.md   optional shadow — loaded instead, when fresh
 
 - **Presence = opt-in.** No sibling → normal behavior. Delete a sibling and that
   file instantly reverts to its original. The feature fails safe.
-- **The original is never mutated** (memory is the one exception — see below).
+- **The original is never mutated.**
 - **No LLM on the read path.** Choosing sibling-vs-original is pure file I/O.
 
 ## Which files
@@ -89,17 +89,17 @@ didn't ask for — `dn compress <path>` is still how you opt a file in the first
 time. See `docs/hooks.md` for the mechanism.
 
 ```bash
-dn compress                 # rebuild siblings for cwd AGENTS.md / CLAUDE.md
+dn compress                 # rebuild default targets: pinned persona files + cwd AGENTS.md / CLAUDE.md
 dn compress path/to/FILE.md # rebuild a specific file's sibling
 dn compress --status        # report each file's size delta and freshness
 ```
 
 `dn compress` needs a model. It resolves one in this order: the `COMPRESS_MODEL`
 env var (one-off override) → **`[harness] compress_model` in `done.conf`** (the
-persistent home — set this to a small/fast model like a haiku id) → `VIBEPROXY_MODEL`
-→ your default agent's model. With none configured it reports that compression is
-unavailable and does nothing. Compression is a cheap, mechanical task, so a small
-model is the right default:
+persistent home — set this to a small/fast model like a haiku id) →
+`PROXY_MODEL` / `VIBEPROXY_MODEL` → your default agent's model. With none
+configured it reports that compression is unavailable and does nothing.
+Compression is a cheap, mechanical task, so a small model is the right default:
 
 ```toml
 # ~/.config/harness/done.conf
@@ -121,32 +121,27 @@ MEMORY.md: stale
 
 ## Turning it on and off
 
-Compress-aware is **on by default**. Two ways to control it:
+Compress-aware is **on by default**. The behavior gate today is the persisted
+per-persona setting:
 
-- **Footer chip** — click it to toggle the mode live for the session. A click
-  never persists (same live-vs-pin contract as the YOLO chip).
-- **Slash command** — `/compress-aware` toggles live; `/compress-aware pin`
-  persists "on" as the default; `/compress-aware unpin` persists "off".
+- **Slash command** — `/compress-aware pin` persists "on" as the default;
+  `/compress-aware unpin` persists "off".
+- **Footer chip / bare `/compress-aware`** — update the TUI's live indicator in
+  this phase, but do not change which context files the already-running agent
+  reads. Use pin/unpin for behavior.
 
 The pinned default lives in `done.conf` under the persona's table
 (`compress_aware = true|false`); absent means on. The setting is **per persona**.
 When the mode is off, originals always load and the feature is inert.
 
-## Memory: the one destructive spot
+## Memory writes
 
-Memory files are **agent-authored**, not hand-crafted, so memory is the single
-place compression is destructive: when compress-aware is on, a memory write
-persists the *compressed* form directly (no verbose original is kept). If
-compression fails, Done falls back to writing the full verbose text — content is
-never lost on failure.
-
-Two consequences worth knowing:
-
-- Turning the mode **off does not un-compress** memory already written — there is
-  no verbose original to restore. (Every other file reverts cleanly.)
-- Compression is lossy by nature. Validation guarantees code/URLs/numbers/links
-  survive, but it cannot guarantee a dropped *clause* is caught. Keep
-  high-stakes memory concise and concrete so there's little to lose.
+`MEMORY.md` can have a `MEMORY.compressed.md` sibling and follows the same read
+rules as the other context files. Agent-authored memory writes are still plain
+writes in this phase: the compression helper exists, but it is not wired into
+the write/edit tool path yet. To compress memory, run `dn compress` (or
+`dn compress ~/.config/harness/agents/<id>/MEMORY.md`) and keep the original as
+the source of truth.
 
 ## Verifying it for real
 

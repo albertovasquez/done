@@ -8,7 +8,7 @@ as if that persona had typed the prompt live.
 
 > **New to jobs?** Start with the hands-on
 > [first-job walkthrough](jobs-walkthrough.md) — create and run one end-to-end
-> inside `done` in a few minutes. This page is the reference behind it.
+> inside `dn` in a few minutes. This page is the reference behind it.
 
 > This document describes what ships today (Phase 1). The "Not yet" section at the
 > end lists what's deferred so you don't expect it — most importantly, the
@@ -34,7 +34,7 @@ would produce interactively:
 | What | Where it comes from |
 |---|---|
 | **Workspace** | `resolve_workspace(agent_id)` → the persona's `~/.config/harness/agents/<agent_id>/` directory |
-| **Model** | `resolve_session_model(agent_id)` → the persona's model in `done.conf [agents.<agent_id>]` (never a global default) |
+| **Model** | `resolve_session_model(agent_id)` → daemon env / global `.env` `PROXY_MODEL` or `VIBEPROXY_MODEL`, else the persona's model in `done.conf [agents.<agent_id>]`, else the engine default |
 | **Persona block** | `SOUL.md` / `IDENTITY.md` / `USER.md` from that workspace |
 | **Memory block** | the persona's memory (see [memory.md](memory.md)) |
 | **AGENTS.md** | three-tier: persona ▸ project ▸ global |
@@ -55,8 +55,9 @@ has two parts:
   `⚠ daemon running but ticks are failing` / `⚠ daemon stalled …` (yellow), or
   `✗ daemon not running — scheduled jobs won't fire` (red). This is how you tell
   at a glance whether your scheduled jobs are actually armed.
-- **Dashboard** — one row per job: `● {name} · {status} · {when}`. Status is one
-  of `new`, `due`, `running`, `ok`, `error`, or `disabled`.
+- **Dashboard** — one row per job: `● {name} · {status} · {when}`. Status is
+  `scheduled`, `running`, or `disabled`; the `{when}` column says `due`, `<1m`,
+  `in 8h`, and so on.
 - **Detail chart** — selecting a job draws a bar chart of its recent run
   durations (read from the job's run log).
 
@@ -173,9 +174,9 @@ auto-disables any job that has hit its consecutive-failure limit (or whose
 persona has gone missing). A failing tick is logged and the loop continues — one
 bad job never takes the daemon down.
 
-The daemon loads `~/.config/harness/.env` at startup (so a global
-`VIBEPROXY_MODEL` is honored); it has no project directory, so per-persona models
-still resolve through `done.conf` as usual.
+The daemon loads `~/.config/harness/.env` at startup (so a global `PROXY_MODEL`
+or legacy `VIBEPROXY_MODEL` is honored). It has no project directory, so
+project-local `.env` files are not loaded for scheduled runs.
 
 ## Where jobs live on disk
 

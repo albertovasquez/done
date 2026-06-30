@@ -30,21 +30,21 @@ It reads three files, all optional:
 | `IDENTITY.md` | name / vibe / emoji |
 | `USER.md` | who the user is (static context you write) |
 
-On first run, DoneDone seeds this directory with all three files as **inert
-templates** — each holds only a commented hint, so the agent's behavior is
-unchanged until you edit one. You don't create anything; you edit the files
-already there. A file you leave as-is (or delete) is simply skipped.
+On first run, DoneDone seeds the built-in `default` persona with Bob's shipped
+`SOUL.md` and `IDENTITY.md`, plus an inert `USER.md` template for your own
+context. It never overwrites an existing workspace. New named personas created
+from the rail use inert templates instead. A file you leave blank or delete is
+simply skipped.
 
 A persona workspace may also hold an **`AGENTS.md`** (standing instructions — the
-persona's "ops manual") and a `persona.toml` (display `name`, enabled `flows`,
-extra `skills` roots). See [agents-md.md](agents-md.md) and
-[router-flows.md](router-flows.md).
+persona's "ops manual") and a `persona.toml` (display `name`, enabled `flows`).
+See [agents-md.md](agents-md.md) and [router-flows.md](router-flows.md).
 
 ## Quick start
 
-A fresh install already placed template files in
-`~/.config/harness/agents/default/`. Open one and replace the comment with real
-text:
+A fresh install already placed Bob's default files in
+`~/.config/harness/agents/default/`. Open one and replace it with your own
+persona text:
 
 ```bash
 cat > ~/.config/harness/agents/default/SOUL.md <<'EOF'
@@ -56,7 +56,8 @@ dn
 ```
 
 (If the directory isn't there — e.g. you deleted it — DoneDone re-seeds the
-templates on the next run. It never overwrites a file you've already edited.)
+default Bob workspace on the next run. It never overwrites a file you've already
+edited.)
 
 Now both a chat question ("what's the weather model here?") and a coding task
 ("fix the failing test") run with that persona baked into the agent's system
@@ -83,12 +84,12 @@ prompt — terse, and calling you "Captain".
   request-type chip) listing which files were injected — so you can see the
   persona took effect. It does not appear when no persona is loaded.
 
-## The no-op guarantee
+## Blank persona behavior
 
-If `~/.config/harness/agents/default/` is absent or empty, DoneDone behaves
-**exactly** as it did before personas existed: no persona, no injected text, no
-`persona_load` chip, no overhead. Personas are strictly additive — you never pay
-for one you didn't create.
+A named persona with only blank/inert files behaves like no persona: no injected
+persona text and no `persona_load` chip. The built-in `default` workspace is not
+blank on first run, though — it starts as Bob unless you edit or clear those
+files.
 
 ## The dev path
 
@@ -110,15 +111,17 @@ rail; see below.) Each persona has its own sessions, memory, and model (persiste
 in `done.conf` under `[agents.<id>]`); a live `/models` swap is remembered per
 persona.
 
-A persona workspace may also declare extra skill directories in a `persona.toml`
-file at the workspace root:
+A persona workspace may declare enabled flows in a `persona.toml` file at the
+workspace root:
 
 ```toml
-skills = ["/path/to/extra-skills", "~/my-skills"]
+flows = ["copywriting", "seo"]
 ```
 
-These are loaded in addition to the system and user skill roots. (`persona.toml`
-never holds the worker model — that lives in `done.conf [agents.<id>]`.)
+Those flows scope which tagged skills the router and agent see. `persona.toml`
+does not currently add extra skill roots; use `~/.config/harness/skills`,
+`<cwd>/.agents/skills`, or `<cwd>/.claude/skills` for custom skills. It also
+never holds the worker model — that lives in `done.conf [agents.<id>]`.
 
 `persona.toml` may also set a display `name` (used by the agents rail; falls back
 to the workspace id):
@@ -150,10 +153,11 @@ Selection (`--persona`), per-persona model persistence, in-process switching, an
 persona creation (the **n** key in the rail) have all shipped. What remains
 deferred:
 
-- **Guided onboarding.** First-run seeding drops editable templates (done), but
+- **Guided onboarding.** First-run seeding creates editable default files, but
   there's no interactive `BOOTSTRAP.md` setup ritual or wiped-workspace
   attestation yet.
-- **Scheduling / proactive runs** (a persona acting without you present).
+- **Per-persona extra skill roots.** `persona.toml` flow scoping has shipped, but
+  a `skills = [...]` key is not consumed by the runtime yet.
 
 For the design rationale behind these phases, see the dated specs under
 `docs/superpowers/specs/` (`*persona-fleet*`, `*phaseA-persona-contract*`).

@@ -9,9 +9,10 @@ disable-model-invocation: true
 You do not remember every skill, so ask.
 
 This skill is **user-invoked only** — Done never runs it on its own. When the
-user calls `/ask-done`, read the available skills (the `# Skills` menu already in
-context, and the flow map if one is shown) and recommend the shortest sensible
-path. Do not start any work; this is navigation, not execution.
+user explicitly asks which skill or flow fits, read the available skills (the
+`# Skills` menu already in context, and the flow map if one is shown) and
+recommend the shortest sensible path. Do not start any work; this is navigation,
+not execution.
 
 ## How to answer
 

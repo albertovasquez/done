@@ -1,6 +1,6 @@
 ---
 name: review
-description: Independent code review on a separate, more capable model — a different model than the author catches more. Use when the user says "review this", "review that", "review the diff/PR/changes", "code review", "do a review", or invokes /review.
+description: Independent code review on a separate, more capable model — a different model than the author catches more. Use when the user says "review this", "review that", "review the diff/PR/changes", "code review", or "do a review".
 ---
 
 # Review (independent model)
