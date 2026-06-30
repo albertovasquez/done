@@ -19,3 +19,15 @@ def test_management_password_is_persisted_0600(tmp_path, monkeypatch):
     assert pw1 == pw2 and len(pw1) >= 32
     mode = stat.S_IMODE(os.stat(paths.secret_path()).st_mode)
     assert mode == 0o600
+
+
+def test_generate_includes_neuralwatt_when_key_set():
+    y = config_gen.generate(env={"NEURALWATT_API_KEY": "nw-123"})
+    assert "openai-compatibility" in y
+    assert "api.neuralwatt.com/v1" in y
+    assert "alias: \"glm\"" in y or "alias: glm" in y
+
+
+def test_generate_omits_neuralwatt_when_key_absent():
+    y = config_gen.generate(env={})
+    assert "openai-compatibility" not in y

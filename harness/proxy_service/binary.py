@@ -4,23 +4,34 @@ import platform
 from pathlib import Path
 from harness.proxy_service import paths
 
-# OPEN ITEM (spec #2): confirm exact version + asset URL pattern + checksum source
-# before shipping. Placeholder pin chosen from the latest observed release.
+# Asset naming verified: versioned .tar.gz (e.g., CLIProxyAPI_7.2.47_darwin_aarch64.tar.gz),
+# aarch64/amd64 platform tokens, GitHub releases URL pattern.
+# Pinned version: v7.2.47 (filename uses 7.2.47, release tag uses v7.2.47).
 PINNED_VERSION = "v7.2.47"
 _REPO = "router-for-me/CLIProxyAPI"
 
 
-def platform_key() -> str:
-    sysname = platform.system().lower()       # 'darwin' | 'linux'
-    arch = platform.machine().lower()         # 'arm64' | 'x86_64'
-    arch = {"x86_64": "amd64", "aarch64": "arm64"}.get(arch, arch)
-    return f"{sysname}-{arch}"
+def platform_key() -> tuple[str, str]:
+    """(os, arch) using CLIProxyAPI's release-asset tokens."""
+    os_name = platform.system().lower()                       # 'darwin' | 'linux'
+    m = platform.machine().lower()
+    arch = {"arm64": "aarch64", "aarch64": "aarch64",
+            "x86_64": "amd64", "amd64": "amd64"}.get(m, m)
+    return os_name, arch
 
 
-def asset_url(version: str, platform_key: str) -> str:
-    # CONFIRM the real asset naming on the releases page before relying on this.
-    return (f"https://github.com/{_REPO}/releases/download/{version}/"
-            f"cli-proxy-api-{platform_key}")
+def asset_name(version: str, os_name: str, arch: str) -> str:
+    ver = version.lstrip("v")                                  # filename has no leading v
+    return f"CLIProxyAPI_{ver}_{os_name}_{arch}.tar.gz"
+
+
+def asset_url(version: str, os_name: str, arch: str) -> str:
+    name = asset_name(version, os_name, arch)
+    return f"https://github.com/{_REPO}/releases/download/{version}/{name}"
+
+
+def checksums_url(version: str) -> str:
+    return f"https://github.com/{_REPO}/releases/download/{version}/checksums.txt"
 
 
 def target_path() -> Path:
