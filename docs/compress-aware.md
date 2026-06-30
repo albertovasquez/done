@@ -39,6 +39,28 @@ AGENTS.md  CLAUDE.md               standing-instruction tiers (project/persona/g
 Daily memory notes are left alone, and so is the agent's response — only the
 inputs above are ever compressed.
 
+### Skills (cached, opt-in via `dn compress --skills`)
+
+Skill *bodies* (the prose after a skill's frontmatter) can be compressed too —
+but never as files next to the source skills, which may be bundled in the wheel
+or shared with other tools (`~/.claude/skills`, project dirs). Instead they live
+in a **Done-owned side cache** under `~/.config/harness/compress-cache/skills/`,
+keyed by a hash of the source body + the compression-rules version (so a skill
+edit or a rules change is an automatic clean miss).
+
+Unlike the per-turn shadow files, the skill cache has no metadata header — freshness is encoded entirely in the cache filename (source body + compression-rules version).
+
+Build the cache offline:
+
+```bash
+dn compress --skills      # compress every skill's body into the side cache
+```
+
+On `load_skill`, a fresh cached body is served in place of the original; a miss
+loads the original (no LLM on the read path). The skill **menu** is never
+compressed — it's tiny and frontmatter-only. Like all compress-aware behavior,
+this is gated on the `compress_aware` flag.
+
 ## Freshness: when a sibling is used
 
 A sibling is only used when it is provably **current**. Each compressed file

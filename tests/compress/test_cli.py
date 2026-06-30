@@ -80,3 +80,70 @@ def test_status_line_handles_missing_source(tmp_path):
     # Now call status_line with missing source (but existing sibling)
     line = compress_cli.status_line(src)
     assert "missing" in line.lower()   # returns a message, does not raise
+
+
+def test_rebuild_skill_cache_builds_entries(tmp_path, monkeypatch):
+    from harness import compress_cli, skills, paths
+    from harness.compress import skill_cache
+    monkeypatch.setattr(paths, "config_dir", lambda: tmp_path / "cfg")
+    root = tmp_path / "skills"
+    d = root / "foo"; d.mkdir(parents=True)
+    (d / "SKILL.md").write_text("---\nname: foo\ndescription: d\n---\nYou should really read https://x.io")
+    monkeypatch.setattr(compress_cli, "_skill_roots_for_rebuild", lambda: [root], raising=False)
+    res = compress_cli.rebuild_skill_cache(call_model=lambda p: "read https://x.io")
+    assert res["built"] == 1
+    # the cached body is now retrievable for foo's source body
+    _, body = skills._parse_skill_md(d / "SKILL.md")
+    assert skill_cache.cached_body(body) == "read https://x.io"
+
+
+def test_rebuild_skill_cache_counts_failed_on_compression_error(tmp_path, monkeypatch):
+    from harness import compress_cli, paths
+    from harness.compress import engine
+    monkeypatch.setattr(paths, "config_dir", lambda: tmp_path / "cfg")
+    root = tmp_path / "skills"; d = root / "foo"; d.mkdir(parents=True)
+    (d / "SKILL.md").write_text("---\nname: foo\ndescription: keep https://x.io\n---\nbody https://x.io")
+    monkeypatch.setattr(compress_cli, "_skill_roots_for_rebuild", lambda: [root], raising=False)
+    # Mock engine.compress_text to raise CompressionError when URL validation fails
+    def mock_compress_text(body, call_model):
+        result = call_model(body)
+        if "https://" not in result:  # URL was dropped
+            raise engine.CompressionError("validation failed: URL not preserved")
+        return result
+    monkeypatch.setattr(engine, "compress_text", mock_compress_text, raising=False)
+    res = compress_cli.rebuild_skill_cache(call_model=lambda p: "dropped the url entirely")
+    assert res["failed"] == 1 and res["built"] == 0
+
+
+def test_rebuild_skill_cache_counts_skipped_on_parse_error(tmp_path, monkeypatch):
+    from harness import compress_cli, paths
+    monkeypatch.setattr(paths, "config_dir", lambda: tmp_path / "cfg")
+    root = tmp_path / "skills"; d = root / "bad"; d.mkdir(parents=True)
+    (d / "SKILL.md").write_text("no frontmatter fence here")   # _parse_skill_md raises
+    monkeypatch.setattr(compress_cli, "_skill_roots_for_rebuild", lambda: [root], raising=False)
+    res = compress_cli.rebuild_skill_cache(call_model=lambda p: "x")
+    assert res["skipped"] == 1 and res["built"] == 0
+
+
+def test_rebuild_skill_cache_counts_failed_on_model_error(tmp_path, monkeypatch):
+    from harness import compress_cli, paths
+    monkeypatch.setattr(paths, "config_dir", lambda: tmp_path / "cfg")
+    root = tmp_path / "skills"; d = root / "foo"; d.mkdir(parents=True)
+    (d / "SKILL.md").write_text("---\nname: foo\ndescription: d\n---\nbody")
+    monkeypatch.setattr(compress_cli, "_skill_roots_for_rebuild", lambda: [root], raising=False)
+    def boom(prompt):
+        raise RuntimeError("network down")   # NOT a CompressionError
+    res = compress_cli.rebuild_skill_cache(call_model=boom)
+    assert res["failed"] == 1 and res["built"] == 0   # counted, not crashed
+
+
+def test_run_skills_no_model_returns_message(tmp_path, monkeypatch, capsys):
+    from harness import compress_cli
+    _isolate_conf(monkeypatch, tmp_path, 'schema_version = 1\n')  # empty config
+    monkeypatch.delenv("COMPRESS_MODEL", raising=False)
+    monkeypatch.delenv("VIBEPROXY_MODEL", raising=False)
+    monkeypatch.setattr(compress_cli, "_build_call_model", lambda: None, raising=False)
+    rc = compress_cli.run(["--skills"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "compression unavailable" in out.lower()
