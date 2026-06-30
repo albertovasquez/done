@@ -109,8 +109,9 @@ def main(argv=None) -> int | None:
     # may fill it from a .env file. Precedence we want: shell env > done.conf >
     # .env > default. load_env uses override=False, so a .env value only lands in
     # os.environ here when the shell did NOT already set it.
-    shell_set_model = "VIBEPROXY_MODEL" in os.environ
-    paths.load_env(cwd)               # resolve VIBEPROXY_* before spawning the agent
+    from harness import vibeproxy
+    shell_set_model = vibeproxy.model_set_in(os.environ)
+    paths.load_env(cwd)               # resolve VIBEPROXY_* / PROXY_MODEL before spawning the agent
     backend, model_override = _resolve_model(args.model, args.persona)
     args.model = backend              # normalize so _relaunch_args carries the resolved backend
     yolo = _resolve_yolo(args.yolo, args.persona)

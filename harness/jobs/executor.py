@@ -125,6 +125,7 @@ def _default_deps() -> Deps:
     from harness import persona_config as _persona_config  # read_flows: persona_config.py:38
     from harness import persona_sessions as _ps   # resolve_session_model: persona_sessions.py:20
     from harness import skills as _skills      # load_catalog_with_skips: skills.py:85
+    from harness import vibeproxy
 
     import yaml
     import os
@@ -204,8 +205,8 @@ def _default_deps() -> Deps:
             # These three env reads match how persona_sessions callers pass values.
             # The TUI reads them from the live process env; we do the same here
             # so the CLI-launched daemon gets an identical result.
-            shell_set_model="VIBEPROXY_MODEL" in os.environ,
-            shell_env=os.environ.get("VIBEPROXY_MODEL"),
+            shell_set_model=vibeproxy.model_set_in(os.environ),
+            shell_env=vibeproxy.model_value(os.environ),
             dotenv=None,   # TODO(verify against live source): TUI passes dotenv from load_dotenv;
                            # daemon entrypoint should load .env before calling run_headless_turn.
             backend="vibeproxy",
