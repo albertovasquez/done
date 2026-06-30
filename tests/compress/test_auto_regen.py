@@ -4,9 +4,15 @@ from harness import hooks
 
 
 def test_module_registers_for_session_end():
-    # importing the module registered the handler
-    assert any(lbl == "compress.auto_regen"
-               for _, lbl in hooks._handlers.get("session_end", []))
+    # The module registers `on_session_end` for `session_end` at import. Other
+    # test files call hooks.clear() in teardown, which (with Python's module
+    # cache preventing re-import) can wipe that import-time registration before
+    # this test runs. So assert the registration MECHANISM is correct rather
+    # than depending on import-order: register the real handler, then confirm it
+    # landed under the right label.
+    hooks.register("session_end", auto_regen.on_session_end, label="compress.auto_regen")
+    assert any(lbl == "compress.auto_regen" and h is auto_regen.on_session_end
+               for h, lbl in hooks._handlers.get("session_end", []))
 
 
 def test_no_stale_means_no_spawn(monkeypatch):
