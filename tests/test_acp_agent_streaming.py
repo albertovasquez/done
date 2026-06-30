@@ -191,8 +191,10 @@ def test_chat_path_prompt_returns(tmp_path):
 
 
 def test_agent_path_streams_deltas_as_message_chunks(tmp_path):
-    """The agent-path turn must marshal each prose delta to the connection as a
-    message_chunk, in order, preceded by exactly one step-boundary signal."""
+    """The agent-path turn must deliver all prose to the connection as message
+    chunks, in order, preceded by exactly one step-boundary signal. After
+    coalescing, deltas may be merged into fewer/larger chunks — so we assert the
+    CONCATENATION and ORDER, not a 1:1 delta→chunk mapping."""
     deltas = ["Look", "ing ", "into ", "it."]
     conn = RecordingConn()
     model = _StreamingSubmitModel(deltas)
@@ -202,16 +204,17 @@ def test_agent_path_streams_deltas_as_message_chunks(tmp_path):
     resp = _prompt(agent, sid, "fix the bug")
     assert resp.stop_reason == "end_turn", f"unexpected stop_reason: {resp.stop_reason}"
 
-    # The deltas appear, in order, among the non-empty message texts. Other
-    # non-empty texts (the submit echo's tool output) may follow, so assert the
-    # deltas are a contiguous in-order prefix-or-subsequence.
-    texts = conn.message_texts()
-    assert deltas == [t for t in texts if t in deltas], (
-        f"deltas not streamed in order: streamed texts = {texts!r}"
+    # The submit echo's tool output also appears as a non-empty text; isolate the
+    # prose stream by reassembling and checking the joined deltas are a contiguous,
+    # in-order substring of the concatenated message texts.
+    full = "".join(conn.message_texts())
+    assert "".join(deltas) in full, (
+        f"prose not delivered intact/in order: texts = {conn.message_texts()!r}"
     )
-    # streamed-on-screen content equals the joined deltas
-    streamed_concat = "".join(t for t in texts if t in deltas)
-    assert streamed_concat == "".join(deltas)
+    # exactly one step boundary (one model call → one new n_calls value)
+    assert conn.reset_flags() == [True], (
+        f"expected exactly one stream_reset boundary, got {conn.reset_flags()!r}"
+    )
 
     # exactly one step boundary (one model call → one new n_calls value)
     assert conn.reset_flags() == [True], (

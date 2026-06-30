@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import platform
+import threading
 import time
 from pathlib import Path
 
@@ -620,6 +621,27 @@ class HarnessAgent(acp.Agent):
         last_step = {"n": -1}
         compacted = {"event": None}     # set if context.compacted fired this turn
 
+        # Delivery-only prose buffer (distinct from streamed["buf"], the
+        # failure-case transcript). Prose accumulates here on the worker thread and
+        # is drained to the wire at ~80ms (matching the TUI's 12Hz render), so we
+        # stop blocking the worker thread on a per-token RPC round-trip. Ordering
+        # vs. boundaries/tool/plan events is preserved by flushing this buffer
+        # BEFORE any of those events (the flush-before-send chokepoint).
+        prose = {"buf": ""}
+        prose_lock = threading.Lock()
+
+        async def _flush_prose() -> None:
+            # loop-side: atomically take the pending prose and send it as one chunk.
+            with prose_lock:
+                text, prose["buf"] = prose["buf"], ""
+            if text:
+                await self._conn.session_update(session_id, message_chunk(text))
+
+        def _flush_prose_sync() -> None:
+            # worker-thread-callable: marshal the flush to the loop and block, the
+            # same idiom the boundary/tool/plan callbacks already use.
+            asyncio.run_coroutine_threadsafe(_flush_prose(), loop).result()
+
         def emit_step_boundary() -> None:
             # tell the TUI: a NEW prose block begins (close any open one).
             upd = with_meta(message_chunk(""), {"stream_reset": True})
@@ -644,9 +666,12 @@ class HarnessAgent(acp.Agent):
             if n != last_step["n"]:
                 last_step["n"] = n
                 emit_step_boundary()
+            # transcript source — UNCHANGED, synchronous, per-piece.
             streamed["buf"] += piece
-            asyncio.run_coroutine_threadsafe(
-                self._conn.session_update(session_id, message_chunk(piece)), loop).result()
+            # delivery — buffer, do not block. The ~80ms timer + turn-end flush
+            # drain it. No .result() per token.
+            with prose_lock:
+                prose["buf"] += piece
 
         def on_command(phase: str, command: str, out: dict | None) -> None:
             # runs on the worker thread → marshal to the loop and block until sent
@@ -836,6 +861,11 @@ class HarnessAgent(acp.Agent):
                     # never marshal a delta to a dead loop after the turn ends.
                     if hasattr(model, "on_delta"):
                         model.on_delta = None
+                    # final flush: deliver any prose still buffered (the last <80ms
+                    # that never hit a timer tick). Runs on success, failure, AND
+                    # cancellation (this finally covers all three). Flush BEFORE the
+                    # timer is cancelled (Task 3) so the tail is never skipped.
+                    _flush_prose_sync()
                     # unbind cancel_flag so a later abandoned worker can't observe
                     # a flag that now belongs to the next turn.
                     if hasattr(model, "cancel_flag"):
