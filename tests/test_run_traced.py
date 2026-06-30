@@ -190,6 +190,12 @@ def test_4_thin_client_mock_red_green(tmp_path, monkeypatch):
     # (avoids an ordering hazard if another run exists under harness/runs/).
     monkeypatch.setattr(rt, "_run_id", lambda: "pytest-thin-client")
 
+    # The router classifies via VibeProxy even when --model is mock; without a live
+    # proxy that classification raises (task.classify_failed -> rc=1). Use the
+    # offline stub classifier so this test is hermetic (it exercises the runner's
+    # red->green mock fix, not real classification).
+    monkeypatch.setenv("HARNESS_ROUTER_STUB", "1")
+
     rc = rt.main(["--model", "mock", "--cwd", str(dst)])
     assert rc == 0
 

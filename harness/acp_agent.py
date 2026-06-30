@@ -774,15 +774,20 @@ class HarnessAgent(acp.Agent):
 
 def build_harness_agent(*, model_factory, agent_cfg, skills_dir: list[Path],
                         router: Router, worker_model_id=None,
+                        backend: str = "vibeproxy",
                         workspace_dir: Path | None = None,
                         debug: bool = False) -> HarnessAgent:
-    """Factory: wire the agent from resolved dependencies."""
+    """Factory: wire the agent from resolved dependencies. `backend` mirrors the
+    direct HarnessAgent(...) construction in acp_main: it drives session-model
+    resolution (backend="mock" => no real worker model, no network), so the
+    factory must forward it rather than silently defaulting to vibeproxy."""
     return HarnessAgent(
         model_factory=model_factory,
         agent_cfg=agent_cfg,
         skills_dir=skills_dir,
         router=router,
         worker_model_id=worker_model_id,
+        backend=backend,
         workspace_dir=workspace_dir,
         debug=debug,
     )

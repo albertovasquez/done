@@ -221,7 +221,15 @@ def main(argv: list[str] | None = None) -> int:
         # Ctrl-C is a user abort, not a traced failure.)
 
     # Router classifies against the same flow-scoped catalog the agent sees.
-    router = Router(complete, catalog=_menu_metas)
+    # Honor the same offline test seam as acp_main: HARNESS_ROUTER_STUB=1 swaps the
+    # live (VibeProxy) classifier for a fixed one, so a traced --model mock run is
+    # hermetic (the router otherwise calls VibeProxy even in mock mode).
+    if os.getenv("HARNESS_ROUTER_STUB") == "1":
+        from harness.acp_main import _stub_complete
+        complete_fn = _stub_complete
+    else:
+        complete_fn = complete
+    router = Router(complete_fn, catalog=_menu_metas)
     try:
         rc = route_and_dispatch(
             args.task, router=router, emitter=emitter,

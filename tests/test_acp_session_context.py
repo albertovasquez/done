@@ -84,6 +84,9 @@ def _build(router, worker_model_id=None):
         skills_dir=Path("skills"),
         router=router,
         worker_model_id=worker_model_id,
+        backend="mock",   # consistent with the mock factory: session-model resolution
+                          # returns None (no real worker model), so the chat path never
+                          # makes a live litellm call to the proxy (hermetic test).
     )
     agent._conn = _FakeConn()
     agent._client_caps = None    # standalone: auto-allow, no terminal delegation

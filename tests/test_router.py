@@ -196,3 +196,21 @@ def test_system_prompt_teaches_observe_vs_fix():
     assert "observe" in prompt
     assert "check" in prompt
     assert "do not" in prompt or "don't" in prompt
+
+
+def test_stub_complete_classifies_command_regardless_of_history():
+    """The offline test stub (HARNESS_ROUTER_STUB) must classify a COMMAND the
+    same way whether or not prior turns exist. Router.classify wraps the prompt
+    with a "Recent context ... Classify THIS request: <prompt>" preamble when
+    history is present; a naive first-word heuristic would then see "Recent" and
+    mis-route every follow-up command to chat. The stub reads the request after
+    the marker, so the classification is history-independent."""
+    from harness.acp_main import _stub_complete
+    r = Router(_stub_complete, catalog=[])
+    hist = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "yo"}]
+    # A command classifies as code_fix with AND without history.
+    assert r.classify("fix the bug").task_type == "code_fix"
+    assert r.classify("fix the bug", history=hist).task_type == "code_fix"
+    # A question stays chat_question with AND without history.
+    assert r.classify("what is 1+1").task_type == "chat_question"
+    assert r.classify("what is 1+1", history=hist).task_type == "chat_question"
