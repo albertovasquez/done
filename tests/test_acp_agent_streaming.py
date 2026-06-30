@@ -217,7 +217,18 @@ def test_chat_path_coalesces_and_delivers_full_answer(tmp_path, monkeypatch):
 
     resp = _prompt_with_timeout(agent, sid, "hi")
     assert resp.stop_reason == "end_turn"
-    assert "Hello, world." in "".join(conn.message_texts())
+    texts = conn.message_texts()
+    assert "Hello, world." in "".join(texts)
+    # Prove COALESCING, not just delivery: the fake handler yields 4 pieces
+    # synchronously inside pump() on the worker thread, so the 80ms
+    # _chat_flush_loop timer never gets a chance to drain the buffer mid-stream
+    # — the whole answer is only flushed once, by the final `await
+    # _chat_flush()` in the `finally`. Per-piece (uncoalesced) delivery would
+    # produce 4 separate message_texts entries ("Hello", ", ", "world", ".");
+    # coalesced delivery produces exactly one entry equal to the full answer.
+    assert texts == ["Hello, world."], (
+        f"expected the answer delivered as a single coalesced chunk, got {texts!r}"
+    )
 
 
 def test_agent_path_streams_deltas_as_message_chunks(tmp_path):
