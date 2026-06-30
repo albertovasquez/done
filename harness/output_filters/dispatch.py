@@ -24,3 +24,8 @@ def filter_output(command: str, output: str, returncode: int) -> str:
             return output                      # declined / no shrink → original
         return result
     return output                              # no matcher → identity
+
+
+from harness.output_filters import pytest_filter  # noqa: E402
+
+FILTERS.append((pytest_filter.matches, pytest_filter.filter_pytest))
