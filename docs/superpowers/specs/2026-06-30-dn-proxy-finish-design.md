@@ -58,7 +58,14 @@ Confirmed 2026-06-30 against the live GitHub releases API + help.router-for.me
   - Tag is `v7.2.47`; asset filename uses bare version `7.2.47`.
   - Binary asset = `CLIProxyAPI_<ver>_<os>_<arch>.tar.gz` — a **versioned `.tar.gz`
     archive that must be extracted**, NOT a bare `cli-proxy-api-<plat>` binary.
-  - Arch tokens are `aarch64` / `x86_64` (NOT `arm64`/`amd64`); OS is `darwin`/`linux`.
+  - Arch tokens are `aarch64` / `amd64` (NOT `arm64`/`x86_64`); OS is `darwin`/`linux`.
+    Mapping: `platform.machine()` `arm64`|`aarch64` → `aarch64`; `x86_64`|`amd64` → `amd64`.
+    CONFIRMED against the live `checksums.txt`: real assets are
+    `CLIProxyAPI_7.2.47_{darwin,linux}_{aarch64,amd64}.tar.gz`.
+  - Inner tarball layout CONFIRMED: the binary is the top-level `cli-proxy-api`
+    (siblings: LICENSE, README, config.example.yaml). Extract `cli-proxy-api` from root.
+  - `checksums.txt` format CONFIRMED: `<sha256>␣␣<filename>` per line. darwin_aarch64
+    sha256 = `7dcb8a71b18ec8938743d79c149af660cbb70fe676187c8b22331f34d183c4cd` (v7.2.47).
   - A `checksums.txt` asset lists sha256 per file; the GitHub API also exposes each
     asset's `digest: "sha256:..."`. → fetch the checksum, don't hardcode it.
 - **The shipped `binary.py` `platform_key()` and `asset_url()` are both wrong** and
@@ -191,18 +198,17 @@ No login command — it's config. Provide:
 
 ## Open Items (resolve in plan)
 
-1. **Confirm `v7.2.47` is the version to pin** (or bump to the then-latest at
-   implementation time) and that its `checksums.txt` + `darwin_aarch64` /
-   `linux_x86_64` assets exist. (Spot-checked present today.)
-2. **Exact `get-auth-status` terminal value** ("ok" vs "success" vs "completed")
-   — read the live response once during implementation; `run_cli_login`'s
-   terminal check keys on it. (Default: treat `status in {"ok","success","completed"}`
-   as done, anything else as pending.)
-3. **Inner tarball layout** — confirm the binary's path inside
-   `CLIProxyAPI_*.tar.gz` (top-level `cli-proxy-api` vs nested) to locate it on
-   extract.
-4. **NeuralWatt GLM model id** — the exact upstream model name for the `glm` alias
-   (from NeuralWatt `/v1/models`).
+1. ~~Confirm version/assets~~ **RESOLVED:** pin `v7.2.47`; `checksums.txt` +
+   `{darwin,linux}_{aarch64,amd64}.tar.gz` all present (verified live).
+2. **Exact `get-auth-status` terminal value** — NOT documented in the mgmt-api
+   docs. `run_cli_login` must be robust: accept a configurable terminal set
+   (default `{"ok","success","completed","authenticated"}`) AND/OR detect that the
+   provider flipped to authed via the status endpoint; confirm the real value
+   against a live response during implementation. Do NOT hardcode a single guess.
+3. ~~Inner tarball layout~~ **RESOLVED:** binary is top-level `cli-proxy-api` in
+   the archive root.
+4. **NeuralWatt GLM model id** — exact upstream model name for the `glm` alias
+   (from NeuralWatt `/v1/models`); documented as a value the user fills once.
 
 ## References
 
