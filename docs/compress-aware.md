@@ -78,8 +78,8 @@ model is the right default:
 [harness]
 compress_model = "claude-haiku-4-5-20251001"
 ```
- The
-compressor preserves code blocks, inline code, URLs, file paths, commands,
+
+The compressor preserves code blocks, inline code, URLs, file paths, commands,
 version numbers, and headings exactly, and validates its output — if it can't
 produce a faithful compression, it leaves the file alone.
 
