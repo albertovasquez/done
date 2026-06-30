@@ -26,6 +26,7 @@ from typing import Any
 
 import acp
 from acp.schema import ClientCapabilities, ElicitationCapabilities
+from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
@@ -323,6 +324,13 @@ class HarnessTui(App):
         try:
             if self._cm is not None:
                 await self._cm.__aexit__(None, None, None)
+        except RuntimeError as e:
+            # acp.Connection.close() closes its message queue (dispatcher.stop())
+            # before cancelling the receive-loop task (tasks.shutdown()), so a
+            # message already in flight when close() runs can lose this race and
+            # raise here. Harmless: the connection is going away regardless.
+            if "queue already closed" not in str(e):
+                raise
         finally:
             self._cm = self._conn = self._proc = self._stderr_task = self._session_id = None
 
@@ -339,6 +347,21 @@ class HarnessTui(App):
                 # silently runs the WRONG model after a respawn. self.log keeps it
                 # off the user's screen while making it visible in `textual console`.
                 self.log(f"reapply_model failed ({self._worker_model_id!r}): {e!r}")
+
+    async def on_event(self, event: events.Event) -> None:
+        # Streaming repaints the answer widget at 12Hz (_flush_stream → Markdown.
+        # update), which removes and remounts its children on every flush. A mouse
+        # event landing in that window can resolve to a child that's mid-remount,
+        # and Textual's own Screen._forward_event dereferences it unguarded —
+        # crashing the whole app on what should be a harmless stray click. Treat
+        # it like a missed click (NoWidget already does) rather than a fatal error.
+        try:
+            await super().on_event(event)
+        except AttributeError as e:
+            if isinstance(event, events.MouseEvent) and "region" in str(e):
+                self.log(f"dropped mouse event during stream remount: {e!r}")
+            else:
+                raise
 
     async def on_mount(self) -> None:
         # theme is registered + activated in __init__ (before CSS parse)

@@ -13,6 +13,7 @@ from harness.tui.app import HarnessTui, PermissionModal
 from harness.tui.messages import SessionUpdate
 from harness.tui.widgets.prompt_area import PromptArea
 from harness.tui.widgets.tool_call_row import ToolCallRow
+from textual import events
 from textual.containers import VerticalScroll
 from textual.widgets import Markdown, Static, Input
 
@@ -610,6 +611,100 @@ def test_teardown_is_idempotent_when_already_torn_down():
             await app._teardown()
             await app._teardown()               # second call must not raise
             assert app._conn is None
+    asyncio.run(go())
+
+
+def test_teardown_swallows_acp_queue_closed_shutdown_race():
+    """acp.Connection.close() closes its message queue before cancelling the
+    receive-loop task, so a message already in flight can lose that race and
+    raise RuntimeError("mssage queue already closed") out of __aexit__. This is
+    a known shutdown-ordering bug in the acp library (not ours to fix) — verify
+    _teardown treats it as benign rather than letting it crash the app."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            class _RacingCm:
+                async def __aexit__(self, *exc):
+                    raise RuntimeError("mssage queue already closed")
+
+            app._cm = _RacingCm()
+            await app._teardown()                # must not raise
+            assert app._cm is None and app._conn is None
+    asyncio.run(go())
+
+
+def test_teardown_reraises_unrelated_runtime_errors():
+    """The acp shutdown-race guard must stay narrow — any other RuntimeError
+    from __aexit__ is a real failure and must still propagate."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            class _BrokenCm:
+                async def __aexit__(self, *exc):
+                    raise RuntimeError("subprocess refused to terminate")
+
+            app._cm = _BrokenCm()
+            with pytest.raises(RuntimeError, match="subprocess refused to terminate"):
+                await app._teardown()
+    asyncio.run(go())
+
+
+def _mouse_down() -> "events.MouseDown":
+    from textual.geometry import Offset
+    return events.MouseDown(
+        widget=None, x=1, y=1, delta_x=0, delta_y=0,
+        button=1, shift=False, meta=False, ctrl=False,
+        screen_x=1, screen_y=1,
+    )
+
+
+def test_on_event_drops_mouse_event_during_stream_remount_race():
+    """_flush_stream remounts the answer widget's children at 12Hz while
+    streaming (Markdown.update → remove+mount_all). A mouse event landing in
+    that window can resolve to a since-removed child, and Textual's own
+    Screen._forward_event dereferences `container.region` unguarded, raising
+    AttributeError. Verify on_event treats that as a missed click instead of a
+    fatal app crash."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            from textual.app import App
+
+            async def _boom(self, event):
+                raise AttributeError("'NoneType' object has no attribute 'region'")
+            orig = App.on_event
+            App.on_event = _boom
+            try:
+                await app.on_event(_mouse_down())   # must not raise
+            finally:
+                App.on_event = orig
+    asyncio.run(go())
+
+
+def test_on_event_reraises_attribute_errors_unrelated_to_mouse_region():
+    """The remount-race guard must stay narrow: an AttributeError from a non-
+    mouse event, or one that isn't about `region`, is a real bug and must
+    still propagate (and crash loudly, same as before this fix)."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            from textual.app import App
+
+            async def _boom(self, event):
+                raise AttributeError("'NoneType' object has no attribute 'frobnicate'")
+            orig = App.on_event
+            App.on_event = _boom
+            try:
+                with pytest.raises(AttributeError, match="frobnicate"):
+                    await app.on_event(_mouse_down())
+            finally:
+                App.on_event = orig
     asyncio.run(go())
 
 
