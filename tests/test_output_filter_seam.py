@@ -26,10 +26,10 @@ def test_seam_noop_when_no_filter():
 
 
 def test_seam_applies_injected_filter():
-    # Filter uppercases — proves the seam routes output through it.
-    env = _env(output_filter=lambda cmd, o, rc: o.upper())
+    # Filter truncates to a single char — proves the seam routes output through it.
+    env = _env(output_filter=lambda cmd, o, rc: "x")
     out = env.execute({"command": "printf 'hello\\n'"})
-    assert out["output"] == "HELLO\n"
+    assert out["output"] == "x"
 
 
 def test_seam_stamps_savings_bytes_when_filter_shrinks():
@@ -43,3 +43,37 @@ def test_seam_no_savings_keys_without_filter():
     env = _env()
     out = env.execute({"command": "printf 'hi\\n'"})
     assert "_raw_bytes" not in out and "_filtered_bytes" not in out
+
+
+# --- Fix #4: dispatch fail-open when a registered filter raises ---
+
+from harness.output_filters.dispatch import FILTERS
+
+
+def test_dispatch_failopen_when_registered_filter_raises():
+    """A crashing filter must never lose output — dispatch returns original."""
+    def always_match(cmd):
+        return True
+
+    def always_crash(cmd, output, rc):
+        raise RuntimeError("intentional crash")
+
+    FILTERS.append((always_match, always_crash))
+    try:
+        result = filter_output("git status", "original output", 0)
+        assert result == "original output"
+    finally:
+        FILTERS.remove((always_match, always_crash))
+
+
+# --- Fix #5: keys absent when filter ran but output wasn't shorter ---
+
+def test_seam_no_savings_keys_when_filter_doesnt_shrink():
+    """When filter returns same-length output, keys must be absent and original output preserved."""
+    original = "hello\n"
+    # upper() produces same length as "hello\n"
+    env = _env(output_filter=lambda cmd, o, rc: o.upper())
+    out = env.execute({"command": "printf 'hello\\n'"})
+    assert "_raw_bytes" not in out
+    assert "_filtered_bytes" not in out
+    assert out["output"] == original

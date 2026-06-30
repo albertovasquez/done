@@ -28,6 +28,7 @@ from harness.acp_emit import (tool_call_start, tool_call_done, message_chunk,
                               with_meta, plan_update, trace_event)
 from harness.acp_env import AcpEnvironment
 from harness.acp_session import SessionStore
+from harness.output_filters.dispatch import filter_output
 from harness.router import Router, Classification
 from harness.chat_handler import ChatHandler
 from harness.permcheck import PermissionRequest, decide_permission
@@ -651,7 +652,6 @@ class HarnessAgent(acp.Agent):
                     "exception_info": "",
                 }
 
-        from harness.output_filters.dispatch import filter_output
         env = AcpEnvironment(cwd=state.cwd, on_command=on_command,
                              check_permission=check_permission,
                              cancel_flag=state.cancel_flag,

@@ -87,10 +87,13 @@ class AcpEnvironment(LocalEnvironment):
             self._on_command("done", command, out)
         if self._output_filter is not None and out.get("returncode") is not None:
             raw = out.get("output", "")
-            filtered = self._output_filter(command, raw, out.get("returncode", 0))
-            out = {**out, "output": filtered,
-                   "_raw_bytes": len(raw), "_filtered_bytes": len(filtered)}
-            if len(filtered) < len(raw):
+            try:
+                filtered = self._output_filter(command, raw, out.get("returncode", 0))
+            except Exception:
+                filtered = None                 # fail-open: leave out unchanged
+            if filtered and len(filtered) < len(raw):
+                out = {**out, "output": filtered,
+                       "_raw_bytes": len(raw), "_filtered_bytes": len(filtered)}
                 logger.debug("filter.savings command=%r bytes_in=%d bytes_out=%d",
                              command, len(raw), len(filtered))
         return out
