@@ -149,6 +149,9 @@ def rebuild_skill_cache(*, call_model) -> dict:
         except engine.CompressionError:
             failed += 1
             continue
+        except Exception:
+            failed += 1
+            continue
         skill_cache.store_body(body, compressed)
         built += 1
     return {"built": built, "skipped": skipped, "failed": failed}

@@ -48,6 +48,8 @@ in a **Done-owned side cache** under `~/.config/harness/compress-cache/skills/`,
 keyed by a hash of the source body + the compression-rules version (so a skill
 edit or a rules change is an automatic clean miss).
 
+Unlike the per-turn shadow files, the skill cache has no metadata header — freshness is encoded entirely in the cache filename (source body + compression-rules version).
+
 Build the cache offline:
 
 ```bash

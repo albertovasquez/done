@@ -125,6 +125,18 @@ def test_rebuild_skill_cache_counts_skipped_on_parse_error(tmp_path, monkeypatch
     assert res["skipped"] == 1 and res["built"] == 0
 
 
+def test_rebuild_skill_cache_counts_failed_on_model_error(tmp_path, monkeypatch):
+    from harness import compress_cli, paths
+    monkeypatch.setattr(paths, "config_dir", lambda: tmp_path / "cfg")
+    root = tmp_path / "skills"; d = root / "foo"; d.mkdir(parents=True)
+    (d / "SKILL.md").write_text("---\nname: foo\ndescription: d\n---\nbody")
+    monkeypatch.setattr(compress_cli, "_skill_roots_for_rebuild", lambda: [root], raising=False)
+    def boom(prompt):
+        raise RuntimeError("network down")   # NOT a CompressionError
+    res = compress_cli.rebuild_skill_cache(call_model=boom)
+    assert res["failed"] == 1 and res["built"] == 0   # counted, not crashed
+
+
 def test_run_skills_no_model_returns_message(tmp_path, monkeypatch, capsys):
     from harness import compress_cli
     _isolate_conf(monkeypatch, tmp_path, 'schema_version = 1\n')  # empty config
