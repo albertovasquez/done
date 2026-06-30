@@ -6,6 +6,7 @@ callbacks marshal to the async ACP loop in acp_agent."""
 
 from __future__ import annotations
 
+import logging
 import os
 import signal
 import subprocess
@@ -15,6 +16,8 @@ from typing import Any, Callable
 from minisweagent.environments.local import LocalEnvironment
 
 from harness.acp_emit import parse_plan_command
+
+logger = logging.getLogger("harness.acp_env")
 
 # how often the run loop wakes to check the cancel flag while waiting on output.
 _POLL_INTERVAL_S = 0.1
@@ -27,6 +30,7 @@ class AcpEnvironment(LocalEnvironment):
                  cancel_flag: threading.Event | None = None,
                  client_terminal: Callable[[str], dict] | None = None,
                  on_plan: Callable[[list[tuple[str, str]]], None] | None = None,
+                 output_filter: Callable[[str, str, int], str] | None = None,
                  **kwargs: Any):
         super().__init__(**kwargs)
         self._on_command = on_command
@@ -34,6 +38,7 @@ class AcpEnvironment(LocalEnvironment):
         self._cancel_flag = cancel_flag
         self._client_terminal = client_terminal
         self._on_plan = on_plan
+        self._output_filter = output_filter
 
     def execute(self, action: dict, cwd: str = "", *, timeout: int | None = None) -> dict[str, Any]:
         if self._cancel_flag is not None and self._cancel_flag.is_set():
@@ -80,6 +85,17 @@ class AcpEnvironment(LocalEnvironment):
                 out = super().execute(action, cwd, timeout=timeout)   # REAL run; FULL output
         finally:
             self._on_command("done", command, out)
+        if self._output_filter is not None and out.get("returncode") is not None:
+            raw = out.get("output", "")
+            try:
+                filtered = self._output_filter(command, raw, out.get("returncode", 0))
+            except Exception:
+                filtered = None                 # fail-open: leave out unchanged
+            if filtered and len(filtered) < len(raw):
+                out = {**out, "output": filtered,
+                       "_raw_bytes": len(raw), "_filtered_bytes": len(filtered)}
+                logger.debug("filter.savings command=%r bytes_in=%d bytes_out=%d",
+                             command, len(raw), len(filtered))
         return out
 
     def _run_cancellable(self, command: str, cwd: str, timeout: int | None) -> dict[str, Any]:

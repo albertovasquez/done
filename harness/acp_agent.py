@@ -28,6 +28,7 @@ from harness.acp_emit import (tool_call_start, tool_call_done, message_chunk,
                               with_meta, plan_update, trace_event)
 from harness.acp_env import AcpEnvironment
 from harness.acp_session import SessionStore
+from harness.output_filters.dispatch import filter_output
 from harness.router import Router, Classification
 from harness.chat_handler import ChatHandler
 from harness.permcheck import PermissionRequest, decide_permission
@@ -54,6 +55,18 @@ logger = logging.getLogger("harness.acp_agent")
 # `create_job` tool can reach it. Re-exported here for the ext-method + existing
 # test imports (`from harness.acp_agent import handle_create_job`).
 from harness.jobs.create import handle_create_job  # noqa: E402,F401
+
+
+def _resolve_output_filter():
+    """Return the output-filter callable, or None when the operator has disabled
+    filtering via ``[harness] output_filter = "false"`` in done.conf.
+
+    Default-on: absent key, ``"true"``, or any other value → filtering active.
+    Only the exact string ``"false"`` disables it.
+    """
+    if config.harness_setting("output_filter") == "false":
+        return None
+    return filter_output
 
 
 class HarnessAgent(acp.Agent):
@@ -655,7 +668,8 @@ class HarnessAgent(acp.Agent):
                              check_permission=check_permission,
                              cancel_flag=state.cancel_flag,
                              client_terminal=client_terminal,
-                             on_plan=on_plan)
+                             on_plan=on_plan,
+                             output_filter=_resolve_output_filter())
         # Bind the active persona onto the env so the create_job tool can resolve
         # agent_id from it (never from the model). Per-session workspace name, or
         # "default" with no persona. Mirrors the env._loaded_skills stamp pattern.
