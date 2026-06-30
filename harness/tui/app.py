@@ -407,6 +407,19 @@ class HarnessTui(App):
 
         self.push_screen(CronInstallModal(), callback=_on_choice)
 
+    def _show_proxy_login(self) -> None:
+        """Open the proxy-login modal. Mirrors _show_cron_install_prompt's
+        push_screen(modal, callback) lifecycle. Password sourcing is deferred
+        to a later task; passes empty string for now (modal handles errors inline)."""
+        from harness.tui.widgets.proxy_login_modal import ProxyLoginModal
+        password = _config.harness_setting("cliproxy_password") or ""
+
+        def _on_done(result) -> None:
+            if result:
+                self.log("proxy login: authenticated")
+
+        self.push_screen(ProxyLoginModal(status={}, password=password), callback=_on_done)
+
     async def _mount_status_contents(self) -> None:
         bar = self.query_one("#statusbar", Container)
         # Mode chip FIRST (leftmost), where the eye lands — a security-bypass
