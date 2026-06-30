@@ -131,9 +131,9 @@ class ProxyLoginModal(ModalScreen):
     def _start_login(self, provider_id: str) -> None:
         self._set_status(f"[$accent]◐[/] connecting…")
         self._start_spinner()
-        self.run_worker(self._do_login(provider_id), thread=True)
+        self.run_worker(lambda: self._do_login(provider_id), thread=True)
 
-    async def _do_login(self, provider_id: str) -> None:
+    def _do_login(self, provider_id: str) -> None:
         try:
             handle = login.start(
                 provider_id,

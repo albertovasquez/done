@@ -409,10 +409,12 @@ class HarnessTui(App):
 
     def _show_proxy_login(self) -> None:
         """Open the proxy-login modal. Mirrors _show_cron_install_prompt's
-        push_screen(modal, callback) lifecycle. Password sourcing is deferred
-        to a later task; passes empty string for now (modal handles errors inline)."""
+        push_screen(modal, callback) lifecycle. Password sourced from
+        config_gen.ensure_management_password() (same 0600-file source the
+        lifecycle uses)."""
         from harness.tui.widgets.proxy_login_modal import ProxyLoginModal
-        password = _config.harness_setting("cliproxy_password") or ""
+        from harness.proxy_service import config_gen
+        password = config_gen.ensure_management_password()
 
         def _on_done(result) -> None:
             if result:
