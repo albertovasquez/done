@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -28,6 +29,26 @@ TASK_TYPES = ["chat_question", "code_explain", "code_fix", "code_feature",
 
 ROUTER_MODEL = "openai/gpt-5.4-mini"
 
+# Fallback cheap model used when the primary router model is rate-limited /
+# cooling down (e.g. a personal ChatGPT/Codex account hits its limit). Defaults to
+# a model served by a DIFFERENT provider so one provider's cooldown can't brick
+# the router. Override either via env.
+ROUTER_FALLBACK_MODEL = "openai/claude-haiku-4-5-20251001"
+
+
+def _router_models() -> list[str]:
+    """Ordered list of router models to try: env override (or default) first,
+    then the fallback. De-duplicated, env-overridable. The 'openai/' prefix is
+    litellm's provider tag for the OpenAI-compatible proxy — it does NOT mean the
+    model is an OpenAI model (the proxy serves Claude/etc. under the same tag)."""
+    primary = os.getenv("ROUTER_MODEL", ROUTER_MODEL)
+    fallback = os.getenv("ROUTER_FALLBACK_MODEL", ROUTER_FALLBACK_MODEL)
+    out = []
+    for m in (primary, fallback):
+        if m and m not in out:
+            out.append(m)
+    return out
+
 
 @dataclass
 class Classification:
@@ -41,19 +62,47 @@ class Classification:
     options: list[tuple[str, str]] = field(default_factory=list)  # (title, rationale)
 
 
+def _is_rate_limit(exc: Exception) -> bool:
+    """True if the exception is a provider rate-limit / cooldown (so we should try
+    the next model rather than give up). Matches litellm.RateLimitError by type
+    name and the CLIProxyAPI 'cooling down' / 'model_cooldown' message, without a
+    hard litellm import at module scope."""
+    name = type(exc).__name__
+    msg = str(exc).lower()
+    return ("ratelimit" in name.lower()
+            or "cooling down" in msg or "model_cooldown" in msg
+            or "rate limit" in msg or " 429" in msg or "status 429" in msg)
+
+
 def complete(system: str, user: str) -> str:
     """Thin cheap-model completion for classification. Used by the CLI; tests
-    inject a stub instead. Plain text in, text out — no tool calls."""
+    inject a stub instead. Plain text in, text out — no tool calls.
+
+    Tries the router models in order (primary, then fallback). If a model is
+    rate-limited / cooling down, falls through to the next so one provider's
+    cooldown does not brick every turn. Non-rate-limit errors propagate."""
     import litellm  # lazy: keep the ~1s import out of startup (see module note)
     from harness import vibeproxy
-    resp = litellm.completion(
-        model=ROUTER_MODEL,
-        **vibeproxy.completion_kwargs(),
-        messages=[{"role": "system", "content": system},
-                  {"role": "user", "content": user}],
-        max_tokens=300,
-    )
-    return resp.choices[0].message.content or ""
+    models = _router_models()
+    last_exc: Exception | None = None
+    for i, model in enumerate(models):
+        try:
+            resp = litellm.completion(
+                model=model,
+                **vibeproxy.completion_kwargs(),
+                messages=[{"role": "system", "content": system},
+                          {"role": "user", "content": user}],
+                max_tokens=300,
+            )
+            return resp.choices[0].message.content or ""
+        except Exception as e:
+            last_exc = e
+            if _is_rate_limit(e) and i < len(models) - 1:
+                logger.warning("router model %s rate-limited; falling back to %s",
+                               model, models[i + 1])
+                continue
+            raise
+    raise last_exc        # pragma: no cover - loop always returns or raises above
 
 
 def _system_prompt(catalog: "list[skills.SkillMeta]") -> str:
