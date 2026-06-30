@@ -66,8 +66,19 @@ dn compress path/to/FILE.md # rebuild a specific file's sibling
 dn compress --status        # report each file's size delta and freshness
 ```
 
-`dn compress` calls your configured model (it needs `VIBEPROXY_MODEL` set; with
-no model it reports that compression is unavailable and does nothing). The
+`dn compress` needs a model. It resolves one in this order: the `COMPRESS_MODEL`
+env var (one-off override) → **`[harness] compress_model` in `done.conf`** (the
+persistent home — set this to a small/fast model like a haiku id) → `VIBEPROXY_MODEL`
+→ your default agent's model. With none configured it reports that compression is
+unavailable and does nothing. Compression is a cheap, mechanical task, so a small
+model is the right default:
+
+```toml
+# ~/.config/harness/done.conf
+[harness]
+compress_model = "claude-haiku-4-5-20251001"
+```
+ The
 compressor preserves code blocks, inline code, URLs, file paths, commands,
 version numbers, and headings exactly, and validates its output — if it can't
 produce a faithful compression, it leaves the file alone.

@@ -43,10 +43,9 @@ def conf_path() -> Path:
     return paths.config_dir() / "done.conf"
 
 
-def load() -> dict[str, AgentConfig]:
-    """All agents keyed by their table key. Returns {} if the file is missing,
-    empty, or unparseable. Individual agent tables missing `backend` or `model`
-    are skipped (not fatal)."""
+def _load_raw() -> dict:
+    """The full parsed done.conf as a dict ({} if missing/empty/unparseable).
+    Single parse path shared by load() (agents) and harness_setting ([harness])."""
     path = conf_path()
     try:
         raw = path.read_bytes()
@@ -55,14 +54,33 @@ def load() -> dict[str, AgentConfig]:
     if not raw.strip():
         return {}
     try:
-        data = tomllib.loads(raw.decode("utf-8"))
+        return tomllib.loads(raw.decode("utf-8"))
     except (tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
         # A file that EXISTS but won't parse is a real problem: every persisted
-        # model/yolo pin silently resolves to {} (defaults). A missing file
-        # (OSError above) is normal first-run and stays quiet; a corrupt one warns.
+        # model/yolo pin silently resolves to defaults. A missing file is normal
+        # first-run and stays quiet; a corrupt one warns.
         logger.warning("done.conf at %s is unparseable (%s); ignoring all persisted "
-                       "agent config this session", path, e)
+                       "config this session", path, e)
         return {}
+
+
+def harness_setting(key: str) -> str | None:
+    """Read a string value from the top-level [harness] table in done.conf.
+    Returns None when the section, key, or file is absent (or the value isn't a
+    string). Home for install-wide settings (e.g. compress_model) that aren't
+    per-agent. The [harness] table is preserved across writes."""
+    section = _load_raw().get("harness")
+    if not isinstance(section, dict):
+        return None
+    val = section.get(key)
+    return val if isinstance(val, str) else None
+
+
+def load() -> dict[str, AgentConfig]:
+    """All agents keyed by their table key. Returns {} if the file is missing,
+    empty, or unparseable. Individual agent tables missing `backend` or `model`
+    are skipped (not fatal)."""
+    data = _load_raw()
     agents_raw = data.get("agents")
     if not isinstance(agents_raw, dict):
         return {}

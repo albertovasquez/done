@@ -60,14 +60,33 @@ def _default_targets() -> list[Path]:
 
 
 def _compress_model_name() -> str | None:
-    """The model name to use for compression.
+    """The model name to use for compression, in precedence order:
 
-    Compression is a cheap, mechanical task, so it prefers a dedicated
-    COMPRESS_MODEL (set this to a small/fast model, e.g. a haiku id your
-    VibeProxy serves) and falls back to VIBEPROXY_MODEL. Returns None when
-    neither is set, so the caller can report "unavailable" and exit cleanly.
+      1. COMPRESS_MODEL env            — explicit one-off override
+      2. done.conf [harness] compress_model  — the persistent home (set this to a
+                                          small/fast model, e.g. a haiku id)
+      3. VIBEPROXY_MODEL env           — fall back to the main worker model
+      4. done.conf default agent model — so compression works out of the box with
+                                          no extra config
+
+    Compression is a cheap, mechanical task, so prefer a small dedicated model.
+    Returns None when nothing is configured, so the caller can report
+    "unavailable" and exit cleanly.
     """
-    return os.environ.get("COMPRESS_MODEL") or os.environ.get("VIBEPROXY_MODEL") or None
+    env_override = os.environ.get("COMPRESS_MODEL")
+    if env_override:
+        return env_override
+    from harness import config
+    conf_model = config.harness_setting("compress_model")
+    if conf_model:
+        return conf_model
+    vibeproxy_env = os.environ.get("VIBEPROXY_MODEL")
+    if vibeproxy_env:
+        return vibeproxy_env
+    default_agent = config.load().get("default")
+    if default_agent is not None and default_agent.model:
+        return default_agent.model
+    return None
 
 
 def _build_call_model():
@@ -124,7 +143,8 @@ def run(argv: list[str]) -> int:
     # Rebuild mode
     call_model = _build_call_model()
     if call_model is None:
-        print("compression unavailable: set COMPRESS_MODEL (or VIBEPROXY_MODEL)")
+        print("compression unavailable: set [harness] compress_model in done.conf "
+              "(or COMPRESS_MODEL / VIBEPROXY_MODEL)")
         return 0
 
     today = datetime.date.today().isoformat()
