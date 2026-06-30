@@ -97,11 +97,23 @@ You should see entries with aliases `"glm"` and `"qwen"` for the NeuralWatt upst
 
 ### Use GLM or Qwen
 
-Once authenticated, route a persona to a NeuralWatt model via its alias:
+Once authenticated, route a persona to a NeuralWatt model (`glm` or `qwen`) via
+its alias with `/models` inside the TUI, by setting a launch-time env var, or by
+persisting the persona's model in `done.conf`. The `--model` flag is a backend
+selector only; it accepts `mock` or `vibeproxy`, not provider model ids.
 
 ```bash
-dn --model glm     # GLM-4.6
-dn --model qwen    # Qwen3-Coder-480B-A35B-Instruct
+PROXY_MODEL=glm dn    # one launch with GLM as the worker model
+PROXY_MODEL=qwen dn   # one launch with Qwen as the worker model
+```
+
+For a persistent default, select `glm` (or `qwen`) from `/models` or write the
+persona row:
+
+```toml
+[agents.default]
+backend = "vibeproxy"
+model = "glm"
 ```
 
 ### Use a NeuralWatt model as the cheap ROUTER model

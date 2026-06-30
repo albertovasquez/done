@@ -33,7 +33,9 @@ flow: ops                         # belongs to the "ops" flow (or: flows: [ops, 
   skill still appears in the menu so the model *knows it exists*, but only the
   user (or an explicit step) can run it. Use it for side-effecting or
   timing-sensitive work. `ask-done` ships with this set.
-- **`user-invocable: false`** → not offered as a slash command.
+- **`user-invocable: false`** → parsed metadata for user-facing command
+  surfaces. The current TUI slash menu is hand-written and does not auto-expose
+  skills as slash commands.
 - **`flow` / `flows`** → which flow family(ies) the skill belongs to. No tag = a
   **global** skill, always available regardless of flow.
 
@@ -74,8 +76,9 @@ agent runs ── calls load_skill("name") to pull a body into context
   skill body; the expensive agent pulls the rest on demand.
 
 The `load_skill` tool is registered only when `build_registry(skill_roots=...)` is
-given roots (it is, in both the CLI and ACP dispatch). With no roots the registry
-is exactly `[bash, read, write, edit]` — a strict no-op.
+given roots (it is, in both the CLI and ACP dispatch). Without roots the registry
+still contains the built-in tools (`bash`, `read`, `write`, `edit`, `create_job`,
+`subagent`, `review`); roots add lazy skill loading on top.
 
 ## 3. Flows
 
@@ -89,11 +92,10 @@ changes to add one:
    ```toml
    name = "Copywriter"
    flows = ["copywriting", "seo"]   # this persona sees global + these flows
-   skills = ["~/my-extra-skills"]   # (existing) extra skill roots
    ```
 
-3. (Optional) the flow map shown by `/ask-done` is rendered from the tags by
-   `flows.render_map`.
+3. (Optional) ask the agent what fits the task; the flow map can be rendered
+   from the tags by `flows.render_map`.
 
 `flows.scope_catalog(metas, enabled_flows)` keeps **global** skills (no tag) plus
 skills in an enabled flow. When a persona sets **no** `flows`, dispatch skips
@@ -122,7 +124,7 @@ skills later. They are adapted (re-authored) from
 | `test-driven-development` | Failing test first, then minimal code. |
 | `verification-before-completion` | Prove it works before claiming done. |
 | `receiving-code-review` | Fold feedback with rigor, not reflexive agreement. |
-| `ask-done` | **User-invoked** (`disable-model-invocation`) router over the skills/flows — "what fits here?" |
+| `ask-done` | **Model-disabled** (`disable-model-invocation`) advisory router over the skills/flows — "what fits here?" |
 
 These ship **global** (no flow tag) so maturity is always on. The flow machinery
 (`engineering`, `seo`, `marketing`, …) is reserved for future *specialized*
@@ -135,7 +137,8 @@ Every layer is additive. With no new frontmatter and no `persona.toml flows`:
 - `SkillMeta` defaults to `model_invocable=True, user_invocable=True, flows=()` →
   the catalog behaves like the old `(name, description)` list.
 - `render_base_prompt(skills_menu=None)` is byte-identical to before.
-- `build_registry()` with no roots is the original four tools.
+- `build_registry()` with no roots still skips `load_skill`; built-in tools such
+  as `create_job`, `subagent`, and `review` remain registered.
 - `scope_catalog` is skipped when no flows are enabled.
 
 The change is opt-in: a skill or persona gets the new behavior only by declaring it.
@@ -164,7 +167,8 @@ bundled                       (shipped maturity spine)
 <cwd>/.agents/skills          (the cross-tool PROJECT standard — highest)
 ```
 
-Plus any per-persona roots from `persona.toml` `skills = [...]`, which append on top.
+Per-persona extra roots from `persona.toml` `skills = [...]` are not currently
+loaded by the runtime; put custom skills in one of the roots above.
 
 - **Native Done dirs outrank ecosystem-compat dirs** at the same scope (a deliberate
   Done skill beats a borrowed one); **project outranks global**.

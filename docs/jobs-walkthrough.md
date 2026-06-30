@@ -1,7 +1,7 @@
 # Your first cron job — a walkthrough
 
 This is a hands-on, step-by-step guide to creating and running your **first
-scheduled job**, done entirely from inside the `done` TUI. For the full
+scheduled job**, done entirely from inside the `dn` TUI. For the full
 reference (data model, persona binding, schedule shapes, on-disk layout) see
 [jobs.md](jobs.md).
 
@@ -10,7 +10,7 @@ fire it once on demand — so you see it work without waiting for its scheduled
 time.
 
 > **What's in-app vs. not.** Creating, viewing, running-now, toggling, and
-> removing jobs all happen inside `done`. The one thing that lives *outside* the
+> removing jobs all happen inside `dn`. The one thing that lives *outside* the
 > TUI is the **`harness-cron` daemon** — the process that fires jobs at their
 > scheduled time while you're away. This walkthrough doesn't need it (we use
 > "run now"); the last section covers turning it on. (Making the TUI manage the
@@ -18,12 +18,12 @@ time.
 
 ## Before you start
 
-You need the `done` TUI open. That's it — the daemon is not required for this
+You need the `dn` TUI open. That's it — the daemon is not required for this
 walkthrough.
 
 ## Step 1 — open the cron dashboard
 
-In `done`, press **`Ctrl+J`**.
+In `dn`, press **`Ctrl+J`**.
 
 The **cron drawer** opens. If you've never made a job, the roster is empty. (This
 is just to view jobs — you create them in chat, next.)
@@ -72,19 +72,21 @@ rail), or name the target persona when you ask. See
 Press **`Ctrl+J`** again. Your job now shows as:
 
 ```
-● stand-up reminder · new · <next run time>
+● stand-up reminder · scheduled · <next run time>
 ```
 
-The status word starts at `new` (never run). Selecting the job draws a small
-chart of its run durations — empty for now, since it hasn't run.
+The status word is `scheduled`; the last column shows when it will run (`in 8h`,
+`due`, and so on). Selecting the job draws a small chart of its run durations —
+empty for now, since it hasn't run.
 
 ## Step 5 — run it now (no daemon needed)
 
 Select the job and press **`r`** (run now).
 
-This fires the job **immediately**, inside `done`, ignoring the schedule. Watch
-the status flip to `ok` and a first bar appear in the detail chart. That's your
-proof the job works — no waiting until 9am, no daemon required.
+This fires the job **immediately**, inside `dn`, ignoring the schedule. Watch the
+status show `running` while the manual run is active, then return to `scheduled`;
+a first bar appears in the detail chart. That's your proof the job works — no
+waiting until 9am, no daemon required.
 
 Other roster keys while you're here:
 
@@ -109,7 +111,7 @@ harness-cron --once     # fire all currently-due jobs once, then exit
 
 Leave `harness-cron` running (in a terminal, a `launchd`/`systemd` unit, or a
 `tmux` pane) and your scheduled jobs fire unattended. Stop it and only "run now"
-works. If you started `done` from a Claude Code session, you can launch the
+works. If you started `dn` from a Claude Code session, you can launch the
 daemon here with `! harness-cron`.
 
 **How to tell it's working:** reopen the dashboard (`Ctrl+J`). The header line
@@ -129,7 +131,7 @@ never have to guess whether your jobs are armed.
 | Delete | select → `Backspace` |
 | Fire on schedule | run `harness-cron` |
 
-Everything except scheduled firing is 100% inside `done`. For the why and the
+Everything except scheduled firing is 100% inside `dn`. For the why and the
 internals, head to [jobs.md](jobs.md).
 
 > **Phase 1 caveat:** the permission `grant` is **recorded but not yet enforced

@@ -39,10 +39,10 @@ event tracer, a request router, a skills layer, and the ACP interface.
   files (soul/identity, AGENTS.md, memory) to cut input tokens every turn — built
   offline via `dn compress`, never on the hot path, reversible by deleting one file.
   On by default (see [docs/compress-aware.md](docs/compress-aware.md)).
-- **Independent review.** `/review` and `/quick-review` (or just "review this" /
-  "quick review of that") run a code review on a **separate model** — different
-  eyes catch more than a model reviewing its own work. Configurable per command
-  (see [docs/review.md](docs/review.md)).
+- **Independent review.** Ask for "review this" or "quick review of that" and
+  the agent can run a code review on a **separate model** — different eyes catch
+  more than a model reviewing its own work. Configurable per command (see
+  [docs/review.md](docs/review.md)).
 - **Instructions.** Drop an `AGENTS.md` in your project (or persona, or `~/.config/harness/`)
   and it becomes standing policy in the agent's prompt (see [docs/agents-md.md](docs/agents-md.md)).
 - **Jobs.** Schedule a persona to run work unattended — a nightly backup, an hourly
@@ -53,8 +53,9 @@ event tracer, a request router, a skills layer, and the ACP interface.
   you can cancel an in-flight turn at any time.
 - **Fully traceable.** Every run is recorded as structured `events.jsonl` and
   `traj.json` for replay and debugging.
-- **Try it for free.** A built-in mock model lets you run the whole thing at zero
-  cost before plugging in a real LLM.
+- **Mock backend for demos/tests.** A built-in mock worker lets you explore the
+  TUI without spending on worker turns; normal request routing still uses the
+  configured router unless stubbed for local development.
 
 ## Quick start
 
@@ -82,15 +83,16 @@ uv tool install --reinstall --force --from . quiubo-done
 
 (The `--editable` install runs live source and never needs this.)
 
-### Try it immediately (no LLM needed)
+### Try the mock backend
 
 ```bash
-dn --model mock     # zero-cost mock model — no API key, no VibeProxy, works right now
+dn --model mock     # mock worker backend
 ```
 
-The mock model simulates the agent loop so you can explore the TUI before connecting a
-real LLM. It fixes the sample failing test in `examples/sample-repo` and demonstrates
-skills, permissions, and the cron dashboard.
+The mock backend simulates the worker loop so you can explore the TUI before
+spending on worker turns. A normal `dn` session still uses DoneDone's router for
+request classification, so CLIProxyAPI must be configured unless you are running
+tests or local development with `HARNESS_ROUTER_STUB=1`.
 
 ### Connect a real LLM (CLIProxyAPI)
 
@@ -102,7 +104,7 @@ that handles authentication and provider routing. Set it up with two commands:
 dn proxy install
 
 # Log in to your LLM provider
-dn proxy login anthropic   # Browser-based OAuth (Claude/Anthropic, Codex, Antigravity)
+dn proxy login anthropic   # Browser-based OAuth (Claude/Anthropic; Codex is also supported)
 # OR
 export PROXY_GROK_API_KEY=your_key   # API-key providers (Grok, Kimi, Gemini)
 
@@ -118,10 +120,11 @@ You can also drop a `.env` in the project directory you run `dn` from instead of
 or a project's `.agents/skills` / `.claude/skills` (see *Skills* below); a user skill
 overrides a bundled one of the same name. (`$XDG_CONFIG_HOME` is honored if set.)
 
-The harness remembers your selected model across sessions in
-`~/.config/harness/done.conf` (TOML). Changing the model at runtime saves it
-to the reserved `default` agent there; passing `--model` at launch overrides
-the saved value for that session without erasing it.
+The harness remembers your selected worker model across sessions in
+`~/.config/harness/done.conf` (TOML). Changing the worker model with `/models`
+saves it to the active persona. The `--model` launch flag selects the backend
+only (`mock` or `vibeproxy`); provider model ids come from `/models`,
+`PROXY_MODEL` / `VIBEPROXY_MODEL`, or `done.conf`.
 
 ### Context compaction
 
@@ -158,14 +161,14 @@ Either install puts two commands on your `PATH`:
 Then run it:
 
 ```bash
-dn --model mock          # start here — zero-cost mock model, no setup required
-dn                       # real LLM via CLIProxyAPI (after `dn proxy install` + login)
+dn --model mock          # mock worker backend
+dn                       # real worker model via CLIProxyAPI (after `dn proxy install` + login)
 dn --cwd ~/myproject     # operate on a specific project instead of the cwd
 ```
 
 | Flag | Values | Default | Meaning |
 |---|---|---|---|
-| `--model` | `mock`, or any CLIProxyAPI-served model (e.g., `gpt-4-turbo`) | from `done.conf` | which LLM the agent uses |
+| `--model` | `mock`, `vibeproxy` | from `done.conf`, else `vibeproxy` | backend for the worker; choose provider model ids with `/models`, env, or `done.conf` |
 | `--cwd` | a path | `.` | the working directory the agent operates in |
 | `--yolo` | flag | off | auto-allow every command — never prompt for permission |
 
@@ -186,11 +189,12 @@ skills exist.
 | `test-driven-development` | write the failing test first, then minimal code |
 | `verification-before-completion` | prove work actually works before declaring it done |
 | `receiving-code-review` | fold feedback with rigor, not reflexive agreement |
-| `ask-done` | user-invoked (`/ask-done`) — recommends which skill/flow fits your situation |
+| `ask-done` | model-disabled advisory skill — ask what skill/flow fits your situation |
 
-Each `SKILL.md` carries an **invocation model** in its frontmatter: `disable-model-invocation`
-(user-only, like `ask-done`), `user-invocable`, and a `flow` tag. **Flows** group
-skills into families (e.g. a future `seo`/`marketing` flow) enabled per-persona in
+Each `SKILL.md` carries an **invocation model** in its frontmatter:
+`disable-model-invocation`, `user-invocable` metadata (parsed, but not currently
+auto-exposed by the TUI slash menu), and a `flow` tag. **Flows** group skills
+into families (e.g. a future `seo`/`marketing` flow) enabled per-persona in
 `persona.toml`; global skills (no flow tag) are always available.
 
 ### Adding your own skills
@@ -232,15 +236,16 @@ A persona lives in a workspace directory. The built-in one is
 | `IDENTITY.md` | name / vibe / emoji |
 | `USER.md` | who the user is (static context you write) |
 
-A fresh install seeds these files for you as inert templates (just a commented
-hint, so they change nothing until edited). Edit one to give the agent a persona:
+A fresh install seeds the built-in `default` persona as Bob: `SOUL.md` and
+`IDENTITY.md` contain the shipped default identity, while `USER.md` is an inert
+template for your own context. Edit the files to change the default persona:
 
 ```bash
 echo "You are terse and never explain unless asked." > ~/.config/harness/agents/default/SOUL.md
 dn   # the agent now answers in that persona, on chat and coding turns alike
 ```
 
-Until you edit a file, behavior is unchanged — no persona, no overhead. See
+New named personas created from the agents rail start from inert templates. See
 [docs/personas.md](docs/personas.md) for the full reference (seeding, trimming,
 blank/inert-skip, the dev path, selection, in-process switching, and creation).
 
@@ -334,29 +339,25 @@ the originals, trimming input tokens every turn. The rule is **compress the
 input, never the response** — your agent's voice is untouched.
 
 ```bash
-dn compress            # build/refresh siblings for cwd AGENTS.md / CLAUDE.md
+dn compress            # refresh default targets (pinned persona files + cwd AGENTS.md / CLAUDE.md)
 dn compress --status   # show each file's size delta and freshness
 ```
 
 For any `FOO.md`, Done loads an optional `FOO.compressed.md` sibling **only when
 it's fresh** (a three-part hash check); otherwise it loads the untouched
-original. Compression is offline (never on the hot path), the chip / `/compress-aware`
-command toggle it live, and deleting a sibling instantly reverts that file. On by
-default. See [docs/compress-aware.md](docs/compress-aware.md) for the full reference.
+original. Compression is offline (never on the hot path), controlled by the
+per-persona `compress_aware` setting, and deleting a sibling instantly reverts
+that file. On by default. See [docs/compress-aware.md](docs/compress-aware.md)
+for the full reference.
 
 ## Independent review
 
 Done can run a code review on a **different model** — separate eyes catch more
-than self-review. `/review` runs a thorough review on a strong model; `/quick-review`
-runs a fast, economical review on a smaller model. Both gather the diff and
-dispatch to the chosen model for findings, printed inline in terse style.
-
-The independent model is the product. Trigger either via slash command (`/review`,
-`/quick-review`) or natural language like *"review this"*, *"code review"*, or
-*"quick review of that"* — the agent auto-invokes the skill. Models are
-configurable in `done.conf` per persona, or the agent proposes sensible defaults
-(preferring a model different from the author's). See [docs/review.md](docs/review.md)
-for the full reference.
+than self-review. Ask in natural language like *"review this"*, *"code review"*,
+or *"quick review of that"* and the agent auto-invokes the review skill. The
+review model is configured in `done.conf`'s `[harness]` table, or the agent
+proposes sensible defaults (preferring a model different from the author's).
+See [docs/review.md](docs/review.md) for the full reference.
 
 ## Jobs (cron)
 
@@ -456,8 +457,8 @@ Regenerate it after any token or component change:
 The engine is an ACP server, so any ACP client can drive it. Start it directly:
 
 ```bash
-dn-agent --model mock          # zero-cost mock model
-dn-agent --model vibeproxy     # real LLM via VibeProxy
+dn-agent --model mock          # mock worker backend
+dn-agent --model vibeproxy     # real worker model via CLIProxyAPI
 ```
 
 It speaks ACP over stdin/stdout — an editor (e.g. Zed) connects and drives
