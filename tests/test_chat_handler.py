@@ -184,6 +184,77 @@ def test_catalog_answer_groups_by_origin_hides_bundled_and_skips_empty(monkeypat
     assert "caveman" in out and "repo-skill" in out
 
 
+# ---- tools questions: answered from the live registry, not the model ---------
+
+def test_is_capability_question_matches_possessive_tool_questions():
+    for q in ["what tools do you have access to?", "what tools do you have",
+              "your tools", "tools you can use", "what commands do you have",
+              "which tools do you have"]:
+        assert is_capability_question(q), q
+
+
+def test_is_capability_question_rejects_build_a_tool_requests():
+    # Regression guard: a request to BUILD/USE a tool must fall through to the
+    # model, not be hijacked as a capability question.
+    for q in ["write a tool to parse logs", "what tools should I use in Rust?",
+              "build me a CLI tool", "this command failed, why?"]:
+        assert not is_capability_question(q), q
+
+
+def test_tools_question_lists_the_real_registry_tools_in_mock_mode():
+    # Answered deterministically from build_registry() — no model, works in mock.
+    out = "".join(ChatHandler(None, catalog=CAT).answer_stream(
+        "what tools do you have access to?"))
+    for name in ("bash", "read", "write", "edit"):
+        assert name in out, name
+    assert MOCK_LINE not in out                 # did NOT fall through to the mock line
+
+
+def test_tools_question_does_not_call_the_model(monkeypatch):
+    import litellm
+
+    def boom(**kwargs):
+        raise AssertionError("model must not be called for a tools question")
+
+    monkeypatch.setattr(litellm, "completion", boom)
+    out = "".join(ChatHandler("gpt-5.4", catalog=CAT).answer_stream("your tools"))
+    assert "bash" in out
+
+
+def test_tools_question_also_lists_skills_and_plan(monkeypatch):
+    # The fuller capability surface: tools + the loaded skill catalog + plan note.
+    import litellm
+
+    def boom(**kwargs):
+        raise AssertionError("model must not be called")
+
+    monkeypatch.setattr(litellm, "completion", boom)
+    out = "".join(ChatHandler("gpt-5.4", catalog=CAT).answer_stream(
+        "what tools do you have?"))
+    assert "bash" in out                         # a tool
+    assert "test-driven-development" in out       # a skill from the catalog
+    assert "plan" in out.lower()                  # the checklist command note
+
+
+def test_skills_dump_has_no_tools_section_when_flag_on(monkeypatch):
+    # No-regression: the deterministic skills dump (flag ON) yields the catalog
+    # answer with NO tools section bleeding in. With the flag OFF a skills
+    # question goes to the model (covered by
+    # test_capability_question_goes_to_model_by_default), so the deterministic
+    # dump is only reachable — and only assertable — with the flag set.
+    monkeypatch.setenv(FLAG, "1")
+    import litellm
+
+    def boom(**kwargs):
+        raise AssertionError("model must not be called")
+
+    monkeypatch.setattr(litellm, "completion", boom)
+    out = "".join(ChatHandler("gpt-5.4", catalog=CAT).answer_stream(
+        "what skills do we have?"))
+    assert "test-driven-development" in out
+    assert "bash" not in out                      # tools list must not appear here
+
+
 def test_ordinary_chat_still_streams_from_model_when_catalog_present(monkeypatch):
     captured = {}
 
