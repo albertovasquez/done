@@ -299,6 +299,46 @@ def test_failure_records_streamed_buffer_not_prior_turn(tmp_path, caplog):
     )
 
 
+class _StreamThenCancelModel(DeterministicToolcallModel):
+    """Streams 'before', trips the cancel flag, then streams 'after' — the second
+    on_delta call raises UserInterruption inside emit_delta. Used to assert clean
+    teardown: 'before' is delivered, the turn resolves, nothing lands afterward."""
+
+    def __init__(self, cancel_flag):
+        super().__init__(outputs=[make_toolcall_output("", [], [])], cost_per_call=0.0)
+        self.on_delta = None
+        self._cancel_flag = cancel_flag
+
+    def query(self, messages, **kw):
+        if self.on_delta:
+            self.on_delta("before")
+        self._cancel_flag.set()
+        if self.on_delta:
+            self.on_delta("after")   # raises UserInterruption inside emit_delta
+        return super().query(messages, **kw)
+
+
+def test_cancel_mid_stream_delivers_buffered_prose_and_stops(tmp_path):
+    """ESC mid-stream: prose buffered before the cancel is delivered by the final
+    flush; the turn resolves; no 'after' prose is delivered."""
+    conn = RecordingConn()
+    agent = _build(_StreamingSubmitModel([]), conn)   # placeholder, replaced below
+    sid = agent._store.new(cwd=str(tmp_path))
+    state = agent._store.get(sid)
+    model = _StreamThenCancelModel(state.cancel_flag)
+    agent._model_factory = lambda *a, **k: model
+
+    resp = _prompt(agent, sid, "do a thing")
+    # cancelled turns resolve (never hang). The post-engine check in
+    # _run_agent_turn (state.cancel_flag.is_set() → "cancelled") overrides
+    # whatever run_engine itself returned, so this is the one real value.
+    assert resp.stop_reason == "cancelled", f"unexpected stop_reason: {resp.stop_reason}"
+
+    texts = "".join(conn.message_texts())
+    assert "before" in texts, "pre-cancel prose was not delivered"
+    assert "after" not in texts, "post-cancel prose leaked"
+
+
 class _TwoStepStreamingModel(DeterministicToolcallModel):
     """Two real model outputs → two query() calls → two real n_calls increments
     (TracingAgent.query() bumps n_calls BEFORE model.query() fires on_delta — see
