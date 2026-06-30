@@ -35,6 +35,10 @@ event tracer, a request router, a skills layer, and the ACP interface.
 - **Memory.** Each persona keeps a persistent, per-persona memory in plain Markdown
   — a small index injected every turn plus a lazy `load_memory` tool, same shape as
   skills. No database, no embeddings, no-op until used (see *Memory* below).
+- **Compress-aware.** Optionally load pre-compressed shadow copies of your context
+  files (soul/identity, AGENTS.md, memory) to cut input tokens every turn — built
+  offline via `dn compress`, never on the hot path, reversible by deleting one file.
+  On by default (see [docs/compress-aware.md](docs/compress-aware.md)).
 - **Instructions.** Drop an `AGENTS.md` in your project (or persona, or `~/.config/harness/`)
   and it becomes standing policy in the agent's prompt (see [docs/agents-md.md](docs/agents-md.md)).
 - **Jobs.** Schedule a persona to run work unattended — a nightly backup, an hourly
@@ -310,6 +314,24 @@ download, as OpenClaw uses) and chose to keep memory Python-only and dependency-
 because the files stay source of truth, FTS/QMD can be added later as an additive
 layer. See [docs/memory.md](docs/memory.md) for the full reference.
 
+## Compress-aware mode
+
+Done can load a **pre-compressed copy** of your prose context files (the
+soul/identity trio, `AGENTS.md`/`CLAUDE.md`, memory) into the prompt instead of
+the originals, trimming input tokens every turn. The rule is **compress the
+input, never the response** — your agent's voice is untouched.
+
+```bash
+dn compress            # build/refresh siblings for cwd AGENTS.md / CLAUDE.md
+dn compress --status   # show each file's size delta and freshness
+```
+
+For any `FOO.md`, Done loads an optional `FOO.compressed.md` sibling **only when
+it's fresh** (a three-part hash check); otherwise it loads the untouched
+original. Compression is offline (never on the hot path), the chip / `/compress-aware`
+command toggle it live, and deleting a sibling instantly reverts that file. On by
+default. See [docs/compress-aware.md](docs/compress-aware.md) for the full reference.
+
 ## Jobs (cron)
 
 A **job** runs a persona on a schedule, unattended. Each job is bound to one
@@ -463,7 +485,7 @@ vendored agent:
 | `upstream/` | vendored mini-swe-agent — never edited |
 | `harness/skills/` | the bundled maturity spine, lazily loaded via `load_skill` (+ `NOTICE.md` attribution) |
 | `examples/sample-repo/` | a tiny repo with one failing test, for demos |
-| `docs/` | reference docs (skills/flows, AGENTS.md, personas, memory, debugging), specs, plans, learning log |
+| `docs/` | reference docs (skills/flows, AGENTS.md, personas, memory, compress-aware, debugging), specs, plans, learning log |
 
 ## Development
 
