@@ -76,6 +76,24 @@ def harness_setting(key: str) -> str | None:
     return val if isinstance(val, str) else None
 
 
+def set_harness_setting(key: str, value: str) -> None:
+    """Set a top-level [harness] string key in done.conf, preserving
+    schema_version, all agent tables, and every other top-level section.
+    Routes through _serialize(preserve=) so there is one serializer."""
+    raw = _load_raw()
+    harness = raw.get("harness")
+    if not isinstance(harness, dict):
+        harness = {}
+    harness = {**harness, key: value}
+    raw = {**raw, "harness": harness}
+    text = _serialize(load(), preserve=raw)
+    path = conf_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text)
+    os.replace(tmp, path)
+
+
 def load() -> dict[str, AgentConfig]:
     """All agents keyed by their table key. Returns {} if the file is missing,
     empty, or unparseable. Individual agent tables missing `backend` or `model`
