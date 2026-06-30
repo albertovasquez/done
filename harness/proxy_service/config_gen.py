@@ -10,8 +10,9 @@ from harness.proxy_service import paths
 # To see the full list (more glm/qwen/kimi variants exist):
 #   curl -s https://api.neuralwatt.com/v1/models -H "Authorization: Bearer $NEURALWATT_API_KEY"
 _NEURALWATT_MODELS = [
-    ("glm-5.2", "glm"),               # GLM 5.2 (also used as the router fallback)
-    ("qwen3.5-397b-fast", "qwen"),    # the cheap ROUTER model (ROUTER_MODEL=openai/qwen)
+    ("glm-5.2", "glm"),                      # GLM 5.2 — worker model (dn --model glm)
+    ("qwen3.5-397b-fast", "qwen"),          # cheap ROUTER model (ROUTER_MODEL=openai/qwen)
+    ("glm-5.2-short-fast", "glm-fast"),     # lighter GLM — router fallback (ROUTER_FALLBACK_MODEL=openai/glm-fast)
 ]
 
 
