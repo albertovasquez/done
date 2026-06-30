@@ -19,3 +19,13 @@ def test_every_tool_satisfies_the_protocol():
         assert isinstance(t.schema, dict)
         assert callable(t.display_label)
         assert callable(t.execute)
+
+
+def test_review_tool_registered_by_default():
+    names = [t.name for t in build_registry()]
+    assert "review" in names
+
+
+def test_review_tool_excluded_for_workers():
+    names = [t.name for t in build_registry(is_worker=True)]
+    assert "review" not in names

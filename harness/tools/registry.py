@@ -21,6 +21,7 @@ from harness.tools.edit import EditTool
 from harness.tools.load_memory import LoadMemoryTool
 from harness.tools.load_skill import LoadSkillTool
 from harness.tools.read import ReadTool
+from harness.tools.review import ReviewTool
 from harness.tools.write import WriteTool
 
 
@@ -35,17 +36,17 @@ def build_registry(skill_roots: list[Path] | None = None,
     # Local import breaks the cycle: subagent → agent_build → registry → subagent.
     from harness.tools.subagent import SubagentTool  # noqa: PLC0415
     tools: list[Tool] = [BashTool(), ReadTool(), WriteTool(), EditTool(), CreateJobTool(),
-                         SubagentTool()]
+                         SubagentTool(), ReviewTool()]
     if skill_roots:
         tools.append(LoadSkillTool(skill_roots))
     # Gate load_memory on the workspace actually HAVING recall content — an empty
     # workspace must not advertise a dead tool (byte-identical no-op).
     if memory_root and memory_mod.has_memory(memory_root):
         tools.append(LoadMemoryTool(memory_root))
-    # Depth-1 enforcement: a worker can NEVER call subagent (explicit deny, not a
+    # Depth-1 enforcement: a worker can NEVER call subagent or review (explicit deny, not a
     # side effect of the toolset — a task could name it in `tools`).
     if is_worker:
-        tools = [t for t in tools if t.name != "subagent"]
+        tools = [t for t in tools if t.name not in ("subagent", "review")]
     # Restricted toolset: keep only the named tools (model schemas AND agent
     # dispatch use this one list, so they always agree).
     if toolset is not None:

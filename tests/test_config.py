@@ -362,3 +362,28 @@ def test_set_compress_aware_preserves_other_partial_personas(isolated_config):
     config.set_compress_aware("bob", False)
     config.set_compress_aware("alice", True)   # touch alice
     assert config.compress_aware_pinned("bob") is False   # bob's OFF must survive
+
+
+# --- set_harness_setting: generic writer for [harness] keys ---
+
+def test_set_harness_setting_roundtrip(isolated_config):
+    config.set_harness_setting("review_model", "claude-opus-4-8")
+    assert config.harness_setting("review_model") == "claude-opus-4-8"
+
+
+def test_set_harness_setting_preserves_agents_and_other_sections(isolated_config):
+    config.update_agent("default", backend="vibeproxy", model="m-x")
+    conf = config.conf_path()
+    conf.write_text(conf.read_text() + "\n[harness]\ndebug = true\n")
+    config.set_harness_setting("review_model", "claude-opus-4-8")
+    agents = config.load()
+    assert agents["default"].model == "m-x"          # agent table survived
+    assert "debug = true" in conf.read_text()         # other [harness] key survived
+    assert config.harness_setting("review_model") == "claude-opus-4-8"
+
+
+def test_set_harness_setting_two_keys_both_survive(isolated_config):
+    config.set_harness_setting("review_model", "m-review")
+    config.set_harness_setting("quick_review_model", "m-quick")
+    assert config.harness_setting("review_model") == "m-review"
+    assert config.harness_setting("quick_review_model") == "m-quick"

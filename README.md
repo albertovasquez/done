@@ -39,6 +39,10 @@ event tracer, a request router, a skills layer, and the ACP interface.
   files (soul/identity, AGENTS.md, memory) to cut input tokens every turn — built
   offline via `dn compress`, never on the hot path, reversible by deleting one file.
   On by default (see [docs/compress-aware.md](docs/compress-aware.md)).
+- **Independent review.** `/review` and `/quick-review` (or just "review this" /
+  "quick review of that") run a code review on a **separate model** — different
+  eyes catch more than a model reviewing its own work. Configurable per command
+  (see [docs/review.md](docs/review.md)).
 - **Instructions.** Drop an `AGENTS.md` in your project (or persona, or `~/.config/harness/`)
   and it becomes standing policy in the agent's prompt (see [docs/agents-md.md](docs/agents-md.md)).
 - **Jobs.** Schedule a persona to run work unattended — a nightly backup, an hourly
@@ -332,6 +336,20 @@ original. Compression is offline (never on the hot path), the chip / `/compress-
 command toggle it live, and deleting a sibling instantly reverts that file. On by
 default. See [docs/compress-aware.md](docs/compress-aware.md) for the full reference.
 
+## Independent review
+
+Done can run a code review on a **different model** — separate eyes catch more
+than self-review. `/review` runs a thorough review on a strong model; `/quick-review`
+runs a fast, economical review on a smaller model. Both gather the diff and
+dispatch to the chosen model for findings, printed inline in terse style.
+
+The independent model is the product. Trigger either via slash command (`/review`,
+`/quick-review`) or natural language like *"review this"*, *"code review"*, or
+*"quick review of that"* — the agent auto-invokes the skill. Models are
+configurable in `done.conf` per persona, or the agent proposes sensible defaults
+(preferring a model different from the author's). See [docs/review.md](docs/review.md)
+for the full reference.
+
 ## Jobs (cron)
 
 A **job** runs a persona on a schedule, unattended. Each job is bound to one
@@ -485,7 +503,7 @@ vendored agent:
 | `upstream/` | vendored mini-swe-agent — never edited |
 | `harness/skills/` | the bundled maturity spine, lazily loaded via `load_skill` (+ `NOTICE.md` attribution) |
 | `examples/sample-repo/` | a tiny repo with one failing test, for demos |
-| `docs/` | reference docs (skills/flows, AGENTS.md, personas, memory, compress-aware, debugging), specs, plans, learning log |
+| `docs/` | reference docs (skills/flows, AGENTS.md, personas, memory, compress-aware, review, debugging), specs, plans, learning log |
 
 ## Development
 
