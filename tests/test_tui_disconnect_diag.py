@@ -81,3 +81,66 @@ def test_stderr_tail_is_bounded_to_20():
     tail = list(app._stderr_tail)
     assert len(tail) == 20, len(tail)
     assert tail[0] == "line10" and tail[-1] == "line29", tail
+
+
+def _drive_report(app, exc):
+    """Run _report_disconnect on a bare app under a fresh loop, capturing
+    every _append_line call into app._captured_lines."""
+    app._captured_lines = []
+    app._append_line = lambda s: app._captured_lines.append(s)
+
+    async def go():
+        await asyncio.wait_for(app._report_disconnect(exc), timeout=5.0)
+
+    asyncio.run(go())
+    return "\n".join(app._captured_lines)
+
+
+def test_report_disconnect_shows_signal_and_stderr_tail():
+    app = _bare_app()
+    app._stderr_task = None                       # nothing to flush
+    app._proc = _Proc(None, returncode=-signal.SIGSEGV)
+    app._stderr_tail.extend(["Fatal Python error: Segmentation fault", "  frame 0"])
+
+    out = _drive_report(app, ConnectionError("Connection closed"))
+
+    assert "agent disconnected" in out
+    assert "killed by SIGSEGV" in out
+    assert "Fatal Python error: Segmentation fault" in out
+    assert "frame 0" in out
+    assert "Connection closed" in out             # original exception text retained
+
+
+def test_report_disconnect_flushes_drain_before_reading_tail():
+    """The handler must await the running drain so the LAST stderr line (the
+    crash cause), which arrives after a delay, is included — not raced past."""
+    app = _bare_app()
+    app._proc = _Proc(None, returncode=-signal.SIGSEGV)
+
+    async def slow_drain():
+        await asyncio.sleep(0.05)                 # final line lands late
+        app._stderr_tail.append("LATE crash line")
+
+    async def go():
+        app._captured_lines = []
+        app._append_line = lambda s: app._captured_lines.append(s)
+        app._stderr_task = asyncio.create_task(slow_drain())
+        await asyncio.wait_for(app._report_disconnect(ConnectionError("x")), timeout=5.0)
+        return "\n".join(app._captured_lines)
+
+    out = asyncio.run(go())
+    assert "LATE crash line" in out, out          # proves we awaited the drain
+
+
+def test_report_disconnect_unknown_when_returncode_none():
+    app = _bare_app()
+    app._stderr_task = None
+    app._proc = _Proc(None, returncode=None)      # not reaped; wait() also yields None below
+
+    # _Proc has no wait(); give it one that returns immediately with no code
+    async def _wait():
+        return None
+    app._proc.wait = _wait
+
+    out = _drive_report(app, ConnectionError("x"))
+    assert "exit status unknown" in out, out

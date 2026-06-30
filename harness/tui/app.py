@@ -1178,7 +1178,7 @@ class HarnessTui(App):
                 self._append_line(_c("muted", f"— turn ended: {resp.stop_reason} —"))
         except Exception as e:
             self._apply(TurnEnded(ok=False))
-            self._append_line(_c("error", f"agent disconnected — restart to continue ({e})"))
+            await self._report_disconnect(e)
         finally:
             self._turn_active = False
             if not self._running:                 # app shut down mid-turn: skip DOM ops
@@ -1194,6 +1194,39 @@ class HarnessTui(App):
                 switched = self._apply_pending_persona()  # honor a mid-turn switch request first…
                 if not switched:                          # …drain immediately only when no switch
                     self._drain_queue()                   # (switch worker drains after it resolves)
+
+    async def _report_disconnect(self, e: BaseException) -> None:
+        """Surface WHY the agent subprocess died: exit code / signal + last
+        stderr lines. Flushes the concurrent stderr drain first so the final
+        crash lines (which race the stdout-EOF that triggered `e`) are present."""
+        # 1) Flush the drain so the last stderr lines land in the buffer.
+        #    shield() so a timeout here never CANCELS the drain task — it is
+        #    owned by _teardown, not by this best-effort handler.
+        task = self._stderr_task
+        if task is not None and not task.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=0.5)
+            # CancelledError is BaseException-derived (NOT caught by Exception in
+            # 3.11, verified) — list it explicitly so a cancel while we wait is
+            # swallowed too. Diagnostics are best-effort: never block or re-raise.
+            except (asyncio.CancelledError, Exception):
+                pass
+        # 2) Resolve the exit cause. (asyncio.TimeoutError IS an Exception in
+        #    3.11 — it is the builtin TimeoutError — so `except Exception` covers
+        #    the wait() timeout; a None rc just renders "exit status unknown".)
+        rc = getattr(self._proc, "returncode", None)
+        if rc is None and self._proc is not None:
+            try:
+                rc = await asyncio.wait_for(self._proc.wait(), timeout=0.5)
+            except Exception:
+                rc = None
+        # 3) Build the multi-line message.
+        self._append_line(_c("error", f"agent disconnected — restart to continue ({e})"))
+        self._append_line(_c("error", f"process: {self._format_exit(rc)}"))
+        if self._stderr_tail:
+            self._append_line(_c("muted", "last stderr:"))
+            for ln in self._stderr_tail:
+                self._append_line(_c("muted", f"  {ln}"))
 
     def _drain_queue(self) -> None:
         """Start the next message the user queued mid-turn. FIFO, one per turn —
