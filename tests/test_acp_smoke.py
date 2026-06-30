@@ -415,7 +415,7 @@ def test_terminal_delegation_uses_client_terminal(tmp_path):
 # commands via LocalEnvironment (file actually changes).
 # ---------------------------------------------------------------------------
 
-def test_load_session_replays_history(tmp_path, monkeypatch):
+def test_load_session_replays_history(tmp_path):
     """load_session must replay recorded turns as session_update notifications.
 
     Drive two prompts in one session (records 2 history turns), then call
@@ -427,11 +427,17 @@ def test_load_session_replays_history(tmp_path, monkeypatch):
     previous live-VibeProxy classification round-trips made it slow + flaky. The
     agent subprocess inherits this env var.
     """
-    monkeypatch.setenv("HARNESS_ROUTER_STUB", "1")
-
+    # spawn_agent_process builds the child env from acp.default_environment() and
+    # only merges what's passed via env=; it does NOT inherit the parent process
+    # env. So setting HARNESS_ROUTER_STUB in this process never reaches the
+    # subprocess — pass it explicitly via env= (merged onto the default, so PATH
+    # etc. are kept). With the stub, classification is offline (no live VibeProxy).
     async def go():
         client = _CollectingClient()
-        async with acp.spawn_agent_process(client, AGENT_CMD[0], *AGENT_CMD[1:]) as (conn, _proc):
+        async with acp.spawn_agent_process(
+            client, AGENT_CMD[0], *AGENT_CMD[1:],
+            env={"HARNESS_ROUTER_STUB": "1"},
+        ) as (conn, _proc):
             await conn.initialize(protocol_version=acp.PROTOCOL_VERSION)
             new = await conn.new_session(cwd=str(tmp_path), mcp_servers=[])
             sid = new.session_id
