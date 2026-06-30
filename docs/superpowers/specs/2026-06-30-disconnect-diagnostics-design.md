@@ -69,34 +69,55 @@ In `_drain_stderr` (`app.py:299-317`), append each decoded line to
 trace relay. The two are independent consumers of the same drained line; nei-
 ther should gate the other.
 
-Reset/clear `self._stderr_tail` on each successful `_connect()` (or accept
-that it naturally rolls over via `maxlen` — a fresh connect doesn't need an
-explicit clear since the deque just fills with the new process's output as it
-drains; a stale line from a prior process would only linger if the new
-process produces fewer than 20 stderr lines before the next disconnect, which
-is an acceptable edge case for a diagnostic aid, not worth extra state
-management).
+Clear `self._stderr_tail` at the start of each successful `_connect()`. This
+is required, not optional: without it, if process B dies emitting **zero**
+stderr (e.g. SIGKILL/OOM/segfault with no Python-level output), the buffer
+still holds the *previous* process A's lines, and the disconnect handler would
+attribute A's traceback to B's death. For a diagnostic whose entire purpose is
+accurate attribution, a stale-line misattribution is a correctness bug, not an
+acceptable edge case. Clearing on connect is one line (`self._stderr_tail.clear()`)
+and removes the ambiguity entirely.
 
 ### 2. Exit-cause formatting on disconnect
 
 In `_send_prompt`'s `except Exception as e:` block (`app.py:1159-1161`),
 before appending the error line:
 
-1. Determine the subprocess's exit status. `self._proc` (an
-   `asyncio.subprocess.Process`) should already have `returncode` set by the
-   time the connection-closed exception surfaces (the process exited before
-   the pipe EOF was observed). Read `self._proc.returncode` directly — no
-   blocking `wait()` needed; if it happens to still be `None` (process hasn't
-   been reaped yet), fall back to a short bounded wait
+1. **Flush the stderr drain before reading the tail.** This is the critical
+   ordering step. `_drain_stderr` (`app.py:299-317`) runs as a *concurrent*
+   background task (`self._stderr_task`, created at `app.py:286`). When the
+   process dies, the `ConnectionError` that lands us in this except block is
+   triggered by the ACP layer observing the agent's **stdout** EOF — an event
+   on a *different channel* than stderr, with no ordering guarantee relative
+   to the final stderr lines. The crash traceback (e.g. "Fatal Python error:
+   Segmentation fault") is the *last* thing written before death, so it is
+   exactly the content most likely to still be in-flight when the
+   stdout-triggered exception fires. Reading `self._stderr_tail` immediately
+   would routinely show an empty or truncated tail precisely when it matters
+   most. Therefore: first
+   `await asyncio.wait_for(self._stderr_task, timeout=0.5)` (guarded — the
+   task may be `None`, already done, or raise on cancel; swallow those) so the
+   drain reaches stderr EOF and appends the final lines, *then* read the tail.
+   Treat a timeout as "drain incomplete" and proceed with whatever was
+   captured rather than blocking the UI further.
+2. Determine the subprocess's exit status. `self._proc` (an
+   `asyncio.subprocess.Process`) is still populated at this point — neither
+   the `except` block nor the `finally` clause calls `_teardown()` (teardown
+   runs later, on the user's restart action), so `self._proc` is not yet
+   nulled. It should already have `returncode` set by the time the
+   connection-closed exception surfaces (the process exited before the pipe
+   EOF was observed), but stdout EOF and OS-process reaping are distinct
+   events, so `returncode` may briefly still be `None`. Read
+   `self._proc.returncode`; if `None`, fall back to a short bounded wait
    (`asyncio.wait_for(self._proc.wait(), timeout=0.5)`) and treat a timeout as
    "exit status unknown" rather than blocking the UI.
-2. Format it via a small helper, e.g. `_format_exit(returncode: int | None) -> str`:
+3. Format it via a small helper, e.g. `_format_exit(returncode: int | None) -> str`:
    - `None` → `"exit status unknown"`
    - `>= 0` → `f"exited with code {returncode}"`
    - `< 0` → resolve the signal name via `signal.Signals(-returncode).name`
      (fall back to the raw number if `ValueError`, e.g. an unrecognized
      signal) → `f"killed by {name}"`
-3. Build the on-screen message as multiple lines: the existing
+4. Build the on-screen message as multiple lines: the existing
    `"agent disconnected — restart to continue"` header, then the formatted
    exit cause, then (if `self._stderr_tail` is non-empty) a `"last stderr:"`
    section with each buffered line indented. Keep the original `({e})`
@@ -128,6 +149,15 @@ last stderr:
 - **Not persisting stderr to disk unconditionally** — that was raised as a
   broader alternative during scoping and explicitly not chosen; in-memory,
   inline display is the agreed scope.
+- **Covers the mid-prompt disconnect only**, not connect-time failures. This
+  change targets the `except` block in `_send_prompt` (`app.py:1159`), which
+  is the path the reproduced bug takes (the agent dies *during* a turn).
+  `_connect` has its own separate failure path (`app.py:294`, an
+  `initialize`/`new_session` error wrapped in `_teardown` + re-raise) for the
+  agent dying *before* a session is established. That path is out of scope
+  here — it is a distinct, rarer failure with its own teardown semantics, and
+  folding it in would broaden the change beyond the agreed diagnostic. If it
+  turns out to need the same treatment, it is a clean follow-up.
 
 ## Testing
 
@@ -138,6 +168,18 @@ last stderr:
   monkeypatch `self._conn.prompt` to raise, set `self._proc.returncode` to a
   known value and `self._stderr_tail` to known lines, assert the appended
   error text contains the formatted exit cause and the stderr lines.
+- **Drain-flush ordering (the blocker fix):** test that the handler awaits
+  `self._stderr_task` before reading the tail. Simulate the race: a
+  `_stderr_task` that appends a final "crash traceback" line only *after* a
+  brief delay, then resolves. Assert the on-screen message includes that final
+  line — i.e. the handler waited for the drain rather than reading the tail
+  early. Also cover the guard cases: `self._stderr_task is None`, an
+  already-completed task, and a task that exceeds the 0.5s timeout (handler
+  proceeds with the partial tail, does not hang).
+- **Deque clear on connect:** test that `self._stderr_tail` is emptied at the
+  start of a successful `_connect()`, so a prior process's lines cannot leak
+  into a later disconnect message. Seed the tail with "process A" lines,
+  reconnect, assert the tail is empty.
 - Confirm `_drain_stderr` still appends to `self._stderr_tail` regardless of
   `self._tracer` being `NullTracer` vs a real tracer (both branches exercised).
 - Re-run the full suite (`.venv/bin/python -m pytest tests/ -q`) to confirm no
@@ -145,6 +187,15 @@ last stderr:
 
 ## Risks
 
+- **Stderr-vs-stdout drain race (addressed in design):** the final stderr
+  lines could lose the race against the stdout-EOF-triggered `ConnectionError`
+  and be missing from the tail. This is the most important correctness concern
+  for the feature — a diagnostic that is empty exactly when it matters. It is
+  handled by step 1 of the disconnect handler (await `self._stderr_task` with a
+  bounded timeout before reading the tail), not left as residual risk. The only
+  remaining exposure is the rare case where the drain genuinely cannot reach
+  EOF within the 0.5s budget, in which case the tail is shown partial rather
+  than blocking the UI — an honest degradation.
 - **`self._proc.returncode` read race:** if read too early (process hasn't
   actually exited yet, and the `ConnectionError` came from something else
   entirely, e.g. a transport-level error unrelated to process death), the
