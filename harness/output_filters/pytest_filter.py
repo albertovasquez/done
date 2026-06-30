@@ -11,13 +11,16 @@ _HAS_FAILURE = re.compile(r"^(=+ (FAILURES|ERRORS) =+|=+ short test summary)", r
 
 
 def matches(command: str) -> bool:
-    c = command.strip()
-    return c.startswith("pytest") or " pytest" in c or "-m pytest" in c
+    parts = command.strip().split()
+    if not parts:
+        return False
+    first = parts[0].rsplit("/", 1)[-1]      # basename of argv[0]
+    return first == "pytest" or "-m pytest" in command
 
 
 def filter_pytest(command: str, output: str, returncode: int) -> str | None:
     if returncode != 0 or _HAS_FAILURE.search(output):
-        return output                             # failures pass through whole
+        return None                               # failures: decline → dispatcher passes through whole
     m = _SUMMARY.search(output)
     if not m:
         return None                               # unrecognized shape → decline
