@@ -19,18 +19,37 @@ _DEFAULT_BASE_URL = "http://localhost:8317/v1"
 _DEFAULT_API_KEY = "dummy-not-used"        # VibeProxy ignores it; litellm requires a value
 DEFAULT_MODEL = "gpt-5.4"                   # default WORKER model (not the router model)
 
+# precedence: PROXY_* is the new canonical name and wins over the legacy name.
+_MODEL_ENVS = ("PROXY_MODEL", "VIBEPROXY_MODEL")
+
+
+def model_set_in(env) -> bool:
+    """True if a worker-model env var (either name) is present AND non-empty."""
+    return any(env.get(k) for k in _MODEL_ENVS)
+
+
+def model_value(env):
+    """The worker-model value under either name, PROXY_MODEL first. None if absent."""
+    for k in _MODEL_ENVS:
+        v = env.get(k)
+        if v:
+            return v
+    return None
+
 
 def base_url() -> str:
-    return os.getenv("VIBEPROXY_BASE_URL", _DEFAULT_BASE_URL)
+    return (os.getenv("PROXY_BASE_URL") or os.getenv("VIBEPROXY_BASE_URL")
+            or _DEFAULT_BASE_URL)
 
 
 def api_key() -> str:
-    return os.getenv("VIBEPROXY_API_KEY", _DEFAULT_API_KEY)
+    return (os.getenv("PROXY_API_KEY") or os.getenv("VIBEPROXY_API_KEY")
+            or _DEFAULT_API_KEY)
 
 
 def default_model() -> str:
     """The configured worker model (env override of DEFAULT_MODEL)."""
-    return os.getenv("VIBEPROXY_MODEL", DEFAULT_MODEL)
+    return model_value(os.environ) or DEFAULT_MODEL
 
 
 def model_id(name: str) -> str:
