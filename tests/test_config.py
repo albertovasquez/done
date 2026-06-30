@@ -380,3 +380,10 @@ def test_set_harness_setting_preserves_agents_and_other_sections(isolated_config
     assert agents["default"].model == "m-x"          # agent table survived
     assert "debug = true" in conf.read_text()         # other [harness] key survived
     assert config.harness_setting("review_model") == "claude-opus-4-8"
+
+
+def test_set_harness_setting_two_keys_both_survive(isolated_config):
+    config.set_harness_setting("review_model", "m-review")
+    config.set_harness_setting("quick_review_model", "m-quick")
+    assert config.harness_setting("review_model") == "m-review"
+    assert config.harness_setting("quick_review_model") == "m-quick"

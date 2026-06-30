@@ -90,7 +90,7 @@ def set_harness_setting(key: str, value: str) -> None:
     path = conf_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text)
+    tmp.write_text(text, encoding="utf-8")
     os.replace(tmp, path)
 
 
