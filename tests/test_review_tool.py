@@ -35,3 +35,29 @@ def test_tool_no_model_returns_message_not_crash(monkeypatch, tmp_path):
     out = ReviewTool().execute({"content": "x"}, _Env())
     assert out["returncode"] == 1
     assert "review model" in out["output"].lower()
+
+
+def test_tool_quick_uses_quick_model(monkeypatch, tmp_path):
+    from harness import config
+    import harness.tools.review as rt
+    d = tmp_path / "cfg"; d.mkdir()
+    monkeypatch.setattr(config.paths, "config_dir", lambda: d)
+    (d / "done.conf").write_text(
+        'schema_version = 1\n\n[harness]\nquick_review_model = "quick-m"\nreview_model = "full-m"\n')
+    captured = {}
+    def fake_build(name):
+        captured["name"] = name
+        return lambda p: "ok"
+    monkeypatch.setattr(rt, "_build_call_model", fake_build)
+    out = rt.ReviewTool().execute({"content": "x", "quick": True}, _Env())
+    assert out["returncode"] == 0
+    assert captured["name"] == "quick-m"   # quick=True -> quick_review_model, not full-m
+
+
+def test_tool_empty_content_returns_error_not_crash(monkeypatch):
+    import harness.tools.review as rt
+    # model resolves (explicit), but content is empty -> run_review raises ValueError -> returncode 1
+    monkeypatch.setattr(rt, "_build_call_model", lambda name: (lambda p: "should-not-be-reached"))
+    out = rt.ReviewTool().execute({"content": "   ", "model": "m"}, _Env())
+    assert out["returncode"] == 1
+    assert out["exception_info"] is None   # handled, not crashed
