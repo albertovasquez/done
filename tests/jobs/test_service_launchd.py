@@ -20,7 +20,10 @@ def test_build_plist_has_runatload_keepalive_and_program():
     assert doc["Label"] == "com.quiubo.done.cron"
     assert doc["RunAtLoad"] is True
     assert doc["KeepAlive"] is True
-    assert doc["ProgramArguments"] == ["/usr/bin/python3", "-m", "harness.jobs.cron_main"]
+    # build_plist resolves the `harness-cron` console-script next to the interpreter
+    # (the `-m harness.jobs.cron_main` form skips the __main__ guard and returns
+    # immediately). ProgramArguments is that binary, derived from the given python.
+    assert doc["ProgramArguments"] == ["/usr/bin/harness-cron"]
 
 
 def test_build_plist_has_throttle_interval():
