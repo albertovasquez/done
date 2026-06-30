@@ -10,7 +10,9 @@ the install path is validated end-to-end.
 """
 from __future__ import annotations
 
+import os
 import platform
+import subprocess
 
 from harness.proxy_service import config_gen, management, paths
 
@@ -141,19 +143,53 @@ def _register_systemd(binary: str, config_path: str, mgmt_password: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Service control via OS manager (launchctl/systemctl)
+# ---------------------------------------------------------------------------
+
+def _run(argv: list[str]) -> tuple[int, str]:
+    """Shell-out seam for subprocess calls.
+
+    Tests monkeypatch this to intercept and control OS service commands.
+    Returns (returncode, stderr-or-stdout).
+    """
+    p = subprocess.run(argv, capture_output=True, text=True)
+    return p.returncode, (p.stderr or p.stdout).strip()
+
+
+def start() -> str:
+    """Start the CLIProxyAPI service via OS manager."""
+    sysname = platform.system()
+    if sysname == "Darwin":
+        from harness.proxy_service import service_launchd as s
+        rc, err = _run(["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{s.LABEL}"])
+    elif sysname == "Linux":
+        from harness.proxy_service import service_systemd as s
+        rc, err = _run(["systemctl", "--user", "start", f"{s.LABEL}.service"])
+    else:
+        return f"unsupported platform: {sysname}"
+    return "CLIProxyAPI started" if rc == 0 else f"start failed: {err}"
+
+
+def stop() -> str:
+    """Stop the CLIProxyAPI service via OS manager."""
+    sysname = platform.system()
+    if sysname == "Darwin":
+        from harness.proxy_service import service_launchd as s
+        rc, err = _run(["launchctl", "bootout", f"gui/{os.getuid()}/{s.LABEL}"])
+    elif sysname == "Linux":
+        from harness.proxy_service import service_systemd as s
+        rc, err = _run(["systemctl", "--user", "stop", f"{s.LABEL}.service"])
+    else:
+        return f"unsupported platform: {sysname}"
+    return "CLIProxyAPI stopped" if rc == 0 else f"stop failed: {err}"
+
+
+# ---------------------------------------------------------------------------
 # Stubbed — clear message, will be fleshed out once install is validated
 # ---------------------------------------------------------------------------
 
 def uninstall() -> str:
     return "dn proxy uninstall: not yet implemented — coming in a follow-up task"
-
-
-def start() -> str:
-    return "dn proxy start: not yet implemented — use the OS service manager to start CLIProxyAPI"
-
-
-def stop() -> str:
-    return "dn proxy stop: not yet implemented — use the OS service manager to stop CLIProxyAPI"
 
 
 def upgrade() -> str:
