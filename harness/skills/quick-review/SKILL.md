@@ -1,6 +1,6 @@
 ---
 name: quick-review
-description: Fast, cheap code review on a small separate model. Use for "/quick-review" — a quick independent pass.
+description: Fast, cheap independent code review on a small separate model. Use when the user says "quick review", "quick review of this/that", "do a quick review", "fast review", or invokes /quick-review.
 ---
 
 # Quick review (fast independent model)

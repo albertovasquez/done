@@ -55,3 +55,15 @@ def test_bundled_review_skills_parse():
         assert data.get("name") == name           # frontmatter name matches dir
         assert data.get("description")
         assert "review" in body.lower()
+
+
+def test_review_skills_are_model_invocable():
+    from pathlib import Path
+    from harness import skills, paths
+    # Load catalog from bundled skills only
+    cat = skills.load_catalog_with_skips([paths.bundled_skills_dir()])
+    by = {m.name: m for m in cat.skills}
+    assert by["review"].model_invocable is True
+    assert by["quick-review"].model_invocable is True
+    assert "review" in by["review"].description.lower()
+    assert "review" in by["quick-review"].description.lower()
