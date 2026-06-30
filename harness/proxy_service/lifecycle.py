@@ -32,7 +32,7 @@ def status() -> str:
 
     # Proxy is up — report per-provider auth status.
     lines = ["CLIProxyAPI: running"]
-    for provider, path in management._AUTH_URL_PATHS.items():
+    for provider in management._AUTH_URL_PATHS:
         try:
             r = management._get("get-auth-status", pw)
             body = r.json()
@@ -50,8 +50,9 @@ def status() -> str:
 def install() -> str:
     """Describe the install steps and perform the safe ones (config write).
 
-    Binary download and OS-service registration are guarded behind a
-    _can_shell_out() check so routing tests do not require a live environment.
+    Binary download and OS-service registration are guarded by checking whether
+    the binary exists on disk; if not present, those steps are skipped so routing
+    tests do not require a live environment.
     """
     pw = config_gen.ensure_management_password()
     config_text = config_gen.generate()
