@@ -6,16 +6,12 @@ from harness.proxy_service import paths
 
 # NeuralWatt upstream models exposed via the proxy, as (upstream model id, alias).
 # The alias is what the harness/router requests (e.g. ROUTER_MODEL=openai/qwen).
-# Upstream ids must match NeuralWatt's /v1/models exactly — confirm with:
+# IDs below were CONFIRMED against a live NeuralWatt /v1/models on 2026-06-30.
+# To see the full list (more glm/qwen/kimi variants exist):
 #   curl -s https://api.neuralwatt.com/v1/models -H "Authorization: Bearer $NEURALWATT_API_KEY"
-# and update here if they differ. (IDs below are from NeuralWatt's docs as of
-# 2026-06-30; the GLM id in particular is unverified against a live key.)
 _NEURALWATT_MODELS = [
-    ("zai-org/GLM-4.6", "glm"),
-    # `qwen` is wired for use as the cheap ROUTER model (ROUTER_MODEL=openai/qwen).
-    # Upstream id set per user request; CONFIRM against NeuralWatt /v1/models once a
-    # key is set — if it 404s, this id is the place to fix.
-    ("qwen3.5-397b-fast", "qwen"),
+    ("glm-5.2", "glm"),               # GLM 5.2 (also used as the router fallback)
+    ("qwen3.5-397b-fast", "qwen"),    # the cheap ROUTER model (ROUTER_MODEL=openai/qwen)
 ]
 
 
