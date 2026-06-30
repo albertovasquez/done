@@ -26,11 +26,10 @@ The `install` command:
 Once CLIProxyAPI is installed, authenticate with your chosen LLM provider:
 
 ```bash
-# Browser-based login (Claude/Anthropic, Codex, Antigravity)
+# Browser-based login (Claude/Anthropic, Codex)
 dn proxy login anthropic     # Opens your browser
 dn proxy login claude        # Alias for anthropic — opens your browser
 dn proxy login codex         # Opens your browser
-dn proxy login antigravity   # Opens your browser
 ```
 
 If you don't have a browser (headless/SSH), the login command prints the OAuth URL
@@ -52,7 +51,6 @@ authentication state.
 |----------|-------------|---------|-------|
 | **Claude (Anthropic)** | Browser OAuth | `dn proxy login anthropic` or `dn proxy login claude` | Opens your browser; `claude` is an alias for `anthropic` |
 | **Codex (Anthropic)** | Browser OAuth | `dn proxy login codex` | Separate from Claude/Anthropic |
-| **Antigravity** | Browser OAuth | `dn proxy login antigravity` | Web-based auth flow |
 | **Grok (xAI)** | API key | `export PROXY_GROK_API_KEY=...` | Pass via environment; no `dn proxy login` |
 | **Kimi (Moonshot)** | API key | `export PROXY_KIMI_API_KEY=...` | Pass via environment; no `dn proxy login` |
 | **Gemini (Google)** | API key | `.env` file only | See *Adding an API-key upstream* below |
@@ -173,7 +171,6 @@ Authenticate with each provider you use:
 dn proxy login anthropic
 dn proxy login claude      # Alias for anthropic
 dn proxy login codex
-dn proxy login antigravity
 
 # Or, for API-key providers, set environment variables
 export PROXY_GROK_API_KEY=your_grok_key
