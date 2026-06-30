@@ -42,7 +42,8 @@ def dispatch(event: str, *, tracer=None, **payload) -> None:
     tracer is passed, and always to the module logger) and skipped."""
     for handler, label in list(_handlers.get(event, ())):
         try:
-            handler(**payload)
+            extra = {"tracer": tracer} if tracer is not None else {}
+            handler(**extra, **payload)
         except Exception as e:                      # isolate: one bad hook never breaks others
             logger.exception("hook %r for event %r raised", label, event)
             if tracer is not None:

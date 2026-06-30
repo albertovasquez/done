@@ -55,6 +55,18 @@ def test_corrupt_sibling_is_selected_and_does_not_crash(monkeypatch, tmp_path):
     assert src in result
 
 
+def test_compress_aware_off_skips_cwd_files(monkeypatch, tmp_path):
+    """Finding 2: when default compress_aware is False, cwd AGENTS.md must not appear."""
+    _isolate(monkeypatch, tmp_path)
+    from harness import config
+    monkeypatch.setattr(config, "compress_aware_pinned", lambda pid="default": False)
+    cwd = tmp_path / "proj"; cwd.mkdir()
+    agents_md = cwd / "AGENTS.md"
+    agents_md.write_text("# agents", encoding="utf-8")
+    result = targets.candidate_sources(cwd=cwd)
+    assert agents_md not in result, "cwd files must be excluded when default compress_aware is off"
+
+
 def test_compress_aware_off_skips_persona_files(monkeypatch, tmp_path):
     cfg = _isolate(monkeypatch, tmp_path)
     from harness import config

@@ -47,6 +47,35 @@ def test_handler_error_is_logged_via_tracer():
     assert "x" in events[0][2]["error"]
 
 
+def test_dispatch_forwards_tracer_to_handler():
+    """Finding 3: tracer passed to dispatch must be forwarded to the handler."""
+    received = {}
+
+    def handler(tracer=None, **kw):
+        received["tracer"] = tracer
+
+    hooks.register("session_end", handler)
+
+    class FakeTracer:
+        pass
+
+    fake = FakeTracer()
+    hooks.dispatch("session_end", tracer=fake)
+    assert received.get("tracer") is fake, "handler should receive the tracer passed to dispatch"
+
+
+def test_dispatch_no_tracer_does_not_inject_tracer_kwarg():
+    """When dispatch is called without tracer, handler must NOT receive a tracer kwarg."""
+    received = {"tracer": "UNSET"}
+
+    def handler(**kw):
+        received["tracer"] = kw.get("tracer", "UNSET")
+
+    hooks.register("session_end", handler)
+    hooks.dispatch("session_end")
+    assert received["tracer"] == "UNSET", "no tracer kwarg should be injected when tracer is None"
+
+
 def test_on_decorator_registers_and_returns_handler():
     calls = []
 

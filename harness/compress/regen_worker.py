@@ -20,9 +20,18 @@ logger = logging.getLogger(__name__)
 def regen(paths: list[str], *, call_model, today: str) -> dict:
     """Rebuild each path's sibling. Returns counts. Never raises."""
     from harness import compress_cli
+    from harness.compress import sibling as _sibling
     built = failed = skipped = 0
     for p in paths:
         try:
+            # Re-check that the sibling still exists (TOCTOU guard).  Discovery
+            # only selected sources whose sibling existed at session-end; the
+            # detached worker runs later.  If the user deleted the sibling in
+            # between, skip rather than recreate it — auto-regen must never
+            # create a sibling that doesn't exist.
+            if not _sibling.sibling_path(Path(p)).is_file():
+                skipped += 1
+                continue
             result = compress_cli.rebuild_one(Path(p), call_model=call_model, today=today)
             if result == "built":
                 built += 1

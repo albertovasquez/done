@@ -51,10 +51,14 @@ def candidate_sources(cwd: Path | None = None) -> list[Path]:
             if p.is_file():
                 sources.append(p)
     if cwd is not None:
-        for name in CWD_FILES:
-            p = Path(cwd) / name
-            if p.is_file():
-                sources.append(p)
+        try:
+            if config.compress_aware_pinned("default"):
+                for name in CWD_FILES:
+                    p = Path(cwd) / name
+                    if p.is_file():
+                        sources.append(p)
+        except Exception:
+            pass
     return sources
 
 
