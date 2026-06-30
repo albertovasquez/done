@@ -88,18 +88,26 @@ The mock model simulates the agent loop so you can explore the TUI before connec
 real LLM. It fixes the sample failing test in `examples/sample-repo` and demonstrates
 skills, permissions, and the cron dashboard.
 
-### Connect a real LLM (VibeProxy)
+### Connect a real LLM (CLIProxyAPI)
 
-DoneDone routes LLM calls through **VibeProxy**, an OpenAI-compatible local proxy
-that must be running on `:8317`. Once it is, configure the model:
+DoneDone routes LLM calls through **CLIProxyAPI**, an OpenAI-compatible local proxy
+that handles authentication and provider routing. Set it up with two commands:
 
 ```bash
-# Put your settings in ~/.config/harness/.env (copy .env.example as a starting point):
-cp .env.example ~/.config/harness/.env
-# Edit ~/.config/harness/.env: set VIBEPROXY_MODEL to a model your VibeProxy serves.
-# Then launch:
+# Install CLIProxyAPI (downloads binary, writes config, registers as OS service)
+dn proxy install
+
+# Log in to your LLM provider
+dn proxy login anthropic   # Browser-based OAuth (Claude/Anthropic, Codex, Antigravity)
+# OR
+export PROXY_GROK_API_KEY=your_key   # API-key providers (Grok, Kimi, Gemini)
+
+# Then launch Done
 dn
 ```
+
+For full setup details, provider-specific login flows, and adding custom upstreams
+(e.g., NeuralWatt for GLM), see [docs/proxy.md](docs/proxy.md).
 
 You can also drop a `.env` in the project directory you run `dn` from instead of
 `~/.config/harness/.env`. Add your own skills in `~/.config/harness/skills/` (global)
@@ -147,13 +155,13 @@ Then run it:
 
 ```bash
 dn --model mock          # start here — zero-cost mock model, no setup required
-dn                       # real LLM via VibeProxy (requires ~/.config/harness/.env)
+dn                       # real LLM via CLIProxyAPI (after `dn proxy install` + login)
 dn --cwd ~/myproject     # operate on a specific project instead of the cwd
 ```
 
 | Flag | Values | Default | Meaning |
 |---|---|---|---|
-| `--model` | `mock`, `vibeproxy` | `vibeproxy` | which LLM the agent uses |
+| `--model` | `mock`, or any CLIProxyAPI-served model (e.g., `gpt-4-turbo`) | from `done.conf` | which LLM the agent uses |
 | `--cwd` | a path | `.` | the working directory the agent operates in |
 | `--yolo` | flag | off | auto-allow every command — never prompt for permission |
 
