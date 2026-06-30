@@ -51,3 +51,17 @@ def test_run_cli_login_timeout_returns_false(monkeypatch):
         open_browser=lambda u: True, poll=lambda s, pw, base=None: "pending",
         sleep=lambda s: None, out=lambda m: None, attempts=3)
     assert ok is False
+
+
+def test_run_cli_login_returns_false_when_auth_url_unreachable(monkeypatch):
+    """Defense-in-depth: if auth_url raises (proxy down), return False with a
+    clean message — never let the HTTP error escape as a traceback."""
+    def _boom(p, pw, base=None):
+        raise ConnectionRefusedError("[Errno 61] Connection refused")
+    monkeypatch.setattr(management, "auth_url", _boom)
+    out = []
+    ok = login.run_cli_login("codex", "pw",
+        open_browser=lambda u: True, poll=lambda s, pw, base=None: "ok",
+        sleep=lambda s: None, out=out.append, attempts=3)
+    assert ok is False
+    assert any("not reachable" in m.lower() or "could not" in m.lower() for m in out)

@@ -36,13 +36,22 @@ def run_cli_login(provider, password, *, open_browser=webbrowser.open,
                   poll=management.poll_auth_status, sleep=time.sleep, out=print,
                   attempts=60,
                   terminal=frozenset({"ok", "success", "completed", "authenticated"})):
-    url, state = management.auth_url(provider, password)
+    # Defense-in-depth: a caller may invoke this with the proxy down. Surface a
+    # clean message instead of an HTTP traceback if the auth-url call fails.
+    try:
+        url, state = management.auth_url(provider, password)
+    except Exception as exc:
+        out(f"could not start {provider} login — proxy not reachable ({exc})")
+        return False
     if open_browser(url):
         out("opened browser — waiting for sign-in…")
     else:
         out(f"open this URL to sign in:\n  {url}\nwaiting for sign-in…")
     for _ in range(attempts):
-        status = poll(state, password)
+        try:
+            status = poll(state, password)
+        except Exception:
+            status = "pending"            # transient poll error — keep waiting
         if status in terminal:
             out(f"✓ {provider} authenticated")
             return True

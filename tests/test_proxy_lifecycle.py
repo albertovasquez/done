@@ -75,3 +75,21 @@ def test_login_autostarts_then_runs(monkeypatch):
 def test_login_rejects_unknown_provider():
     out = lifecycle.login("banana")
     assert "unknown" in out.lower() or "choose" in out.lower()
+
+
+def test_login_bails_cleanly_when_proxy_never_starts(monkeypatch):
+    """Regression: `dn proxy login` before `dn proxy install` must NOT crash with
+    a ConnectionRefused traceback — it should return a clear instruction and never
+    reach the auth-url network call."""
+    seq = []
+    # is_ready always False (proxy not installed/running); start() is a no-op string.
+    monkeypatch.setattr(lifecycle.management, "is_ready", lambda pw: False)
+    monkeypatch.setattr(lifecycle, "start", lambda: "start failed: no service")
+    monkeypatch.setattr(lifecycle, "time", type("T", (), {"sleep": staticmethod(lambda s: None)}))
+    import harness.proxy_service.login as login_mod
+    monkeypatch.setattr(login_mod, "run_cli_login",
+                        lambda *a, **k: seq.append("login") or True)
+    out = lifecycle.login("claude")
+    assert "login" not in seq                     # never reached the network call
+    assert "dn proxy install" in out              # clear instruction
+    assert "not running" in out.lower()
