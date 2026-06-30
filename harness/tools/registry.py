@@ -5,8 +5,9 @@ chat, per-persona) must not share mutable tool state.
 When skill_roots are passed, the agent gets a load_skill tool so it can pull skill
 bodies on demand (lazy discovery). When a memory_root (the session workspace) is
 passed, it gets a load_memory tool so it can pull remembered facts on demand. With
-neither, the registry is the six always-present tools (bash, read, write, edit,
-create_job, subagent) — load_skill/load_memory are the only context-gated additions.
+neither, the registry is the always-present tools (bash, read, write, edit,
+create_job, create_persona, subagent, review) — load_skill/load_memory are the only
+context-gated additions.
 (A worker registry, is_worker=True, excludes subagent — depth-1.)"""
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from harness import memory as memory_mod
 from harness.tools.base import Tool
 from harness.tools.bash import BashTool
 from harness.tools.create_job import CreateJobTool
+from harness.tools.create_persona import CreatePersonaTool
 from harness.tools.edit import EditTool
 from harness.tools.load_memory import LoadMemoryTool
 from harness.tools.load_skill import LoadSkillTool
@@ -36,7 +38,7 @@ def build_registry(skill_roots: list[Path] | None = None,
     # Local import breaks the cycle: subagent → agent_build → registry → subagent.
     from harness.tools.subagent import SubagentTool  # noqa: PLC0415
     tools: list[Tool] = [BashTool(), ReadTool(), WriteTool(), EditTool(), CreateJobTool(),
-                         SubagentTool(), ReviewTool()]
+                         CreatePersonaTool(), SubagentTool(), ReviewTool()]
     if skill_roots:
         tools.append(LoadSkillTool(skill_roots))
     # Gate load_memory on the workspace actually HAVING recall content — an empty
