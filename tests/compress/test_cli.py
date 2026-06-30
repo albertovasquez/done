@@ -147,3 +147,15 @@ def test_run_skills_no_model_returns_message(tmp_path, monkeypatch, capsys):
     assert rc == 0
     out = capsys.readouterr().out
     assert "compression unavailable" in out.lower()
+
+
+def test_default_targets_includes_persona_voice_files(monkeypatch, tmp_path):
+    from harness import compress_cli, paths, config, persona_select
+    cfg = tmp_path / "cfg"; (cfg / "agents" / "default").mkdir(parents=True)
+    monkeypatch.setattr(paths, "config_dir", lambda: cfg)
+    monkeypatch.setattr(paths, "default_workspace_dir", lambda: cfg / "agents" / "default")
+    monkeypatch.setattr(config, "compress_aware_pinned", lambda pid="default": True)
+    soul = cfg / "agents" / "default" / "SOUL.md"; soul.write_text("s", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    targets = compress_cli._default_targets()
+    assert soul in [p.resolve() for p in targets] or soul in targets
