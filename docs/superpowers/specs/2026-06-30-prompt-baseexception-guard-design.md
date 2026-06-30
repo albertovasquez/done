@@ -1,5 +1,19 @@
 # Guard `HarnessAgent.prompt()` against escaping BaseException
 
+> **SUPERSEDED — root cause disproven by adversarial review (Opus 4.8), verified
+> independently against the installed `acp` library.** Each ACP request runs as
+> its own isolated `asyncio.Task` (`acp/task/dispatcher.py:88`); when that task
+> finishes, `TaskSupervisor._on_done` (`acp/task/supervisor.py:46-48`) checks
+> `if task.cancelled(): return` *before* calling `task.result()` — a cancelled
+> or crashed request task is discarded silently and never reaches
+> `Connection._run_request`'s `except Exception`, never touches the
+> connection, and cannot kill the process by the mechanism this spec describes.
+> "Connection closed" means the agent's **OS process** died (stdout hit EOF) —
+> something this spec's fix (guarding `prompt()` against in-process
+> `BaseException`) cannot address. Do not implement this spec. Follow-up:
+> capture the agent subprocess's exit code/stderr on disconnect to find the
+> real cause first.
+
 ## Problem
 
 The TUI sometimes shows **"agent disconnected — restart to continue (Connection
