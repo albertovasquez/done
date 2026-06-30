@@ -52,3 +52,12 @@ def test_generate_pins_auth_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(paths, "data_dir", lambda: tmp_path)
     y = config_gen.generate(env={})
     assert f'auth-dir: "{tmp_path / "auths"}"' in y
+
+
+def test_alias_to_upstream_maps_aliases_to_full_ids():
+    """The TUI model menu shows the full upstream name next to each NeuralWatt
+    alias; this map is the source. Aliases -> full ids, not the reverse."""
+    m = config_gen.alias_to_upstream()
+    assert m["qwen"] == "qwen3.5-397b-fast"
+    assert m["glm"] == "glm-5.2"
+    assert m["glm-fast"] == "glm-5.2-short-fast"
