@@ -1,0 +1,46 @@
+import pytest
+from harness import review
+
+
+def _isolate(monkeypatch, tmp_path, body=None):
+    from harness import config
+    d = tmp_path / "cfg"; d.mkdir(exist_ok=True)
+    monkeypatch.setattr(config.paths, "config_dir", lambda: d)
+    if body is not None:
+        (d / "done.conf").write_text(body)
+
+
+def test_resolve_prefers_done_conf_then_env_then_none(monkeypatch, tmp_path):
+    _isolate(monkeypatch, tmp_path,
+             'schema_version = 1\n\n[harness]\nreview_model = "from-conf"\n')
+    monkeypatch.setenv("REVIEW_MODEL", "from-env")
+    assert review.resolve_review_model(quick=False) == "from-conf"   # conf wins
+    monkeypatch.delenv("REVIEW_MODEL", raising=False)
+    _isolate(monkeypatch, tmp_path, 'schema_version = 1\n')          # empty conf
+    monkeypatch.setenv("REVIEW_MODEL", "from-env")
+    assert review.resolve_review_model(quick=False) == "from-env"    # env next
+    monkeypatch.delenv("REVIEW_MODEL", raising=False)
+    assert review.resolve_review_model(quick=False) is None          # then None
+
+
+def test_resolve_quick_uses_quick_keys(monkeypatch, tmp_path):
+    _isolate(monkeypatch, tmp_path,
+             'schema_version = 1\n\n[harness]\nquick_review_model = "fast-m"\n')
+    assert review.resolve_review_model(quick=True) == "fast-m"
+    assert review.resolve_review_model(quick=False) is None          # non-quick key absent
+
+
+def test_run_review_passes_prompt_and_content():
+    seen = {}
+    def fake_model(prompt: str) -> str:
+        seen["prompt"] = prompt
+        return "L42: bug: null deref. guard."
+    out = review.run_review("- foo()\n+ foo(x)", quick=False, call_model=fake_model)
+    assert out == "L42: bug: null deref. guard."
+    assert "one line per finding" in seen["prompt"].lower()   # the caveman prompt is present
+    assert "foo(x)" in seen["prompt"]                         # content is included
+
+
+def test_run_review_rejects_empty_content():
+    with pytest.raises(ValueError):
+        review.run_review("   ", quick=False, call_model=lambda p: "x")
