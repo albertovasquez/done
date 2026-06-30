@@ -82,6 +82,12 @@ path-checked: symlinked or out-of-tree siblings are rejected.)
 Compression is **offline only** — Done never compresses mid-turn. You rebuild
 siblings with the CLI:
 
+Siblings also **auto-refresh on session end**: when you quit the TUI, Done
+detects any *existing* sibling that has gone stale and rebuilds it in the
+background (detached, never blocking quit). It never creates a sibling you
+didn't ask for — `dn compress <path>` is still how you opt a file in the first
+time. See `docs/hooks.md` for the mechanism.
+
 ```bash
 dn compress                 # rebuild siblings for cwd AGENTS.md / CLAUDE.md
 dn compress path/to/FILE.md # rebuild a specific file's sibling

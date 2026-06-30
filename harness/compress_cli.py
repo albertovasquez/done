@@ -53,10 +53,16 @@ def status_line(source: Path) -> str:
 
 
 def _default_targets() -> list[Path]:
-    # DEFERRED (issue #186): per-persona SOUL/IDENTITY/USER/MEMORY walk.
-    # Phase 1 default targets are cwd AGENTS.md/CLAUDE.md; pass explicit paths for others.
-    candidates = [Path("AGENTS.md"), Path("CLAUDE.md")]
-    return [p for p in candidates if p.exists()]
+    """Default rebuild targets: cwd AGENTS.md/CLAUDE.md + existing persona
+    voice/memory files (SOUL/IDENTITY/USER/MEMORY) across workspaces. Closes
+    #188 item B — `dn compress` with no args now covers the voice files. Pass
+    explicit paths to override."""
+    from harness.compress import targets
+    seen: list[Path] = []
+    for p in targets.candidate_sources(cwd=Path.cwd()):
+        if p not in seen:
+            seen.append(p)
+    return seen
 
 
 def _compress_model_name() -> str | None:

@@ -54,6 +54,8 @@ from harness.tui.widgets.decision_modal import DecisionModal, TYPE_SOMETHING, CH
 from harness.tui.widgets.status_chip import StatusChip
 from harness.tui.header import icon_markup, header_text_markup
 from harness import config as _config
+from harness import hooks as _hooks
+from harness.compress import auto_regen as _auto_regen  # noqa: F401 — import-time hook registration
 from harness.compaction import resolve_ctx_window
 
 
@@ -365,6 +367,9 @@ class HarnessTui(App):
             self.log(f"cron autostart skipped: {e!r}")
             if self._tracer is not None:
                 self._tracer.emit("dn", "cron.autostart.failed", error=str(e))
+
+        _hooks.dispatch("session_start", tracer=self._tracer,
+                        cwd=self.cwd, persona_id=self._current_persona())
 
     def _decide_cron_autostart(self, *, show_prompt) -> str:
         """Decide how to ensure cron runs. Returns the branch taken (testable).
@@ -1693,6 +1698,9 @@ class HarnessTui(App):
         self.exit()                               # Textual restores the terminal; run() returns
 
     async def on_unmount(self) -> None:
+        # Fire session_end while the tracer is still open so hooks can log.
+        _hooks.dispatch("session_end", tracer=self._tracer,
+                        cwd=self.cwd, persona_id=self._current_persona())
         if self._pending_perm is not None and not self._pending_perm.done():
             self._pending_perm.set_result(None)
         if self._cm is not None:
