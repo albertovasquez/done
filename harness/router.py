@@ -120,8 +120,14 @@ def _system_prompt(catalog: "list[skills.SkillMeta]") -> str:
         "reported failure, error, or \"X is broken\"). For an observe-only request, "
         "do NOT attach debugging skills (e.g. systematic-debugging) — only attach "
         "them when the user reports a failing behavior. "
-        "Reserve 'ambiguous' for requests that name no task AND give "
-        "no project referent the agent could investigate. "
+        "A greeting or social/conversational message (\"hi\", \"hello\", \"hey\", "
+        "\"good morning\", \"how are you\", \"thanks\", \"what can you do\") is NOT "
+        "ambiguous: classify it as chat_question so the agent can respond in "
+        "character. Do NOT mark a friendly greeting as ambiguous — the agent has a "
+        "persona and should answer warmly. "
+        "Reserve 'ambiguous' ONLY for requests that name no task, give no project "
+        "referent the agent could investigate, AND are not a greeting or social "
+        "message. "
         "Respond with ONLY a JSON object, no prose, with keys: "
         f"task_type (one of {TASK_TYPES}), skills (list of skill NAMES from the "
         "catalog that apply, may be empty), confidence (0.0-1.0), "
@@ -177,16 +183,19 @@ class Router:
             if not isinstance(data, dict):
                 raise ValueError("not an object")
         except Exception as e:
-            # Degrading to 'ambiguous' is correct, but silently: during an
-            # incident where the cheap model returns garbage, every request looks
-            # "unclear" with no clue why. Log the reason + a bounded preview.
-            logger.warning("router classification unparseable (%s); raw=%r",
-                           e, raw[:200])
+            # The router is best-effort triage, NOT a hard gate. When the cheap
+            # classifier model is unavailable or returns garbage (e.g. a chatty
+            # fallback model that ignores "JSON only", or every cheap provider
+            # cooling down), DON'T refuse the turn — degrade to the worker: route
+            # to chat_question so the active persona (the user's real model)
+            # handles the raw message in character. Log the reason + a bounded
+            # preview so an incident is diagnosable.
+            logger.warning("router classification unparseable (%s); routing to "
+                           "worker as chat_question; raw=%r", e, raw[:200])
             return Classification(
-                task_type="ambiguous", confidence=0.0, needs_clarification=True,
-                reasoning="router output was not parseable JSON",
-                clarifying_question="I couldn't interpret that. What concrete task "
-                                    "should I do?")
+                task_type="chat_question", confidence=0.0,
+                needs_clarification=False,
+                reasoning="router output was not parseable; degraded to worker")
         task_type = data.get("task_type", "ambiguous")
         if task_type not in TASK_TYPES:
             task_type = "ambiguous"
