@@ -29,6 +29,7 @@ def test_generate_includes_neuralwatt_when_key_set():
     assert 'alias: "glm"' in y
     assert 'alias: "qwen"' in y
     assert "qwen3.5-397b-fast" in y          # the router model upstream id
+    assert "glm-5.2" in y                    # GLM upstream id (confirmed live)
 
 
 def test_generate_neuralwatt_yaml_is_valid():
