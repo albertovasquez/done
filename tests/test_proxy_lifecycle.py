@@ -40,3 +40,21 @@ def test_uninstall_stops_and_removes_data_dir(monkeypatch, tmp_path):
     out = lifecycle.uninstall()
     assert not (tmp_path / "config.yaml").exists()
     assert "removed" in out.lower() or "uninstall" in out.lower()
+
+
+def test_install_aborts_on_checksum_mismatch(monkeypatch):
+    """Security invariant: a failed binary verification must abort install
+    BEFORE the OS service is registered or started — never run an unverified binary."""
+    from harness.proxy_service import lifecycle, download
+    reached = []
+    def _boom(version):
+        raise download.ChecksumMismatch("bad sha")
+    monkeypatch.setattr(lifecycle.download, "download_and_install", _boom)
+    monkeypatch.setattr(lifecycle, "_register_os_service",
+                        lambda *a: reached.append("register") or "registered")
+    monkeypatch.setattr(lifecycle, "start", lambda: reached.append("start") or "started")
+    monkeypatch.setattr(lifecycle.config_gen, "ensure_management_password", lambda: "pw")
+    monkeypatch.setattr(lifecycle.config_gen, "generate", lambda: "host: x\n")
+    out = lifecycle.install()
+    assert reached == []                         # register + start NEVER ran
+    assert "verif" in out.lower() or "checksum" in out.lower() or "fail" in out.lower()

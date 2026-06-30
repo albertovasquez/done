@@ -121,8 +121,15 @@ def uninstall() -> str:
     The data directory contains the binary, config, management password,
     and any downloaded auth tokens — all are removed.
     """
-    stop()
-    _deregister_os_service()
+    try:
+        stop()
+    except Exception as exc:
+        return f"CLIProxyAPI uninstall: stop error — {exc}"
+
+    try:
+        _deregister_os_service()
+    except Exception as exc:
+        return f"CLIProxyAPI uninstall: deregister error — {exc}"
 
     data = paths.data_dir()
     try:
