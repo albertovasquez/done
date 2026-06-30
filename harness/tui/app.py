@@ -23,6 +23,7 @@ import asyncio
 import os
 import signal
 import time
+from collections import deque
 from typing import Any
 
 import acp
@@ -122,6 +123,7 @@ class HarnessTui(App):
         self._conn = None
         self._cm = None                       # the spawn_agent_process context manager
         self._proc = None                     # the agent subprocess (for stderr drain)
+        self._stderr_tail = deque(maxlen=20)  # last agent stderr lines, for disconnect diagnostics
         self._stderr_task = None              # background task draining the agent's stderr
         self._session_id = None
         self._gen = 0                         # session generation; bumped each _connect
@@ -284,6 +286,7 @@ class HarnessTui(App):
         # write — mid-turn, after streaming chat.done but before writing the prompt
         # RESPONSE frame — so our await prompt() never resolves ("Responding…"
         # sticks, composer locks). Continuously drain it so the buffer never fills.
+        self._stderr_tail.clear()  # fresh buffer per process: never misattribute a prior process's stderr
         self._stderr_task = asyncio.create_task(self._drain_stderr(self._proc))
         try:
             await self._conn.initialize(
@@ -309,9 +312,10 @@ class HarnessTui(App):
                 line = await stderr.readline()
                 if not line:
                     break                              # EOF: agent exited
+                text = line.decode("utf-8", "replace").rstrip("\n")
+                self._stderr_tail.append(text)         # always buffer (independent of --debug)
                 if self._tracer is not None:
-                    self._tracer.emit("agent", "stderr",
-                                      text=line.decode("utf-8", "replace").rstrip("\n"))
+                    self._tracer.emit("agent", "stderr", text=text)
         except asyncio.CancelledError:
             raise                                      # teardown cancelled us — propagate
         except Exception:
