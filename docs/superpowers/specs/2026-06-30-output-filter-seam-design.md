@@ -168,6 +168,51 @@ model sees compact output
 3. **Reuse rtk's filter heuristics as reference** — rtk is MIT; we may study its
    eslint/test filters for ideas without taking the binary. (Inspiration, not dep.)
 
+## Implementation status (2026-06-30, branch `rtk-native-tool`)
+
+Implemented via subagent-driven development (TDD, per-task review). Full suite:
+**1269 passed**; the single failure (`tests/jobs/test_service_launchd.py::
+test_build_plist_has_runatload_keepalive_and_program`) is **pre-existing and
+unrelated** — this branch touches nothing under `harness/jobs/` (verified via
+`git log 187d26d..HEAD -- harness/jobs/` = empty); it is a launchd install-layout
+mismatch, not caused by the filter work.
+
+**Shipped:**
+- Task 1 — `harness/output_filters/{__init__,dispatch}.py` (fail-open dispatcher)
+  + the seam in `AcpEnvironment.execute` (applies before `return out`; default
+  `output_filter=None` = byte-identical no-op). Commits d6e8fc1..4ef51e9.
+- Task 2 — `harness/output_filters/pytest_filter.py`: compacts passing pytest runs
+  (header + summary), declines (`None`) on ANY failure/error/unrecognized run so the
+  full output always reaches the model. Commits b117c02..860d610.
+- Task 3 — `[harness] output_filter` toggle: `_resolve_output_filter()` in
+  `acp_agent.py` returns `None` only on the literal `"false"`, else the dispatcher
+  (default-ON). Reuses the existing `config.harness_setting` reader — no new config
+  writer. Commit 42683d4.
+
+**Deviations from the plan (all in the safe direction):**
+- **Savings trace via `logger.debug`, not a tracer event** (OQ-related). There is no
+  `tracer`/emitter symbol in `on_command`'s closure scope; savings (`bytes_in/out`)
+  are logged from `execute()` after filtering. Signal is captured but only visible
+  with `--debug`/log config, not in the TUI trace by default. **Future upgrade:** route
+  savings into the TUI trace when an emitter is threaded to that site. This affects
+  how OQ1 data gets collected (enable debug logging to gather it).
+- **No `set_harness_setting` writer** — the plan's Task 3 referenced one, but live
+  `config.py` has only the `harness_setting` reader, and the toggle only needs to
+  read (operator hand-edits `done.conf`). Correctly used the reader only.
+
+**Deferred / not built:**
+- **Task 4 (ruff filter) — SKIPPED** (decision with Alberto). It was gated on Task-1
+  trace data we don't have yet (no production runs since the trace landed), and the
+  plan's own ruff filter was a pre-concluded no-op (clean ruff is already one line,
+  errors must pass through). YAGNI: add the *data-justified* filter later instead.
+- **Headless/cron path** (`run_traced.py:168` builds a plain `LocalEnvironment`) gets
+  NO seam in this work — interactive `AcpEnvironment` only. Whether to extend it
+  depends on whether lint/test commands run meaningfully under cron; revisit with data.
+
+**OQ1 (which filters first) remains OPEN by design** — resolved only after real
+sessions feed the savings trace. pytest shipped as the safe first filter (Done is a
+Python project); the next filter should follow the `bytes_in`-by-command-kind data.
+
 ## Out of scope
 
 - Bundling/managing the rtk binary, version pinning, checksums, `dn rtk …`,
