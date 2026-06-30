@@ -899,7 +899,24 @@ class HarnessAgent(acp.Agent):
 
         if state.cancel_flag.is_set():
             return {"stop_reason": "cancelled", "exit_status": "cancelled", "assistant": ""}
-        engine = await loop.run_in_executor(None, run_engine)
+        async def _flush_loop() -> None:
+            # ~80ms cadence matches the TUI's 12Hz render; finer delivery is
+            # invisible (the TUI buffers and paints on its own timer).
+            try:
+                while True:
+                    await asyncio.sleep(0.08)
+                    await _flush_prose()
+            except asyncio.CancelledError:
+                return
+
+        flush_task = loop.create_task(_flush_loop())
+        try:
+            engine = await loop.run_in_executor(None, run_engine)
+        finally:
+            # stop the periodic flusher so it can never fire into a later turn.
+            # run_engine's own finally already did the FINAL prose flush, so no
+            # tail is lost by cancelling here.
+            flush_task.cancel()
         if state.cancel_flag.is_set():
             return {"stop_reason": "cancelled", "exit_status": "cancelled", "assistant": ""}
         # Surface context compaction to the TUI via the with_meta channel so the

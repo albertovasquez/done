@@ -368,3 +368,28 @@ def test_prose_flushed_before_step_boundary(tmp_path):
     assert a_idx < reset_idxs[-1] < b_idx, (
         f"boundary reordered relative to prose: seq = {seq!r}"
     )
+
+
+def test_no_leftover_flush_across_turns(tmp_path):
+    """A flush timer from turn N must not fire into turn N+1. Run two turns; each
+    turn's prose appears only within that turn's updates."""
+    conn = RecordingConn()
+    agent = _build(_StreamingSubmitModel(["one"]), conn)
+    sid = agent._store.new(cwd=str(tmp_path))
+
+    r1 = _prompt(agent, sid, "first")
+    assert r1.stop_reason == "end_turn"
+    after_turn1 = len(conn.updates)
+    assert "one" in "".join(conn.message_texts())
+
+    # swap in a model that streams different prose for turn 2
+    agent._model_factory = lambda *a, **k: _StreamingSubmitModel(["two"])
+    r2 = _prompt(agent, sid, "second")
+    assert r2.stop_reason == "end_turn"
+
+    turn2_texts = "".join(
+        (getattr(getattr(u, "content", None), "text", "") or "")
+        for u in conn.updates[after_turn1:]
+    )
+    assert "two" in turn2_texts
+    assert "one" not in turn2_texts, "turn-1 prose leaked into turn 2 (leftover timer)"
