@@ -6,7 +6,7 @@ upgrade()   — re-downloads binary then stop + start.
 uninstall() — stop + deregister OS service + remove data dir.
 start()     — start via OS service manager.
 stop()      — stop via OS service manager.
-login()     — browser-auth stub (follow-up task).
+login()     — browser-OAuth (anthropic/codex, claude alias): auto-start + run_cli_login.
 """
 from __future__ import annotations
 

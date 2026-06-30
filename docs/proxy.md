@@ -50,9 +50,9 @@ authentication state.
 | Provider | Auth method | Command | Notes |
 |----------|-------------|---------|-------|
 | **Claude (Anthropic)** | Browser OAuth | `dn proxy login anthropic` or `dn proxy login claude` | Opens your browser; `claude` is an alias for `anthropic` |
-| **Codex (Anthropic)** | Browser OAuth | `dn proxy login codex` | Separate from Claude/Anthropic |
-| **Grok (xAI)** | API key | `export PROXY_GROK_API_KEY=...` | Pass via environment; no `dn proxy login` |
-| **Kimi (Moonshot)** | API key | `export PROXY_KIMI_API_KEY=...` | Pass via environment; no `dn proxy login` |
+| **Codex (OpenAI)** | Browser OAuth | `dn proxy login codex` | Separate from Claude/Anthropic |
+| **Grok (xAI)** | CLI-flag OAuth (upstream) | _not wired in `dn proxy` yet_ | Out of scope; run CLIProxyAPI's `--xai-login` directly |
+| **Kimi (Moonshot)** | CLI-flag OAuth (upstream) | _not wired in `dn proxy` yet_ | Out of scope; run CLIProxyAPI's `--kimi-login` directly |
 | **Gemini (Google)** | API key | `.env` file only | See *Adding an API-key upstream* below |
 
 ## Adding NeuralWatt for GLM access
