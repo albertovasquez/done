@@ -316,14 +316,31 @@ def stop() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Stubbed — browser-auth flow (follow-up task)
+# Browser-auth login (browser-OAuth providers: anthropic, codex)
 # ---------------------------------------------------------------------------
 
+_LOGIN_PROVIDERS = {"anthropic", "codex"}   # browser-OAuth set in scope (claude=anthropic)
+
+
 def login(provider: str | None = None) -> str:
-    if provider is None:
-        providers = ", ".join(management._AUTH_URL_PATHS)
-        return f"dn proxy login: specify a provider ({providers})"
-    if provider not in management._AUTH_URL_PATHS:
-        providers = ", ".join(management._AUTH_URL_PATHS)
-        return f"dn proxy login: unknown provider '{provider}' (choose from: {providers})"
-    return f"dn proxy login {provider}: browser-auth flow not yet implemented — coming in a follow-up task"
+    """Start the browser-OAuth login flow for the given provider.
+
+    Auto-starts the proxy if it is not yet running. Accepts "claude" as an
+    alias for "anthropic" (Claude's provider id in CLIProxyAPI).
+    """
+    # Friendly alias: "claude" → "anthropic"
+    if provider == "claude":
+        provider = "anthropic"
+    if provider is None or provider not in _LOGIN_PROVIDERS:
+        return f"dn proxy login: choose a provider from: {', '.join(sorted(_LOGIN_PROVIDERS))}"
+    pw = config_gen.ensure_management_password()
+    if not management.is_ready(pw):
+        start()
+        # Brief readiness wait — give the daemon a moment to come up.
+        for _ in range(10):
+            if management.is_ready(pw):
+                break
+            time.sleep(1)
+    from harness.proxy_service import login as login_mod
+    ok = login_mod.run_cli_login(provider, pw)
+    return f"{provider}: authenticated" if ok else f"{provider}: sign-in not completed"

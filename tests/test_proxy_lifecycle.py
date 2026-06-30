@@ -58,3 +58,20 @@ def test_install_aborts_on_checksum_mismatch(monkeypatch):
     out = lifecycle.install()
     assert reached == []                         # register + start NEVER ran
     assert "verif" in out.lower() or "checksum" in out.lower() or "fail" in out.lower()
+
+
+def test_login_autostarts_then_runs(monkeypatch):
+    seq = []
+    monkeypatch.setattr(lifecycle.management, "is_ready",
+                        lambda pw: (seq.append("check") or len(seq) > 1))  # False first, True after start
+    monkeypatch.setattr(lifecycle, "start", lambda: seq.append("start") or "started")
+    import harness.proxy_service.login as login_mod
+    monkeypatch.setattr(login_mod, "run_cli_login", lambda *a, **k: seq.append("login") or True)
+    out = lifecycle.login("codex")
+    assert "start" in seq and "login" in seq
+    assert "codex" in out.lower() or "authenticated" in out.lower()
+
+
+def test_login_rejects_unknown_provider():
+    out = lifecycle.login("banana")
+    assert "unknown" in out.lower() or "choose" in out.lower()
