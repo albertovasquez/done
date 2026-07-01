@@ -196,6 +196,9 @@ def _default_deps() -> Deps:
                             persona_block=ctx.persona_block,
                             memory_block=ctx.memory_block, base_block=base_block):
             pass
+        # A self-paced (Dynamic) loop turn calls set_next_run, which stamps
+        # env._next_run_override. Surface it so ops.run can arm the next run.
+        return getattr(runner._env, "_next_run_override", None)
 
     return Deps(
         resolve_workspace=persona_select.resolve_workspace,  # persona_select.py:50
@@ -216,8 +219,12 @@ def _default_deps() -> Deps:
     )
 
 
-def run_headless_turn(job, *, deps: Deps | None = None) -> None:
+def run_headless_turn(job, *, deps: Deps | None = None) -> int | None:
     """Execute one scheduled turn for `job` with full persona fidelity.
+
+    Returns the self-paced reschedule override (seconds) if the turn called
+    set_next_run, else None. ops.run reads this to arm a Dynamic loop's next run;
+    None means pause (no reschedule). Reminders always return None.
 
     Raises OrphanPersona if job.agent_id no longer maps to a persona directory.
 
@@ -239,7 +246,7 @@ def run_headless_turn(job, *, deps: Deps | None = None) -> None:
     if isinstance(job.payload, Reminder):
         # Reminder = notification only. No model resolution, no compose, no run_turn.
         deps.notify(text=job.payload.text, agent_id=job.agent_id)
-        return
+        return None
 
     # From here: AgentTurn path only.
     assert isinstance(job.payload, AgentTurn), f"unknown payload type: {type(job.payload)}"
@@ -268,4 +275,4 @@ def run_headless_turn(job, *, deps: Deps | None = None) -> None:
     _mode = job.payload.agent_options.get("mode")  # AgentTurn only; e.g. "observe"
     if _mode is not None and _accepts_kwarg(deps.run_turn, "mode"):
         _turn_kwargs["mode"] = _mode
-    deps.run_turn(**_turn_kwargs)
+    return deps.run_turn(**_turn_kwargs)

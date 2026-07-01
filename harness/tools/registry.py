@@ -24,6 +24,7 @@ from harness.tools.load_memory import LoadMemoryTool
 from harness.tools.load_skill import LoadSkillTool
 from harness.tools.read import ReadTool
 from harness.tools.review import ReviewTool
+from harness.tools.set_next_run import SetNextRunTool
 from harness.tools.write import WriteTool
 
 
@@ -38,7 +39,7 @@ def build_registry(skill_roots: list[Path] | None = None,
     # Local import breaks the cycle: subagent → agent_build → registry → subagent.
     from harness.tools.subagent import SubagentTool  # noqa: PLC0415
     tools: list[Tool] = [BashTool(), ReadTool(), WriteTool(), EditTool(), CreateJobTool(),
-                         CreatePersonaTool(), SubagentTool(), ReviewTool()]
+                         CreatePersonaTool(), SubagentTool(), ReviewTool(), SetNextRunTool()]
     if skill_roots:
         tools.append(LoadSkillTool(skill_roots))
     # Gate load_memory on the workspace actually HAVING recall content — an empty
