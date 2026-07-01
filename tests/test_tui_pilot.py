@@ -268,6 +268,37 @@ def test_footer_sits_below_a_late_draining_response():
     asyncio.run(go())
 
 
+def test_footer_sits_below_answer_when_a_chip_trails_the_footer():
+    """The footer-below-answer invariant must hold even when a discrete line (e.g.
+    the classified chip) is appended AFTER the footer, so the footer is no longer
+    the LAST transcript child. Reproduces the real non-streaming turn shape caught
+    by the snapshot test: prompt → footer (_write_meta at turn end) → chip → late
+    answer delta. The old guard only checked kids[-1] for the copyable footer, so
+    with the chip trailing it, the answer appended at the very end — BELOW the
+    footer. The answer must still land above the footer."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await app._enter_conversation()
+            app._session_id = "fake-session"
+            app._write_meta(0.5)                 # footer FIRST (turn end)…
+            await pilot.pause()
+            app._append_line("[classified: chat_question]")  # …a chip trails it
+            await pilot.pause()
+            app._stream_message("the late answer")  # …response drains AFTER both
+            await pilot.pause()
+            scroll = app.query_one("#transcript", VerticalScroll)
+            kids = list(scroll.children)
+            foot = _footer(app)
+            md = next(w for w in kids if isinstance(w, Markdown))
+            assert kids.index(md) < kids.index(foot), (
+                "footer rendered ABOVE the answer when a chip trailed the footer — "
+                f"order: {[type(w).__name__ for w in kids]}")
+
+    asyncio.run(go())
+
+
 def test_footer_copy_is_noop_when_no_response_rendered():
     """A footer with no answer above it (e.g. a tool-only turn) copies nothing and
     does not flip — no crash, no empty clipboard write."""
@@ -1325,11 +1356,13 @@ def test_yolo_chip_click_toggles_state():
         async with app.run_test() as pilot:
             await pilot.pause()
             chip = app.query_one("#statusbar-mode", Static)
-            assert "bypass permissions off" in chip._Static__content   # starts off
+            assert "bypass OFF" in chip._Static__content              # OFF spells it out
             app.action_toggle_yolo()
             await pilot.pause(); await pilot.pause()
             assert app._yolo is True
-            assert "bypass permissions on" in app.query_one("#statusbar-mode", Static)._Static__content
+            # ON collapses to the bare glyph (▶▶), coloured red.
+            content = app.query_one("#statusbar-mode", Static)._Static__content
+            assert "▶▶" in content and "bypass" not in content
 
     asyncio.run(go())
 
@@ -1343,8 +1376,10 @@ def test_status_right_shows_context_used_and_remaining():
 
     markup = app._status_right()
 
-    assert "ctx 12.3K/1.0M" in markup
-    assert "| 987.7K left" in markup
+    # ctx bar: 'ctx <bar> <pct>% · 12.3K/1.0M' (visual bar replaced the plain text).
+    assert "ctx" in markup
+    assert "12.3K/1.0M" in markup
+    assert "%" in markup
 
 
 def test_status_right_shows_context_window_before_usage():
@@ -1354,7 +1389,9 @@ def test_status_right_shows_context_window_before_usage():
     app._started = True
     app._tokens = 0
 
-    assert "ctx --/400.0K" in app._status_right()
+    # zero tokens → placeholder dashes, no percentage.
+    out = app._status_right()
+    assert "ctx" in out and "--/400.0K" in out
 
 
 def test_compose_meta_shows_persona_name():

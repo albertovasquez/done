@@ -90,6 +90,7 @@ Screen { layout: vertical; background: $background; layers: base overlay; }
 #statusbar-left { width: 1fr; color: $muted; }
 #statusbar-right { width: auto; color: $muted; content-align: right middle; }
 #statusbar-mode { width: auto; padding: 0 2 0 0; content-align: left middle; }
+#statusbar-compress-aware { width: auto; padding: 0 2 0 0; content-align: left middle; }
 #statusbar-persona { width: auto; color: $muted; padding: 0 2 0 0; }
 
 /* PermissionModal subclasses SelectModal, so the SelectModal #select-* rules
@@ -108,7 +109,7 @@ Screen { layout: vertical; background: $background; layers: base overlay; }
 #slash-overlay #slash-menu { width: 84; margin: 0; }  /* match #landing-col */
 #slash-menu #slash-list { height: auto; max-height: 12; background: $surface; border: none; }
 #slash-menu ListItem { background: $surface; padding: 0 1; }
-#slash-menu ListItem.--highlight { background: $accent 25%; }
+#slash-menu ListItem.-highlight { background: $accent 25%; }
 
 /* ---- SelectModal (search + scrollable list) ---- */
 SelectModal { align: center middle; }
@@ -126,7 +127,7 @@ SelectModal #select-search { background: $surface; border: none; height: 1;
 SelectModal #select-list { height: auto; max-height: 14; background: $surface;
     border: none; }
 SelectModal #select-list ListItem { background: $surface; padding: 0 1; }
-SelectModal #select-list ListItem.--highlight { background: $accent 30%; }
+SelectModal #select-list ListItem.-highlight { background: $accent 30%; }
 SelectModal #select-footer { padding-top: 1; color: $muted; }
 
 /* ---- NewPersonaModal (name a new persona) — same centered box as SelectModal ---- */

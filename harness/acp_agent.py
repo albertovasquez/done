@@ -672,6 +672,21 @@ class HarnessAgent(acp.Agent):
             asyncio.run_coroutine_threadsafe(
                 self._conn.session_update(session_id, plan_update(entries)), loop).result()
 
+        def on_progress(meta: dict) -> None:
+            # Mid-turn sub-activity (SubagentTool workers) → a message_chunk carrying
+            # field_meta["workers"]. FIRE-AND-FORGET: no .result(). Progress has no
+            # ordering requirement vs. the tool's completion, and up to N worker
+            # threads call this concurrently — blocking on .result() from each would
+            # serialize the workers on the single event loop and defeat the very
+            # parallelism subagents exist for. run_coroutine_threadsafe is itself
+            # thread-safe; the loop serializes the sends.
+            # meta is {"workers": {...}}; with_meta nests it under field_meta["harness"],
+            # so the TUI reads field_meta["harness"]["workers"] (same namespace as
+            # task_classified / skill_load).
+            asyncio.run_coroutine_threadsafe(
+                self._conn.session_update(session_id,
+                                          with_meta(message_chunk(""), meta)), loop)
+
         def check_permission(req: PermissionRequest) -> bool:
             yolo = self._auto_allow()
             has_elicitation = not (
@@ -738,6 +753,7 @@ class HarnessAgent(acp.Agent):
                              cancel_flag=state.cancel_flag,
                              client_terminal=client_terminal,
                              on_plan=on_plan,
+                             on_progress=on_progress,
                              output_filter=_resolve_output_filter())
         # Bind the active persona onto the env so the create_job tool can resolve
         # agent_id from it (never from the model). Per-session workspace name, or

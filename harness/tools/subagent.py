@@ -8,12 +8,14 @@ GLOBAL_MODEL_STATS is process-global). Pool is per-call. Hard MAX_TASKS_PER_CALL
 from __future__ import annotations
 
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 from harness import vibeproxy
 from harness.agent_build import build_persona_agent
 from harness.subagent_config import resolve_subagent_model, subagent_max_concurrent
 from harness.tools.subagent_prompt import build_worker_task
+from harness.tools.worker_collector import WorkerCollector
 
 MAX_TASKS_PER_CALL = 16
 DEFAULT_WORKER_TOOLSET = {"read", "bash"}
@@ -53,9 +55,16 @@ SUBAGENT_TOOL = {
 }
 
 
-def _run_one_worker(task: dict, env, *, agent_id: str):
+def _run_one_worker(task: dict, env, *, agent_id: str, on_event=None):
     """Build + run ONE worker. Returns (ok: bool, text: str). Raising is caught by
-    the caller and rendered as a failed entry (sibling isolation)."""
+    the caller and rendered as a failed entry (sibling isolation).
+
+    on_event(item), if given, receives every event runner.run() yields — this is
+    the live-worker-card bridge. NOTE: the card depends on build_persona_agent
+    returning a MiniSweAgentRunner whose run() YIELDS events (see runner.py).
+    That is currently the only runner build_persona_agent produces; the contract
+    test test_worker_runner_yields_events pins it so a future refactor can't
+    silently sever the card."""
     # parent model: env override, else the engine default — NEVER silently mock.
     # (Matches persona_sessions.resolve_session_model's ladder semantics: a real
     #  worker inherits a real model even when VIBEPROXY_MODEL isn't in the env.)
@@ -96,8 +105,9 @@ def _run_one_worker(task: dict, env, *, agent_id: str):
     )
 
     task_str = build_worker_task(task["goal"], task["context"])
-    for _ in runner.run(task_str):
-        pass
+    for item in runner.run(task_str):
+        if on_event is not None:
+            on_event(item)
     res = runner.result
     summary = (res.submission or "").strip() if res else ""
     ok = bool(res and res.ok)
@@ -138,15 +148,32 @@ class SubagentTool:
 
         goals = [t.get("goal", "") for t in tasks]
 
-        def _safe(task):
+        # Live worker-card bridge: coalesce each worker's events into field_meta
+        # progress payloads on the PARENT env (the ACP one; a bare LocalEnvironment
+        # has no emit_progress → getattr no-op). Collector is thread-safe; workers
+        # feed it via on_event, they never call emit_progress themselves.
+        emit = getattr(env, "emit_progress", None)
+        collector = WorkerCollector(
+            goals, emit=(emit if callable(emit) else lambda _m: None),
+            clock=time.monotonic)
+        collector.dispatched()
+
+        def _safe(idx_task):
+            idx, task = idx_task
             try:
-                return _run_one_worker(task, env, agent_id=agent_id)
+                return _run_one_worker(task, env, agent_id=agent_id,
+                                       on_event=lambda item: collector.on_event(idx, item))
             except BaseException as e:  # sibling isolation
                 return (False, f"{type(e).__name__}: {e}")
 
         max_workers = min(subagent_max_concurrent(), len(tasks))
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            results = list(pool.map(_safe, tasks))
-
+        try:
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                results = list(pool.map(_safe, enumerate(tasks)))
+        finally:
+            # ALWAYS emit finished() — even if the pool raises or the tool is
+            # cancelled mid-batch — so the live worker card resolves to a summary
+            # and clears from the pinned region instead of sticking on "running".
+            collector.finished()
         return {"output": _format_digest(results, goals), "returncode": 0,
                 "exception_info": None}

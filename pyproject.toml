@@ -28,6 +28,12 @@ dependencies = [
 # redirect) — pairs with the --debug trace file (see docs/debugging.md).
 dev = [
     "textual-dev>=1.7",
+    # Visual-snapshot testing for the TUI. Its transitive dep `syrupy` pins
+    # `pytest<9`, so the test stack is capped at pytest 8.x. The full suite is
+    # green on 8.4.2 (no pytest-9-only features in use). See
+    # docs/superpowers/specs/2026-07-01-tui-visual-snapshot-testing-design.md.
+    "pytest-textual-snapshot>=1.0",
+    "pytest>=8,<9",
 ]
 
 [project.scripts]
