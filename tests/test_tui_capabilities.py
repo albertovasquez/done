@@ -4,7 +4,6 @@ import asyncio
 import shutil
 from pathlib import Path
 
-import pytest
 import acp
 from acp.schema import ClientCapabilities, ElicitationCapabilities, RequestPermissionResponse, AllowedOutcome
 
@@ -12,19 +11,6 @@ REPO = Path(__file__).resolve().parent.parent
 # Running interpreter + module invocation = portable (worktree / any cwd).
 AGENT_CMD = [sys.executable, "-m", "harness.acp_main", "--model", "mock"]
 SAMPLE = REPO / "examples" / "sample-repo"
-
-
-def _vibeproxy_up() -> bool:
-    try:
-        import urllib.request
-        with urllib.request.urlopen("http://localhost:8317/v1/models", timeout=2) as r:
-            return r.status == 200
-    except Exception:
-        return False
-
-
-needs_vibeproxy = pytest.mark.skipif(not _vibeproxy_up(),
-    reason="VibeProxy not reachable at localhost:8317 — classification test skipped")
 
 
 class _StrictClient:
@@ -46,7 +32,6 @@ class _StrictClient:
     def on_connect(self, conn): pass
 
 
-@needs_vibeproxy
 def test_no_fs_or_terminal_calls_under_elicitation_only(tmp_path):
     repo = tmp_path / "sample-repo"
     shutil.copytree(SAMPLE, repo)
@@ -55,7 +40,13 @@ def test_no_fs_or_terminal_calls_under_elicitation_only(tmp_path):
 
     async def go():
         client = _StrictClient()
-        async with acp.spawn_agent_process(client, AGENT_CMD[0], *AGENT_CMD[1:]) as (conn, _proc):
+        # HARNESS_ROUTER_STUB=1 so the router classifies OFFLINE — the spawn does
+        # not inherit this process's env, so it must be passed explicitly (the
+        # mock worker, not a live proxy, performs the edit). See #229 / PR #203.
+        async with acp.spawn_agent_process(
+            client, AGENT_CMD[0], *AGENT_CMD[1:],
+            env={"HARNESS_ROUTER_STUB": "1"},
+        ) as (conn, _proc):
             await conn.initialize(
                 protocol_version=acp.PROTOCOL_VERSION,
                 client_capabilities=ClientCapabilities(elicitation=ElicitationCapabilities()),

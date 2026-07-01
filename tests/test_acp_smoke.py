@@ -39,21 +39,6 @@ AGENT_CMD = [sys.executable, "-m", "harness.acp_main", "--model", "mock"]
 # VibeProxy reachability guard
 # ---------------------------------------------------------------------------
 
-def _vibeproxy_up() -> bool:
-    try:
-        import urllib.request
-        with urllib.request.urlopen("http://localhost:8317/v1/models", timeout=2) as r:
-            return r.status == 200
-    except Exception:
-        return False
-
-
-VIBEPROXY_UP = _vibeproxy_up()
-needs_vibeproxy = pytest.mark.skipif(
-    not VIBEPROXY_UP,
-    reason="VibeProxy not reachable at localhost:8317 — classification tests skipped",
-)
-
 # ---------------------------------------------------------------------------
 # Collecting client — implements the full acp.Client Protocol
 # ---------------------------------------------------------------------------
@@ -174,7 +159,13 @@ class _AllowingTerminalClient(_TerminalRecordingClient):
 async def _drive(prompt_text: str, cwd: Path):
     """Initialize, open a session, send a prompt; return (updates, response)."""
     client = _CollectingClient()
-    async with acp.spawn_agent_process(client, AGENT_CMD[0], *AGENT_CMD[1:]) as (conn, _proc):
+    # HARNESS_ROUTER_STUB=1 → offline classification. The spawn does not inherit
+    # this process's env, so pass it explicitly, else the router hits the live
+    # proxy and a flaky classify turns into stop_reason="refusal" (#229 / PR #203).
+    async with acp.spawn_agent_process(
+        client, AGENT_CMD[0], *AGENT_CMD[1:],
+        env={"HARNESS_ROUTER_STUB": "1"},
+    ) as (conn, _proc):
         await conn.initialize(protocol_version=acp.PROTOCOL_VERSION)
         new = await conn.new_session(cwd=str(cwd), mcp_servers=[])
         resp = await conn.prompt(
@@ -206,7 +197,6 @@ def test_initialize_and_new_session(tmp_path):
 # Test B: chat_question prompt → _meta task_type==chat_question, no ToolCall
 # ---------------------------------------------------------------------------
 
-@needs_vibeproxy
 def test_chat_question_no_tool_call(tmp_path):
     """'what is 1+1' must classify as chat_question and NOT trigger any tool call."""
     updates, resp = asyncio.run(_drive("what is 1+1", tmp_path))
@@ -305,7 +295,6 @@ def test_stdout_purity(tmp_path):
 _SAMPLE_REPO = Path(__file__).resolve().parent.parent / "examples" / "sample-repo"
 
 
-@needs_vibeproxy
 def test_permission_reject_skips_command(tmp_path):
     """A rejecting client must prevent shell commands from running.
 
@@ -323,7 +312,10 @@ def test_permission_reject_skips_command(tmp_path):
 
     async def go():
         client = _RejectingClient()
-        async with acp.spawn_agent_process(client, AGENT_CMD[0], *AGENT_CMD[1:]) as (conn, _proc):
+        async with acp.spawn_agent_process(
+            client, AGENT_CMD[0], *AGENT_CMD[1:],
+            env={"HARNESS_ROUTER_STUB": "1"},
+        ) as (conn, _proc):
             # advertise elicitation so the agent gates shell commands on permission
             await conn.initialize(
                 protocol_version=acp.PROTOCOL_VERSION,
@@ -374,7 +366,6 @@ def test_permission_reject_skips_command(tmp_path):
 # agent must delegate shell commands via client terminal/* methods.
 # ---------------------------------------------------------------------------
 
-@needs_vibeproxy
 def test_terminal_delegation_uses_client_terminal(tmp_path):
     """When the client advertises terminal=True, commands must run via create_terminal.
 
@@ -387,7 +378,10 @@ def test_terminal_delegation_uses_client_terminal(tmp_path):
 
     async def go():
         client = _AllowingTerminalClient()
-        async with acp.spawn_agent_process(client, AGENT_CMD[0], *AGENT_CMD[1:]) as (conn, _proc):
+        async with acp.spawn_agent_process(
+            client, AGENT_CMD[0], *AGENT_CMD[1:],
+            env={"HARNESS_ROUTER_STUB": "1"},
+        ) as (conn, _proc):
             await conn.initialize(
                 protocol_version=acp.PROTOCOL_VERSION,
                 client_capabilities=ClientCapabilities(terminal=True, elicitation=ElicitationCapabilities()),
@@ -495,7 +489,6 @@ def test_load_session_unknown_id_errors(tmp_path):
     asyncio.run(go())
 
 
-@needs_vibeproxy
 def test_terminal_fallback_uses_local_environment(tmp_path):
     """When the client does NOT advertise terminal capability, LocalEnvironment runs the command.
 
@@ -509,7 +502,10 @@ def test_terminal_fallback_uses_local_environment(tmp_path):
 
     async def go():
         client = _AllowingClient()
-        async with acp.spawn_agent_process(client, AGENT_CMD[0], *AGENT_CMD[1:]) as (conn, _proc):
+        async with acp.spawn_agent_process(
+            client, AGENT_CMD[0], *AGENT_CMD[1:],
+            env={"HARNESS_ROUTER_STUB": "1"},
+        ) as (conn, _proc):
             # No terminal capability advertised → LocalEnvironment fallback
             await conn.initialize(
                 protocol_version=acp.PROTOCOL_VERSION,
