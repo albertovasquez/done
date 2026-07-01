@@ -2,25 +2,7 @@ from __future__ import annotations
 import os
 import secrets
 from harness.proxy_service import paths
-
-
-# NeuralWatt upstream models exposed via the proxy, as (upstream model id, alias).
-# The alias is what the harness/router requests (e.g. ROUTER_MODEL=openai/qwen).
-# IDs below were CONFIRMED against a live NeuralWatt /v1/models on 2026-06-30.
-# To see the full list (more glm/qwen/kimi variants exist):
-#   curl -s https://api.neuralwatt.com/v1/models -H "Authorization: Bearer $NEURALWATT_API_KEY"
-_NEURALWATT_MODELS = [
-    ("glm-5.2", "glm"),                      # GLM 5.2 — worker model (dn --model glm)
-    ("qwen3.5-397b-fast", "qwen"),          # cheap ROUTER model (ROUTER_MODEL=openai/qwen)
-    ("glm-5.2-short-fast", "glm-fast"),     # lighter GLM — router fallback (ROUTER_FALLBACK_MODEL=openai/glm-fast)
-]
-
-
-def alias_to_upstream() -> dict:
-    """Public {alias: upstream_model_id} map for the NeuralWatt upstreams. Used by
-    the TUI to show the full model name next to its short alias in the model menu
-    (the proxy's /v1/models only exposes the alias)."""
-    return {alias: model_id for model_id, alias in _NEURALWATT_MODELS}
+from harness.proxy_service.model_map import NEURALWATT_MODELS as _NEURALWATT_MODELS, alias_to_upstream  # noqa: F401
 
 
 def generate(port: int = 8317, *, env=None) -> str:
