@@ -59,6 +59,7 @@ from harness.tui.header import icon_markup, header_text_markup
 from harness import config as _config
 from harness import hooks as _hooks
 from harness.compress import auto_regen as _auto_regen  # noqa: F401 — import-time hook registration
+from harness.proxy_service import auto_install as _proxy_auto_install  # noqa: F401 — import-time hook registration
 from harness.compaction import resolve_ctx_window
 from harness.tui.fmt import ctx_bar, fmt_tokens_upper
 
