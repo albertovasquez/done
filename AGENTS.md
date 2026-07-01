@@ -104,6 +104,12 @@ one-off widgets or ad-hoc styling.
 - **Motion:** follow the restraint policy (brand voice) — motion signals a state
   change, one looping animation max, ≤250ms transitions, reduced-motion +
   monochrome fallbacks.
+- **Test the UX you changed.** Every UI change adds or adjusts a UX test —
+  a Pilot test for behavior/state, an SVG **snapshot** test for layout (ordering,
+  spacing, footer position). State-based tests are blind to layout; the recurring
+  TUI bugs (footer-above-answer, zero spacing, misrouted streams) are layout bugs.
+  See [`docs/tui-snapshot-testing.md`](docs/tui-snapshot-testing.md) §*Adding a
+  UX-focused test* — it has the decision rule and a copy-paste template.
 
 If a change needs the design system itself to grow, update the spec and
 `components.md` in the same PR so the catalog stays the source of truth.
