@@ -7,20 +7,12 @@ from __future__ import annotations
 
 from textual.widgets import Static
 
+from harness.tui.fmt import fmt_elapsed as _fmt_elapsed, fmt_tokens_lower as _fmt_tokens
 from harness.tui.state import AgentSnapshot, AgentState, ToolStatus
 
 _WORKING = {AgentState.THINKING, AgentState.RESPONDING, AgentState.RUNNING_TOOL,
             AgentState.AWAITING_PERMISSION, AgentState.AWAITING_DECISION}
 _CYCLE = ["◐", "◓", "◑", "◒"]
-
-
-def _fmt_elapsed(s: float) -> str:
-    s = int(s)
-    return f"{s//60}m {s%60:02d}s" if s >= 60 else f"{s}s"
-
-
-def _fmt_tokens(n: int) -> str:
-    return f"{n/1000:.1f}k" if n >= 1000 else str(n)
 
 
 class ActivityStatus(Static):

@@ -37,7 +37,7 @@ from textual.widgets import LoadingIndicator, Markdown, Static, TextArea
 from harness.tui.client import TuiClient
 from harness.tui.commands import build_registry, resolve_command
 from harness.tui.messages import SessionUpdate, PermissionRequest
-from harness.tui.render import render_update, harness_chips, format_cwd
+from harness.tui.render import render_update, harness_chips, format_cwd, worker_batch
 from harness.tui.state import (
     initial_snapshot, reduce, TurnStarted, TurnEnded, ItemReceived,
     TokensUpdated, DecisionOpened, decision_from_meta,
@@ -45,7 +45,7 @@ from harness.tui.state import (
 )
 from harness.tui.stream_painter import StreamPainter
 from harness.tui.theme import HARNESS_THEME, COLORS
-from harness.tui.widgets.activity_region import ActivityRegion
+from harness.tui.widgets.activity_region import ActivityRegion, worker_summary_line
 from harness.tui.widgets.permission_modal import PermissionModal
 from harness.tui.widgets.select_modal import SelectModal, SelectOption
 from harness.tui.widgets.agent_rail import AgentRail, PersonaSelected
@@ -60,6 +60,7 @@ from harness import config as _config
 from harness import hooks as _hooks
 from harness.compress import auto_regen as _auto_regen  # noqa: F401 — import-time hook registration
 from harness.compaction import resolve_ctx_window
+from harness.tui.fmt import ctx_bar, fmt_tokens_upper
 
 
 def _c(name: str, text: str) -> str:
@@ -503,26 +504,20 @@ class HarnessTui(App):
     def _status_right(self) -> str:
         # No command palette is bound, so the old 'ctrl+p commands' hint is gone;
         # the right side carries context usage (or the version pre-start).
-        right = self._context_tagline()
         if not self._started:
-            right = self._version
-        return f"[$muted]{right}[/]"
+            return f"[$muted]{self._version}[/]"
+        right = self._context_tagline()   # ctx_bar returns its own theme markup
+        if getattr(self, "_compacted", None):
+            right += " [$muted]· compacted[/]"   # surface the stored compaction note
+        return right
 
-    @staticmethod
-    def _fmt_tokens(n: int) -> str:
-        if n >= 1_000_000:
-            return f"{n/1_000_000:.1f}M"
-        return f"{n/1000:.1f}K" if n >= 1000 else str(n)
+    _fmt_tokens = staticmethod(fmt_tokens_upper)
 
     def _context_tagline(self) -> str:
         # _tokens is the latest llm.return total (prompt+completion for that call),
         # which tracks current context footprint until the next model call (or compaction).
         window = resolve_ctx_window(_model_label(self.model, self._worker_model_id))
-        if self._tokens <= 0:
-            return f"ctx --/{self._fmt_tokens(window)}"
-        remaining = max(window - self._tokens, 0)
-        return (f"ctx {self._fmt_tokens(self._tokens)}/{self._fmt_tokens(window)} "
-                f"| {self._fmt_tokens(remaining)} left")
+        return ctx_bar(self._tokens, window)
 
     def _refresh_status(self) -> None:
         try:
@@ -1478,6 +1473,16 @@ class HarnessTui(App):
             self._apply(PersonaResolved(pid))
             self._persona_seen = True
             self._refresh_persona()
+        # fold a worker-batch update (SubagentTool's live card) if present. On
+        # 'finished', leave a one-line summary in the transcript; the reducer clears
+        # the live rows from the pinned ActivityRegion.
+        wb = worker_batch(getattr(msg.update, "field_meta", None))
+        if wb is not None:
+            self._apply(wb)
+            if wb.action == "finished" and wb.summary is not None:
+                self._append_streaming_below_footer(
+                    Static(worker_summary_line(wb.summary), markup=True))
+            return   # the carrier is an empty message_chunk — nothing else to render
         for chip in harness_chips(getattr(msg.update, "field_meta", None)):
             self._append_line(_c("muted", f"\\[{chip}]"), classes="turn-meta")
         item = render_update(msg.update)

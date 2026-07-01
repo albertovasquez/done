@@ -24,43 +24,45 @@ def test_status_chip_renders_uppercase_label():
     assert "RUNNING" in chip._label
 
 
+# Footer chips collapse: glyph-when-ON (the expected default), full labeled chip
+# when OFF (the surprising state). See test_status_chip_collapse.py for the full
+# rule; these keep the widget-level colour/markup assertions.
 def test_status_chip_for_yolo_off_is_muted_bypass_off():
     chip = StatusChip.for_yolo(active=False, pinned=False)
-    markup = chip._Static__content
-    assert "bypass permissions off" in chip._label
-    assert "$muted" in markup                  # safe state is quiet, not loud
+    assert "bypass OFF" in chip._label
+    assert "$muted" in chip._Static__content   # safe/off state is quiet, not loud
 
 
-def test_status_chip_for_yolo_on_is_red_bypass_on():
+def test_status_chip_for_yolo_on_is_red_glyph():
     chip = StatusChip.for_yolo(active=True, pinned=False)
-    assert "bypass permissions on" in chip._label
-    assert "pinned" not in chip._label
+    assert chip._label == "▶▶"                 # ON collapses to the bare glyph
+    assert "bypass" not in chip._label
     assert "$error" in chip._Static__content   # RED — loudest signal for a full bypass
-    assert "▶▶" in chip._label                 # the bypass glyph
 
 
-def test_status_chip_for_yolo_pinned_shows_pinned_marker():
+def test_status_chip_for_yolo_pinned_still_glyph_only():
+    # pinned is a persistence detail; ON stays terse (colour carries the signal).
     chip = StatusChip.for_yolo(active=True, pinned=True)
-    assert "bypass permissions on" in chip._label and "pinned" in chip._label
+    assert chip._label == "▶▶"
     assert "$error" in chip._Static__content
 
 
 def test_status_chip_compress_aware_off_is_muted():
     chip = StatusChip.for_compress_aware(active=False, pinned=False)
-    assert "compress-aware off" in chip._label
+    assert "compress-aware OFF" in chip._label
     assert "$muted" in chip._Static__content
 
 
-def test_status_chip_compress_aware_on():
+def test_status_chip_compress_aware_on_is_glyph():
     chip = StatusChip.for_compress_aware(active=True, pinned=False)
-    assert "compress-aware on" in chip._label
-    assert "pinned" not in chip._label
+    assert chip._label == "▤"                  # ON collapses to the bare glyph
+    assert "compress-aware" not in chip._label
     assert "$error" not in chip._Static__content    # NOT the danger color
 
 
-def test_status_chip_compress_aware_pinned_marker():
+def test_status_chip_compress_aware_pinned_still_glyph_only():
     chip = StatusChip.for_compress_aware(active=True, pinned=True)
-    assert "compress-aware on" in chip._label and "pinned" in chip._label
+    assert chip._label == "▤"
 
 
 def test_activity_glyph_reduced_motion_is_static():
