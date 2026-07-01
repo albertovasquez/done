@@ -228,6 +228,28 @@ def _serialize(
                 else:
                     lines.append(f"{field} = {_quote(str(value))}")
             lines.append("")
+    # Preserve agent keys that exist ONLY as nested tables in the raw config
+    # (e.g. [agents.default.roles] with no backend/model) — load() drops these
+    # from `agents`, and they're not in `partial`, so without this they vanish on
+    # write. Emit an empty [agents.<key>] header + the nested tables.
+    if preserve:
+        agents_raw = preserve.get("agents")
+        if isinstance(agents_raw, dict):
+            emitted = set(ordered) | set(partial or {})
+            for key in sorted(agents_raw.keys()):
+                if key in emitted:
+                    continue
+                table = agents_raw[key]
+                if not isinstance(table, dict):
+                    continue
+                if not any(isinstance(v, dict) for v in table.values()):
+                    continue  # nothing nested to preserve
+                lines.append(f"[agents.{key}]")
+                for k, v in table.items():
+                    if not isinstance(v, dict):
+                        _emit_scalar(lines, k, v)   # keep any flat scalars too
+                lines.append("")
+                _emit_nested_agent_tables(lines, key, preserve)
     # Re-emit any top-level sections/keys from the existing file that we don't own.
     if preserve:
         _OWNED = {"schema_version", "agents"}

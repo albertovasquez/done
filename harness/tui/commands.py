@@ -91,7 +91,10 @@ async def _goal(app, arg: str = "") -> None:
         app._active_goal_text = None
         app._notify_line("goal cleared.")
         return
-    await app._conn.ext_method("harness/set_goal", {"text": sub})
+    resp = await app._conn.ext_method("harness/set_goal", {"text": sub})
+    if not (isinstance(resp, dict) and resp.get("ok")):
+        app._notify_line(f"could not arm goal: {resp.get('error', 'unknown') if isinstance(resp, dict) else resp}")
+        return
     app._active_goal_text = sub
     app._notify_line(f"goal armed: {sub}")
     await app._seed_prompt(sub)

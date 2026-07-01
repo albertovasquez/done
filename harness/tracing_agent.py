@@ -255,13 +255,35 @@ class TracingAgent(DefaultAgent):
         d = decide(goal=ctx.text, verdict=verdict, reviewer_attempts=ctx.attempts,
                    limits=GateLimits(max_attempts=ctx.max_attempts))
         if d.action == "continue":
-            self.messages[-1] = self.model.format_message(
+            # Drop the exit message, then close any dangling tool call from the
+            # submit (a bash submit re-raises Submitted BEFORE its observation is
+            # appended, leaving the assistant tool_calls message unpaired — the
+            # next query() would send a malformed request). Then add the reminder.
+            self.messages.pop()                      # remove the exit message
+            self._close_dangling_tool_calls()
+            self.add_messages(self.model.format_message(
                 role="user",
-                content=f"Keep working toward the goal: {ctx.text}. Not yet met: {d.reason}")
+                content=f"Keep working toward the goal: {ctx.text}. Not yet met: {d.reason}"))
             return False
         # stop or escape → end the turn; clear the goal so it can't hijack the next.
         self.goal_ctx = None
         return True
+
+    def _close_dangling_tool_calls(self) -> None:
+        """Append a synthetic `tool` message for any assistant tool_call that has
+        no matching response yet — so the message list stays valid when the /goal
+        gate continues after a bash submit (whose observation was never appended)."""
+        answered = {m.get("tool_call_id") for m in self.messages
+                    if m.get("role") == "tool"}
+        last_assistant = next((m for m in reversed(self.messages)
+                               if m.get("role") == "assistant"), None)
+        if not last_assistant:
+            return
+        for tc in last_assistant.get("tool_calls", []) or []:
+            tcid = tc.get("id")
+            if tcid and tcid not in answered:
+                self.add_messages({"role": "tool", "tool_call_id": tcid,
+                                   "content": "(interrupted: continuing toward the goal)"})
 
     def _transcript_text(self) -> str:
         """Compact recent transcript for the reviewer prompt (last ~20 messages)."""

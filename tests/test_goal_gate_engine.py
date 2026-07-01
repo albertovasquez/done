@@ -12,7 +12,9 @@ def _agent_with_goal(monkeypatch, verdict_seq):
         calls["n"] += 1
         return v
     monkeypatch.setattr(ta, "review_goal", fake_review)
+    import logging
     agent = ta.TracingAgent.__new__(ta.TracingAgent)   # bypass __init__
+    agent.logger = logging.getLogger("test-goal-agent")   # add_messages logs
     agent.goal_ctx = GoalContext(text="G", reviewer_model="m", max_attempts=2)
     agent.messages = [{"role": "exit",
                        "extra": {"exit_status": "Submitted", "submission": "done?"}}]
@@ -62,6 +64,28 @@ def test_no_goal_is_noop(monkeypatch):
     agent.goal_ctx = None
     still_exit = agent._apply_goal_gate()
     assert still_exit is True
+
+
+def test_continue_closes_dangling_tool_call(monkeypatch):
+    # A bash submit leaves an assistant tool_calls message unpaired (Submitted
+    # re-raises before the observation is appended). On continue, the gate must
+    # close that tool call so the next request isn't malformed.
+    agent = _agent_with_goal(monkeypatch, [Verdict(met=False, reason="keep going")])
+    agent.messages = [
+        {"role": "assistant", "content": "", "tool_calls": [
+            {"id": "call_1", "type": "function",
+             "function": {"name": "bash", "arguments": "{}"}}]},
+        {"role": "exit", "extra": {"exit_status": "Submitted", "submission": "done?"}},
+    ]
+    still_exit = agent._apply_goal_gate()
+    assert still_exit is False
+    roles = [m.get("role") for m in agent.messages]
+    # every assistant tool_call id must have a matching tool message
+    tool_ids = {tc["id"] for m in agent.messages if m.get("role") == "assistant"
+                for tc in m.get("tool_calls", [])}
+    answered = {m.get("tool_call_id") for m in agent.messages if m.get("role") == "tool"}
+    assert tool_ids <= answered, f"unpaired tool call: {tool_ids - answered}"
+    assert roles[-1] == "user"        # continue message is last
 
 
 def test_reviewer_exception_escapes(monkeypatch):

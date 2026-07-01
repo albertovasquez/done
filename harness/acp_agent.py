@@ -153,14 +153,23 @@ class HarnessAgent(acp.Agent):
             text = (params or {}).get("text")
             if not text:
                 return {"ok": False, "error": "goal text required"}
-            reviewer = (params or {}).get("reviewer_model") or self._worker_model_id
+            # Reviewer model: explicit override wins, else the persona's Layer A
+            # reviewer-role config (that's the whole point of role-model config),
+            # else the worker model. Codex #8.
+            reviewer = (params or {}).get("reviewer_model")
+            if not reviewer:
+                from harness.role_model import load_role_tables, resolve_role_candidates
+                reviewer = resolve_role_candidates(
+                    self._active_persona, "reviewer",
+                    load_role_tables(), self._worker_model_id or "")[0]
             seat = self._persona_sessions.seat_of(self._active_persona)
-            if seat is not None:
-                try:
-                    self._store.get(seat.session_id).goal = GoalContext(
-                        text=text, reviewer_model=reviewer)
-                except KeyError:
-                    return {"ok": False, "error": "no active session"}
+            if seat is None:
+                return {"ok": False, "error": "no active session to arm the goal on"}
+            try:
+                self._store.get(seat.session_id).goal = GoalContext(
+                    text=text, reviewer_model=reviewer)
+            except KeyError:
+                return {"ok": False, "error": "no active session"}
             return {"ok": True}
         if method == "harness/clear_goal":
             seat = self._persona_sessions.seat_of(self._active_persona)
@@ -767,6 +776,11 @@ class HarnessAgent(acp.Agent):
                             "streamed": streamed["buf"],
                             "compacted": compacted["event"]}
                 finally:
+                    # Write the goal ctx back to the session: the gate clears it on
+                    # met/escape and mutates attempts on continue, all on the agent's
+                    # copy — persist that so the next turn sees the true state (not a
+                    # stale re-armed goal). Codex #3/#7.
+                    state.goal = getattr(agent, "goal_ctx", None)
                     # never marshal a delta to a dead loop after the turn ends.
                     if hasattr(model, "on_delta"):
                         model.on_delta = None

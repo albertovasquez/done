@@ -31,3 +31,23 @@ def test_cancel_clears_goal_source():
     # B5: the cancel handler must disarm the goal (state.goal = None).
     src = inspect.getsource(acp_agent.HarnessAgent.cancel)
     assert "goal = None" in src
+
+
+def test_set_goal_wires_reviewer_role_config():
+    # Codex #8: set_goal must resolve the reviewer via the Layer A reviewer role,
+    # not just the worker model.
+    src = inspect.getsource(acp_agent.HarnessAgent.ext_method)
+    assert 'resolve_role_candidates' in src
+    assert '"reviewer"' in src
+
+
+def test_set_goal_errors_when_no_seat():
+    # Codex #6: no active seat → error, not silent ok.
+    src = inspect.getsource(acp_agent.HarnessAgent.ext_method)
+    assert "no active session to arm" in src
+
+
+def test_turn_writes_goal_back_to_session():
+    # Codex #3/#7: the turn must persist agent.goal_ctx back onto state.goal.
+    src = inspect.getsource(acp_agent.HarnessAgent._run_agent_turn)
+    assert "state.goal = getattr(agent" in src
