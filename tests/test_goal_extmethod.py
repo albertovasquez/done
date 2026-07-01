@@ -25,3 +25,9 @@ def test_session_state_has_goal_field():
 def test_session_state_goal_defaults_none():
     st = SessionState(cwd="/tmp")
     assert st.goal is None
+
+
+def test_cancel_clears_goal_source():
+    # B5: the cancel handler must disarm the goal (state.goal = None).
+    src = inspect.getsource(acp_agent.HarnessAgent.cancel)
+    assert "goal = None" in src

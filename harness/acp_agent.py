@@ -346,7 +346,9 @@ class HarnessAgent(acp.Agent):
 
     async def cancel(self, session_id, **kw) -> None:
         try:
-            self._store.get(session_id).cancel_flag.set()
+            state = self._store.get(session_id)
+            state.cancel_flag.set()
+            state.goal = None      # cancel disarms the goal so it can't hijack the next turn
         except KeyError:
             pass
 
