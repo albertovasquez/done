@@ -99,7 +99,12 @@ def install() -> str:
 
 
 def upgrade() -> str:
-    """Re-download the pinned binary then stop + start to pick it up.
+    """Re-download the pinned binary, regenerate config, then stop + start.
+
+    Regenerating config (like install() does) is what lets a newly-set
+    NEURALWATT_API_KEY be picked up on restart. Without it, `dn proxy upgrade`
+    only refreshed the binary and the documented "set key then upgrade" remedy
+    silently did nothing.
 
     Returns a status string. Errors are caught and returned as strings.
     """
@@ -109,6 +114,16 @@ def upgrade() -> str:
         return f"CLIProxyAPI upgrade: binary verification failed — {exc}"
     except Exception as exc:
         return f"CLIProxyAPI upgrade: download error — {exc}"
+
+    # Regenerate config AFTER download, BEFORE restart, so the restarted service
+    # reads the fresh config. A write failure aborts before stop/start — never
+    # restart against a half-written config.
+    try:
+        config_gen.ensure_management_password()
+        cfg_path = paths.config_path()
+        cfg_path.write_text(config_gen.generate())
+    except Exception as exc:
+        return f"CLIProxyAPI upgrade: config write failed — {exc}"
 
     stop_result = stop()
     start_result = start()

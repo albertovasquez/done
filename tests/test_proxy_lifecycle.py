@@ -97,6 +97,48 @@ def test_login_restarts_service_even_when_login_fails(monkeypatch, tmp_path):
     assert "did not complete" in out.lower()
 
 
+def test_upgrade_regenerates_config_with_neuralwatt(monkeypatch, tmp_path):
+    """upgrade() must rewrite config.yaml (not only re-download the binary), so a
+    newly-set NEURALWATT_API_KEY is picked up on restart. Without this, the
+    documented `set key then dn proxy upgrade` remedy silently does nothing."""
+    seq = []
+    cfg = tmp_path / "config.yaml"
+    monkeypatch.setattr(lifecycle.download, "download_and_install",
+                        lambda v: seq.append("download") or (tmp_path / "cli-proxy-api"))
+    monkeypatch.setattr(lifecycle.config_gen, "ensure_management_password", lambda: "pw")
+    monkeypatch.setattr(lifecycle.paths, "config_path", lambda: cfg)
+    monkeypatch.setattr(lifecycle, "stop", lambda: seq.append("stop") or "stopped")
+    monkeypatch.setattr(lifecycle, "start", lambda: seq.append("start") or "started")
+    monkeypatch.setenv("NEURALWATT_API_KEY", "nw-xyz")
+
+    out = lifecycle.upgrade()
+
+    # config was regenerated AFTER download and BEFORE restart
+    assert seq == ["download", "stop", "start"]
+    written = cfg.read_text()
+    assert "openai-compatibility" in written
+    assert 'alias: "glm"' in written and 'alias: "qwen"' in written
+    assert "complete" in out.lower()
+
+
+def test_upgrade_aborts_before_restart_on_config_write_failure(monkeypatch, tmp_path):
+    """A config-write failure must abort before stop/start — never restart the
+    service against a half-written config."""
+    seq = []
+    monkeypatch.setattr(lifecycle.download, "download_and_install",
+                        lambda v: seq.append("download") or (tmp_path / "cli-proxy-api"))
+    monkeypatch.setattr(lifecycle.config_gen, "ensure_management_password", lambda: "pw")
+    monkeypatch.setattr(lifecycle.config_gen, "generate",
+                        lambda: (_ for _ in ()).throw(OSError("disk full")))
+    monkeypatch.setattr(lifecycle.paths, "config_path", lambda: tmp_path / "config.yaml")
+    monkeypatch.setattr(lifecycle, "stop", lambda: seq.append("stop") or "stopped")
+    monkeypatch.setattr(lifecycle, "start", lambda: seq.append("start") or "started")
+
+    out = lifecycle.upgrade()
+    assert "stop" not in seq and "start" not in seq      # never restarted
+    assert "config write failed" in out.lower()
+
+
 def test_login_rejects_unknown_provider():
     out = lifecycle.login("banana")
     assert "unknown" in out.lower() or "choose" in out.lower()

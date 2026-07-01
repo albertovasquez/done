@@ -17,7 +17,7 @@ dn proxy status
 ```
 
 The `install` command:
-1. Generates the default config file at `~/.config/harness/cliproxy.yaml`
+1. Generates the default config file at `~/.local/share/harness/proxy/config.yaml`
 2. Downloads the CLIProxyAPI binary (if not already present)
 3. Registers it as an OS service so it runs automatically on boot
 
@@ -64,11 +64,17 @@ CLIProxyAPI supports GLM (via NeuralWatt) automatically when you set the
 
 ### Setup
 
-Set your NeuralWatt API key in your shell environment or in `~/.config/harness/.env`:
+Put your NeuralWatt API key in `~/.config/harness/.env` (recommended — `dn proxy`
+loads this file automatically, so the key persists across sessions with no
+`export` needed):
 
 ```bash
-export NEURALWATT_API_KEY=your_neuralwatt_api_key_here
+# ~/.config/harness/.env
+NEURALWATT_API_KEY=your_neuralwatt_api_key_here
 ```
+
+A shell-exported `NEURALWATT_API_KEY` also works and takes precedence over the
+`.env` value.
 
 Then run `dn proxy install` (or `dn proxy upgrade` if already installed):
 
@@ -77,7 +83,7 @@ dn proxy install
 ```
 
 This automatically appends the NeuralWatt `openai-compatibility` upstream to
-`~/.config/harness/cliproxy.yaml`. The proxy restarts and GLM becomes available.
+`~/.local/share/harness/proxy/config.yaml`. The proxy restarts and GLM becomes available.
 
 ### Verify GLM is available
 
@@ -295,20 +301,21 @@ The model list depends on which providers are authenticated. If you expect a
 model and don't see it:
 
 1. Check `dn proxy status` to confirm the provider is logged in
-2. For GLM: verify `echo $NEURALWATT_API_KEY` is set, then run `dn proxy upgrade` to pick up the config
+2. For GLM: confirm `NEURALWATT_API_KEY` is in `~/.config/harness/.env` (or exported), then run `dn proxy upgrade` to regenerate the config with it
 3. Restart the proxy: `dn proxy stop && dn proxy start`
 
 ### NeuralWatt / GLM not appearing
 
-If you set `NEURALWATT_API_KEY` after installing CLIProxyAPI, you must run:
+If you set `NEURALWATT_API_KEY` after installing CLIProxyAPI, run:
 
 ```bash
 dn proxy upgrade
 ```
 
 This re-downloads the binary and regenerates the config to include the NeuralWatt
-upstream. If still not visible after `dn proxy status` shows "running", check
-that the `NEURALWATT_API_KEY` environment variable is set and restart:
+upstream (the key is read from `~/.config/harness/.env` or the shell env). If
+still not visible after `dn proxy status` shows "running", confirm the key is in
+`~/.config/harness/.env` (or exported) and restart:
 
 ```bash
 dn proxy stop && dn proxy start
