@@ -55,15 +55,17 @@ def test_explain_turn_gets_answer_only_instance_template():
     assert _instance_template_for("code_explain", default) is ANSWER_ONLY_INSTANCE
 
 
-def test_work_order_turn_keeps_engine_instance_template():
-    """A real work order (code_fix/feature/refactor) keeps the engine default
-    template unchanged — the gate must not handicap turns the user DID ask to act
-    on. ops_task is no longer here: it gets the observe-first template (Task 1)."""
-    from harness.instance_templates import _instance_template_for
+def test_work_order_turn_gets_done_native_work_order():
+    """A real work order (code_fix/feature/refactor) gets the Done-native
+    WORK_ORDER_INSTANCE (Read/Write/Edit-native), not the vendored mini.yaml
+    cat/sed default — the gate must not handicap turns the user DID ask to act
+    on, but it also must not render the engine's shell-edit tutorial. ops_task
+    is no longer here: it gets the observe-first template (Task 1)."""
+    from harness.instance_templates import _instance_template_for, WORK_ORDER_INSTANCE
 
     default = "Please solve this issue: {{task}}"
     for tt in ("code_fix", "code_feature", "code_refactor"):
-        assert _instance_template_for(tt, default) == default
+        assert _instance_template_for(tt, default) == WORK_ORDER_INSTANCE
 
 
 def test_ops_task_turn_gets_observe_first_template():
