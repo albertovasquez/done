@@ -117,7 +117,7 @@ def test_upgrade_regenerates_config_with_neuralwatt(monkeypatch, tmp_path):
     assert seq == ["download", "stop", "start"]
     written = cfg.read_text()
     assert "openai-compatibility" in written
-    assert 'alias: "glm"' in written and 'alias: "qwen"' in written
+    assert 'alias: "glm-5.2"' in written and 'alias: "qwen3.5-397b-fast"' in written
     assert "complete" in out.lower()
 
 
