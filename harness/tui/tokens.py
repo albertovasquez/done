@@ -16,6 +16,7 @@ GLYPH: dict[str, str] = {
     "scheduled": "⏱",
     "awaiting": "?",
     "bypass": "▶▶",       # permission-bypass mode line ("bypass permissions on/off")
+    "compress": "▤",      # compress-aware mode chip (glyph when ON, label when OFF)
     # tool subtypes (glyph-only, inferred)
     "edit": "✎",
     "test": "⚑",

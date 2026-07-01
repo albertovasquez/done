@@ -60,6 +60,7 @@ from harness import config as _config
 from harness import hooks as _hooks
 from harness.compress import auto_regen as _auto_regen  # noqa: F401 — import-time hook registration
 from harness.compaction import resolve_ctx_window
+from harness.tui.fmt import ctx_bar, fmt_tokens_upper
 
 
 def _c(name: str, text: str) -> str:
@@ -503,26 +504,20 @@ class HarnessTui(App):
     def _status_right(self) -> str:
         # No command palette is bound, so the old 'ctrl+p commands' hint is gone;
         # the right side carries context usage (or the version pre-start).
-        right = self._context_tagline()
         if not self._started:
-            right = self._version
-        return f"[$muted]{right}[/]"
+            return f"[$muted]{self._version}[/]"
+        right = self._context_tagline()   # ctx_bar returns its own theme markup
+        if getattr(self, "_compacted", None):
+            right += " [$muted]· compacted[/]"   # surface the stored compaction note
+        return right
 
-    @staticmethod
-    def _fmt_tokens(n: int) -> str:
-        if n >= 1_000_000:
-            return f"{n/1_000_000:.1f}M"
-        return f"{n/1000:.1f}K" if n >= 1000 else str(n)
+    _fmt_tokens = staticmethod(fmt_tokens_upper)
 
     def _context_tagline(self) -> str:
         # _tokens is the latest llm.return total (prompt+completion for that call),
         # which tracks current context footprint until the next model call (or compaction).
         window = resolve_ctx_window(_model_label(self.model, self._worker_model_id))
-        if self._tokens <= 0:
-            return f"ctx --/{self._fmt_tokens(window)}"
-        remaining = max(window - self._tokens, 0)
-        return (f"ctx {self._fmt_tokens(self._tokens)}/{self._fmt_tokens(window)} "
-                f"| {self._fmt_tokens(remaining)} left")
+        return ctx_bar(self._tokens, window)
 
     def _refresh_status(self) -> None:
         try:

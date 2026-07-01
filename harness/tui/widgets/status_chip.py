@@ -66,29 +66,25 @@ class StatusChip(Static):
 
     @classmethod
     def for_yolo(cls, active: bool, pinned: bool) -> "StatusChip":
-        """The permission-mode status line in the footer. Reads as a security
-        posture in plain words (no jargon): off → muted 'bypass permissions off';
-        on → RED 'bypass permissions on' (+ ' · pinned' when persisted). Red on
-        the active state is the loudest signal — a full permission bypass that
-        auto-runs commands. StatusChip bakes the glyph into the label; color +
-        glyph + weight together so meaning survives monochrome terminals."""
+        """Permission-bypass mode chip in the footer. Both toggles default ON and
+        rarely change, so ON collapses to a bare glyph to reclaim footer space;
+        OFF — the surprising, security-relevant state — spells itself out. Colour
+        carries the ON signal: RED, the loudest posture (a full permission bypass
+        that auto-runs commands). Glyph + colour survive monochrome terminals."""
         glyph = GLYPH["bypass"]
         if not active:
-            return cls(f"{glyph} bypass permissions off", "muted")
-        suffix = " · pinned" if pinned else ""
-        return cls(f"{glyph} bypass permissions on{suffix}", "error")
+            return cls(f"{glyph} bypass OFF", "muted")
+        return cls(glyph, "error")
 
     @classmethod
     def for_compress_aware(cls, active: bool, pinned: bool) -> "StatusChip":
-        """Context-compression mode chip in the footer. Compress-aware is a safe,
-        positive feature (it reduces context bloat rather than bypassing security),
-        so it uses the calm 'accent' token when active — not the danger 'error' red.
-        off → muted 'compress-aware off'; on → accent 'compress-aware on'
-        (+ ' · pinned' when persisted)."""
+        """Context-compression mode chip in the footer. Same collapse rule as
+        for_yolo: ON → bare glyph, OFF → labeled. Compress-aware is a safe,
+        positive feature (reduces context bloat, not a security bypass), so ON
+        uses the calm 'accent' token — not the danger 'error' red."""
         if not active:
-            return cls("compress-aware off", "muted")
-        suffix = " · pinned" if pinned else ""
-        return cls(f"compress-aware on{suffix}", "accent")
+            return cls("compress-aware OFF", "muted")
+        return cls(GLYPH["compress"], "accent")
 
 
 class StateDot(Static):
