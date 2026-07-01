@@ -57,6 +57,28 @@ def test_policy_promises_parallel_tool_calls():
     assert "parallel" in base_prompt.BASE_POLICY.lower()
 
 
+def test_policy_states_understand_before_acting_posture():
+    """Done's constitutional temperament: investigate/understand before mutating,
+    and treat file changes as licensed rather than automatic. This is what contains
+    upstream's SWE-bench 'edit the source to solve it' eagerness at the identity
+    level (not per task_type)."""
+    low = base_prompt.BASE_POLICY.lower()
+    # read/inspect is always free; understanding precedes action
+    assert "understand" in low or "investigate" in low
+    # mutation is proposed, not automatic — the propose-before-changing floor
+    assert "propose" in low
+    # the interactive-wait vs standing-directive split is spelled out
+    assert "standing directive" in low or "go-ahead" in low or "directive" in low
+
+
+def test_policy_posture_does_not_gate_read_only_inspection():
+    """Restraint must not read as 'ask before looking' — inspection stays free, or
+    the agent becomes uselessly timid."""
+    low = base_prompt.BASE_POLICY.lower()
+    # names read-only inspection as freely allowed
+    assert "read" in low and ("inspect" in low or "read-only" in low)
+
+
 def test_policy_explains_harness_voice_and_denial():
     low = base_prompt.BASE_POLICY.lower()
     assert "system-reminder" in low          # harness-injected, not the user

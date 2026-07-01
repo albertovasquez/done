@@ -223,3 +223,29 @@ def test_no_cancel_flag_runs_normally(tmp_path):
     # Regression: an agent built without a cancel_flag (CLI/mock) behaves as before.
     agent = _build_agent(tmp_path, _SUBMIT, cwd=tmp_path)
     assert agent.run("the task").get("exit_status") == "Submitted"
+
+
+# --------------------------------------------------------------------------
+# Invariant: upstream's SWE-bench solver identity never reaches the model.
+# --------------------------------------------------------------------------
+
+def test_composed_system_message_is_done_native_not_upstream(tmp_path):
+    """The system message TracingAgent actually sends must lead with Done's
+    identity and never contain upstream's 'helpful assistant that can interact
+    with a computer' line. Guards the containment across future upstream bumps:
+    if a seam stops overriding system_template, this fails."""
+    from harness.instance_templates import done_agent_cfg
+    from harness import base_prompt
+
+    cfg = done_agent_cfg(_agent_config(), "code_fix")
+    emitter = Emitter(tmp_path / "events.jsonl", clock=lambda: 0.0, console=False)
+    base_block = base_prompt.render_base_prompt(
+        model_id="mock", cwd=str(tmp_path), system_line="TestOS")
+    agent = TracingAgent(_tc_model(_SUBMIT), LocalEnvironment(cwd=str(tmp_path)),
+                         emitter=emitter, base_block=base_block, **cfg)
+    system_msg = agent._render_template(agent.config.system_template)
+
+    assert "helpful assistant that can interact with a computer" not in system_msg.lower()
+    assert "You are Done" in system_msg
+    # the Posture temperament rode in via the base block
+    assert "Posture" in system_msg

@@ -1,7 +1,7 @@
 import pytest
 from harness.instance_templates import (
     ANSWER_ONLY_INSTANCE, OBSERVE_FIRST_INSTANCE, WORK_ORDER_INSTANCE,
-    _instance_template_for,
+    DONE_SYSTEM_TEMPLATE, _instance_template_for, done_agent_cfg,
 )
 
 DEFAULT = "Please solve this issue: {{task}}\nEdit the source code to resolve it."
@@ -45,3 +45,36 @@ def test_work_order_keeps_contract_and_is_tool_native():
     assert "read" in low and "write" in low and "edit" in low
     # must NOT teach cat/sed file editing
     assert "sed -i" not in low and "cat <<" not in WORK_ORDER_INSTANCE
+
+
+# --------------------------------------------------------------------------
+# Done-native system template + the cfg override chokepoint
+# --------------------------------------------------------------------------
+
+def test_done_system_template_replaces_upstream_identity():
+    """The engine's system prompt must be Done's, not upstream's SWE-bench solver
+    identity. Upstream's 'helpful assistant that can interact with a computer' line
+    must be gone; Done's identity must lead."""
+    low = DONE_SYSTEM_TEMPLATE.lower()
+    assert "helpful assistant that can interact with a computer" not in low
+    assert "you are done" in low
+
+
+def test_done_agent_cfg_overrides_both_system_and_instance():
+    """done_agent_cfg is the single chokepoint the CLI, ACP, and headless paths use
+    to strip upstream's framing: it swaps in Done's system_template AND the
+    per-task instance_template, without mutating the caller's dict."""
+    upstream = {"system_template": "You are a helpful assistant that can interact with a computer.\n",
+                "instance_template": "Please solve this issue: {{task}}",
+                "step_limit": 0}
+    out = done_agent_cfg(upstream, "code_fix")
+    assert out["system_template"] == DONE_SYSTEM_TEMPLATE      # upstream identity gone
+    assert out["instance_template"] == WORK_ORDER_INSTANCE     # per-task framing applied
+    assert out["step_limit"] == 0                              # other keys preserved
+    # caller's dict untouched (built once at module scope, reused)
+    assert upstream["system_template"].startswith("You are a helpful assistant")
+
+
+def test_done_agent_cfg_respects_task_type():
+    assert done_agent_cfg({}, "code_explain")["instance_template"] == ANSWER_ONLY_INSTANCE
+    assert done_agent_cfg({}, "ops_task")["instance_template"] == OBSERVE_FIRST_INSTANCE
