@@ -54,3 +54,40 @@ def test_dedup_order_preserving():
 
 def test_empty_config_is_just_parent():
     assert resolve_role_candidates("nobody", "worker", {}, parent_model="P") == ["P"]
+
+
+import pytest
+from harness import subagent_config
+
+
+@pytest.fixture
+def _cfgdir(tmp_path, monkeypatch):
+    monkeypatch.setattr("harness.paths.config_dir", lambda: tmp_path)
+    return tmp_path
+
+
+def _write_conf(tmp_path, text):
+    (tmp_path / "done.conf").write_text(text)
+
+
+def test_subagent_wrapper_prefers_per_task(_cfgdir):
+    assert subagent_config.resolve_subagent_model(
+        "a", per_task="PT", parent_model="P") == "PT"
+
+
+def test_subagent_wrapper_reads_legacy_persona_key(_cfgdir):
+    _write_conf(_cfgdir, 'schema_version = 1\n[agents.alice]\nsubagent_model = "LEG"\n')
+    assert subagent_config.resolve_subagent_model(
+        "alice", parent_model="P") == "LEG"
+
+
+def test_subagent_wrapper_reads_global_subagent_model(_cfgdir):
+    _write_conf(_cfgdir, 'schema_version = 1\n[subagent]\nmodel = "GLOB"\n')
+    assert subagent_config.resolve_subagent_model(
+        "alice", parent_model="P") == "GLOB"
+
+
+def test_subagent_wrapper_falls_to_parent(_cfgdir):
+    _write_conf(_cfgdir, 'schema_version = 1\n')
+    assert subagent_config.resolve_subagent_model(
+        "alice", parent_model="P") == "P"
