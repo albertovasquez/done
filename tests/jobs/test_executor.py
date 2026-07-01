@@ -147,10 +147,19 @@ def test_no_mode_defaults_to_none():
 
 def test_observe_or_default_cfg_swaps_only_for_observe():
     from harness.jobs.executor import _observe_or_default_cfg
-    from harness.instance_templates import OBSERVE_FIRST_INSTANCE
+    from harness.instance_templates import OBSERVE_FIRST_INSTANCE, DONE_SYSTEM_TEMPLATE
 
-    base = {"instance_template": "Please solve this issue: {{task}}", "step_limit": 9}
-    assert _observe_or_default_cfg(base, "observe")["instance_template"] is OBSERVE_FIRST_INSTANCE
-    assert _observe_or_default_cfg(base, "observe")["step_limit"] == 9       # other keys kept
-    assert _observe_or_default_cfg(base, None) is base                       # default untouched
-    assert base["instance_template"] == "Please solve this issue: {{task}}"  # not mutated
+    base = {"instance_template": "Please solve this issue: {{task}}", "step_limit": 9,
+            "system_template": "You are a helpful assistant that can interact with a computer.\n"}
+    # observe mode: observe-first instance_template AND Done-native system_template
+    obs = _observe_or_default_cfg(base, "observe")
+    assert obs["instance_template"] is OBSERVE_FIRST_INSTANCE
+    assert obs["system_template"] == DONE_SYSTEM_TEMPLATE                    # upstream identity stripped
+    assert obs["step_limit"] == 9                                           # other keys kept
+    # default mode: instance_template UNCHANGED, but system_template still made Done-native
+    # (headless jobs must never run upstream's 'helpful assistant' identity either)
+    dflt = _observe_or_default_cfg(base, None)
+    assert dflt["instance_template"] == "Please solve this issue: {{task}}"  # work-order kept
+    assert dflt["system_template"] == DONE_SYSTEM_TEMPLATE                   # still stripped
+    # input never mutated
+    assert base["system_template"].startswith("You are a helpful assistant")

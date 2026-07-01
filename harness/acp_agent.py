@@ -33,9 +33,7 @@ from harness.router import Router, Classification
 from harness.chat_handler import ChatHandler
 from harness.permcheck import PermissionRequest, decide_permission
 from harness.transcript import flatten_agent_messages
-from harness.instance_templates import (
-    ANSWER_ONLY_INSTANCE, OBSERVE_FIRST_INSTANCE, _instance_template_for,
-)
+from harness.instance_templates import done_agent_cfg
 from minisweagent.exceptions import InterruptAgentFlow, UserInterruption
 
 from harness.interruptible import run_interruptible
@@ -47,8 +45,8 @@ logger = logging.getLogger("harness.acp_agent")
 # headless cron-executor + dev-CLI paths can reuse it without a cycle (#168). Imported
 # above; re-exported here implicitly for any caller that did `from acp_agent import
 # decide_permission`.
-# ANSWER_ONLY_INSTANCE, OBSERVE_FIRST_INSTANCE, _instance_template_for now live in
-# harness/instance_templates.py (the import-light leaf); imported above and re-exported
+# The per-task instance templates + the Done-native system template now live in
+# harness/instance_templates.py (the import-light leaf); done_agent_cfg is imported
 # implicitly so any caller that did `from acp_agent import ...` keeps working.
 
 
@@ -788,12 +786,12 @@ class HarnessAgent(acp.Agent):
                         self._conn.session_update(session_id, upd), loop).result()
 
             emitter = RelayEmitter("/dev/null", clock=lambda: 0.0, relay=_relay)
-            cfg = dict(self._agent_cfg)
-            # Clarify-before-acting, enforced where the model actually obeys: an
-            # explain turn runs with an answer-only instance_template instead of
-            # the engine's every-turn "solve this issue / edit the source" one.
-            cfg["instance_template"] = _instance_template_for(
-                task_type, cfg.get("instance_template", ""))
+            # Make both templates Done-native: strip upstream's "helpful assistant
+            # that can interact with a computer" system prompt AND pick the per-task
+            # instance_template (answer-only for explain, observe-first for ops,
+            # etc.) so neither the system nor the user turn carries the engine's
+            # "solve this issue / edit the source" SWE-bench framing.
+            cfg = done_agent_cfg(self._agent_cfg, task_type)
             agent = None  # bound before construction so the except can reference it
             try:
                 # pass the CURRENT worker model so /models hot-swaps the agent path

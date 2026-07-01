@@ -35,18 +35,18 @@ from harness import memory as _memory  # noqa: E402
 from harness import base_prompt  # noqa: E402
 from harness.chat_handler import ChatHandler  # noqa: E402
 from harness import vibeproxy  # noqa: E402
-from harness.instance_templates import _instance_template_for  # noqa: E402
+from harness.instance_templates import done_agent_cfg  # noqa: E402
 
 DEFAULT_TASK = "Fix the failing test in examples/sample-repo so that add(2, 3) == 5."
 
 
 def _instance_template_cfg(agent_cfg: dict, task_type: str) -> dict:
-    """Return a COPY of agent_cfg with instance_template chosen for this task_type.
-    Mirrors the ACP path (acp_agent.py:716) so the dev CLI doesn't fall through to the
-    raw mini.yaml work-order on read-only ops_task requests (#177). Never mutates the
-    caller's dict — agent_cfg is built once at module scope and reused."""
-    return {**agent_cfg, "instance_template":
-            _instance_template_for(task_type, agent_cfg.get("instance_template", ""))}
+    """Return a COPY of agent_cfg with BOTH templates made Done-native (system +
+    per-task instance) via done_agent_cfg. Mirrors the ACP path so the dev CLI
+    doesn't fall through to the raw mini.yaml work-order on read-only ops_task
+    requests (#177) nor to upstream's 'helpful assistant' system prompt. Never
+    mutates the caller's dict — agent_cfg is built once at module scope and reused."""
+    return done_agent_cfg(agent_cfg, task_type)
 
 
 def _load_agent_config() -> dict:

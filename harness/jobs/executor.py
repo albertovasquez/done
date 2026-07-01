@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Callable
 
 from harness import persona_select
-from harness.instance_templates import OBSERVE_FIRST_INSTANCE
+from harness.instance_templates import DONE_SYSTEM_TEMPLATE, OBSERVE_FIRST_INSTANCE
 from harness.jobs.model import AgentTurn, Reminder
 
 logger = logging.getLogger(__name__)
@@ -84,11 +84,14 @@ def _accepts_kwarg(fn: Callable, name: str) -> bool:
 
 
 def _observe_or_default_cfg(cfg: dict, mode: str | None) -> dict:
-    """If the job opted into observe mode, return a COPY with the observe-first
-    instance_template; otherwise return cfg untouched (default work-order). (#177)"""
+    """Return a COPY with a Done-native system_template (upstream's 'helpful
+    assistant that can interact with a computer' stripped on the headless path too)
+    and, if the job opted into observe mode, the observe-first instance_template;
+    otherwise the default work-order instance_template stays. (#177)"""
+    out = {**cfg, "system_template": DONE_SYSTEM_TEMPLATE}
     if mode == "observe":
-        return {**cfg, "instance_template": OBSERVE_FIRST_INSTANCE}
-    return cfg
+        out["instance_template"] = OBSERVE_FIRST_INSTANCE
+    return out
 
 
 @dataclass
