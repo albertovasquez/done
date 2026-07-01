@@ -491,9 +491,9 @@ class HarnessTui(App):
         chip = StatusChip.for_yolo(self._yolo, self._yolo_pinned)
         chip.id = "statusbar-mode"
         await bar.mount(chip)
-        ca_chip = StatusChip.for_compress_aware(self._compress_aware, self._compress_aware_pinned)
-        ca_chip.id = "statusbar-compress-aware"
-        await bar.mount(ca_chip)
+        # compress-aware chip intentionally not mounted: the feature is expected to
+        # stay on, so its footer indicator is noise. The toggle/pin machinery
+        # (action_toggle_compress_aware, /compress-aware, config) is kept.
         await bar.mount(Static(self._status_persona(), id="statusbar-persona", markup=True))
         await bar.mount(Static(self._status_left(), id="statusbar-left", markup=True))
         await bar.mount(Static(self._status_right(), id="statusbar-right", markup=True))
@@ -507,8 +507,6 @@ class HarnessTui(App):
         if not self._started:
             return f"[$muted]{self._version}[/]"
         right = self._context_tagline()   # ctx_bar returns its own theme markup
-        if getattr(self, "_compacted", None):
-            right += " [$muted]· compacted[/]"   # surface the stored compaction note
         return right
 
     _fmt_tokens = staticmethod(fmt_tokens_upper)
