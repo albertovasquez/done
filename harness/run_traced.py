@@ -10,6 +10,7 @@ Run via ./run.sh so PYTHONPATH includes upstream/src.
 from __future__ import annotations
 
 import argparse
+import os
 import platform
 import sys
 import time
