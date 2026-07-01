@@ -1140,15 +1140,22 @@ class HarnessTui(App):
         """Mount a streaming answer widget, keeping any trailing run-caption footer
         last. A late-draining response (deltas arrive after prompt() returned and
         already mounted this turn's footer) must render ABOVE the footer, not under
-        it. If the last transcript child is a `_copyable` footer, mount before it;
+        it. Scan the trailing children for a `_copyable` footer and mount before it;
         otherwise append at the end.
+
+        We search for the footer rather than only checking the LAST child: a
+        discrete line (e.g. the classified chip) can be appended AFTER the footer,
+        so the footer is not always `kids[-1]`. Checking only the last child let
+        the answer land below the footer for that turn shape (footer-above-answer).
 
         The transcript is anchored (see `_enter_conversation`), so Textual keeps
         the view pinned to the bottom on mount only while the user hasn't scrolled
         up — no explicit scroll_end needed here."""
         kids = self._transcript.children
-        footer = kids[-1] if kids else None
-        if footer is not None and getattr(footer, "_copyable", False):
+        footer = next(
+            (w for w in reversed(kids) if getattr(w, "_copyable", False)), None
+        )
+        if footer is not None:
             self._transcript.mount(widget, before=footer)
         else:
             self._append(widget)
