@@ -18,12 +18,14 @@ from harness import memory as memory_mod
 from harness.tools.base import Tool
 from harness.tools.bash import BashTool
 from harness.tools.create_job import CreateJobTool
+from harness.tools.create_loop import CreateLoopTool
 from harness.tools.create_persona import CreatePersonaTool
 from harness.tools.edit import EditTool
 from harness.tools.load_memory import LoadMemoryTool
 from harness.tools.load_skill import LoadSkillTool
 from harness.tools.read import ReadTool
 from harness.tools.review import ReviewTool
+from harness.tools.set_next_run import SetNextRunTool
 from harness.tools.write import WriteTool
 
 
@@ -38,17 +40,22 @@ def build_registry(skill_roots: list[Path] | None = None,
     # Local import breaks the cycle: subagent → agent_build → registry → subagent.
     from harness.tools.subagent import SubagentTool  # noqa: PLC0415
     tools: list[Tool] = [BashTool(), ReadTool(), WriteTool(), EditTool(), CreateJobTool(),
-                         CreatePersonaTool(), SubagentTool(), ReviewTool()]
+                         CreateLoopTool(), CreatePersonaTool(), SubagentTool(),
+                         ReviewTool(), SetNextRunTool()]
     if skill_roots:
         tools.append(LoadSkillTool(skill_roots))
     # Gate load_memory on the workspace actually HAVING recall content — an empty
     # workspace must not advertise a dead tool (byte-identical no-op).
     if memory_root and memory_mod.has_memory(memory_root):
         tools.append(LoadMemoryTool(memory_root))
-    # Depth-1 enforcement: a worker can NEVER call subagent or review (explicit deny, not a
-    # side effect of the toolset — a task could name it in `tools`).
+    # Depth-1 enforcement: a worker can NEVER call subagent, review, or create_loop
+    # (explicit deny, not a side effect of the toolset — a task could name it in
+    # `tools`). create_loop is an autonomy-escalation primitive like subagent: a
+    # depth-1 worker spawning self-paced loops would escape the depth-1 bound.
+    # (set_next_run is NOT denied — it only stamps an env attr that no-ops unless
+    # the env is a live Dynamic loop, so it is harmless in a worker.)
     if is_worker:
-        tools = [t for t in tools if t.name not in ("subagent", "review")]
+        tools = [t for t in tools if t.name not in ("subagent", "review", "create_loop")]
     # Restricted toolset: keep only the named tools (model schemas AND agent
     # dispatch use this one list, so they always agree).
     if toolset is not None:

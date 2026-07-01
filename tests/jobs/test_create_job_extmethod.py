@@ -171,6 +171,54 @@ def test_create_job_rejects_subfloor_cadence():
 
 
 # ---------------------------------------------------------------------------
+# Dynamic (self-paced loop) gate: floor > 0 required, agent_turn payload only,
+# cost fields must be set (a None min_cadence_s is a next_run_at poison pill).
+# ---------------------------------------------------------------------------
+
+def _dyn_spec(**kw):
+    # Dynamic defaults, overridable by kw (kw wins on key collision).
+    base = dict(
+        id="dyn",
+        schedule={"kind": "dynamic"},
+        payload={"kind": "agent_turn", "message": "loop"},
+        cost={"timeout_s": 30, "min_cadence_s": 60, "max_consecutive_failures": 3},
+    )
+    base.update(kw)
+    return _base_spec(**base)
+
+
+def test_dynamic_valid_is_created_and_armed():
+    handle_create_job(_dyn_spec(), now=1000.0)
+    job = ops.get("dyn")
+    assert job is not None
+    assert job.state.next_run_at == 1000.0        # fresh Dynamic arms at now
+
+
+def test_dynamic_zero_min_cadence_rejected():
+    spec = _dyn_spec(cost={"timeout_s": 30, "min_cadence_s": 0,
+                           "max_consecutive_failures": 3})
+    with pytest.raises(ValueError, match="positive min_cadence_s"):
+        handle_create_job(spec, now=1000.0)
+    assert ops.get("dyn") is None
+
+
+def test_dynamic_reminder_payload_rejected():
+    spec = _dyn_spec(payload={"kind": "reminder", "text": "ping"})
+    with pytest.raises(ValueError, match="agent_turn payload"):
+        handle_create_job(spec, now=1000.0)
+    assert ops.get("dyn") is None
+
+
+def test_none_min_cadence_rejected_fail_closed():
+    # The poison-pill source: a normalized cost missing min_cadence_s → None.
+    spec = _dyn_spec(cost={"timeout_s": 30, "min_cadence_s": None,
+                           "max_consecutive_failures": 3})
+    with pytest.raises(ValueError, match="cost gate fields must be set"):
+        handle_create_job(spec, now=1000.0)
+    assert ops.get("dyn") is None
+
+
+# ---------------------------------------------------------------------------
 # ext_method registration — "harness/create_job" routes to handle_create_job
 # ---------------------------------------------------------------------------
 
