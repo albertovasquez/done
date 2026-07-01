@@ -11,13 +11,13 @@ _CATALOG = [
 
 
 def test_available_when_proxy_serves_matching_id():
-    # proxy serves the ALIAS 'glm'; catalog has upstream 'glm-5.2' -> canonical match
-    out = av.reconcile(_CATALOG, proxy_ids=["glm", "claude-opus-4-8"],
+    # proxy serves the real id 'glm-5.2' (no alias); catalog id is the same
+    out = av.reconcile(_CATALOG, proxy_ids=["glm-5.2", "claude-opus-4-8"],
                        keys_present={"neuralwatt": True, "anthropic": True})
     by = {(s.provider, s.display_name): s for s in out}
     glm = by[("neuralwatt", "GLM 5.2")]
     assert glm.status == "available"
-    assert glm.bind_id == "glm"            # BIND the proxy id, not 'glm-5.2'
+    assert glm.bind_id == "glm-5.2"        # BIND the real proxy id
 
 
 def test_login_needed_when_key_absent_and_not_served():
@@ -35,16 +35,16 @@ def test_stale_config_when_key_present_but_not_served():
 
 
 def test_resolve_or_warn_passes_available_no_warning():
-    out = av.reconcile(_CATALOG, proxy_ids=["glm"], keys_present={"neuralwatt": True, "anthropic": False})
-    model, warning = av.resolve_or_warn("glm", out)
-    assert model == "glm" and warning is None
+    out = av.reconcile(_CATALOG, proxy_ids=["glm-5.2"], keys_present={"neuralwatt": True, "anthropic": False})
+    model, warning = av.resolve_or_warn("glm-5.2", out)
+    assert model == "glm-5.2" and warning is None
 
 
 def test_resolve_or_warn_warns_never_swaps():
     out = av.reconcile(_CATALOG, proxy_ids=[], keys_present={"neuralwatt": False, "anthropic": False})
-    model, warning = av.resolve_or_warn("glm", out)
-    assert model == "glm"              # NEVER substituted
-    assert warning and "glm" in warning
+    model, warning = av.resolve_or_warn("glm-5.2", out)
+    assert model == "glm-5.2"          # NEVER substituted
+    assert warning and "glm-5.2" in warning
 
 
 def test_resolve_or_warn_matches_dated_proxy_id_no_warning():

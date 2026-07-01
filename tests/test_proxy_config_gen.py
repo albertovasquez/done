@@ -25,9 +25,8 @@ def test_generate_includes_neuralwatt_when_key_set():
     y = config_gen.generate(env={"NEURALWATT_API_KEY": "nw-123"})
     assert "openai-compatibility" in y
     assert "api.neuralwatt.com/v1" in y
-    # both NeuralWatt aliases registered (glm + qwen), and the qwen upstream id
-    assert 'alias: "glm"' in y
-    assert 'alias: "qwen"' in y
+    # We bind the real upstream ids directly (no aliases): id == alias.
+    assert 'alias: "glm-5.2"' in y
     assert "qwen3.5-397b-fast" in y          # the router model upstream id
     assert "glm-5.2" in y                    # GLM upstream id (confirmed live)
 
@@ -38,7 +37,7 @@ def test_generate_neuralwatt_yaml_is_valid():
     d = yaml.safe_load(y)
     models = d["openai-compatibility"][0]["models"]
     aliases = {m["alias"] for m in models}
-    assert aliases == {"glm", "qwen", "glm-fast"}
+    assert aliases == {"glm-5.2", "qwen3.5-397b-fast", "glm-5.2-short-fast"}
 
 
 def test_generate_omits_neuralwatt_when_key_absent():
@@ -54,10 +53,10 @@ def test_generate_pins_auth_dir(tmp_path, monkeypatch):
     assert f'auth-dir: "{tmp_path / "auths"}"' in y
 
 
-def test_alias_to_upstream_maps_aliases_to_full_ids():
-    """The TUI model menu shows the full upstream name next to each NeuralWatt
-    alias; this map is the source. Aliases -> full ids, not the reverse."""
+def test_alias_to_upstream_is_identity_after_alias_removal():
+    """Aliases were removed: the proxy binds the real upstream id, so this map is
+    now an identity (id -> same id). Kept so consumers don't break."""
     m = config_gen.alias_to_upstream()
-    assert m["qwen"] == "qwen3.5-397b-fast"
-    assert m["glm"] == "glm-5.2"
-    assert m["glm-fast"] == "glm-5.2-short-fast"
+    assert m["qwen3.5-397b-fast"] == "qwen3.5-397b-fast"
+    assert m["glm-5.2"] == "glm-5.2"
+    assert m["glm-5.2-short-fast"] == "glm-5.2-short-fast"

@@ -1,11 +1,12 @@
 from harness import model_ids
 
 
-def test_alias_normalizes_to_upstream():
-    # neuralwatt alias <-> models.dev upstream id
-    assert model_ids.canonical("glm") == model_ids.canonical("glm-5.2")
-    assert model_ids.canonical("qwen") == model_ids.canonical("qwen3.5-397b-fast")
-    assert model_ids.canonical("glm-fast") == model_ids.canonical("glm-5.2-short-fast")
+def test_neuralwatt_ids_are_canonical_to_themselves():
+    # Aliases removed: the real upstream id is bound directly, so each id is its
+    # own canonical form (the alias map is now identity).
+    assert model_ids.canonical("glm-5.2") == "glm-5.2"
+    assert model_ids.canonical("qwen3.5-397b-fast") == "qwen3.5-397b-fast"
+    assert model_ids.canonical("glm-5.2-short-fast") == "glm-5.2-short-fast"
 
 
 def test_strips_only_strict_date_suffix():
@@ -20,6 +21,6 @@ def test_no_overstrip_on_versioned_ids():
 
 
 def test_matches_uses_canonical():
-    assert model_ids.matches("glm", "glm-5.2")
+    assert model_ids.matches("glm-5.2", "glm-5.2")
     assert model_ids.matches("claude-haiku-4-5-20251001", "claude-haiku-4-5")
-    assert not model_ids.matches("glm", "qwen")
+    assert not model_ids.matches("glm-5.2", "qwen3.5-397b-fast")
