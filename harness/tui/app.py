@@ -797,6 +797,30 @@ class HarnessTui(App):
         self._send_gen = self._gen            # tag this turn's worker with its generation
         self.run_worker(self._send_prompt(text), thread=False)
 
+    async def _seed_prompt(self, text: str) -> None:
+        """Submit `text` as if the user typed it — the shared entry a command uses
+        to drive a chat turn (e.g. /loop building a create_loop request). Mirrors
+        on_prompt_area_submitted's contract: no-op if disconnected/busy, queue if a
+        turn is already active, else enter the conversation and submit."""
+        if self._conn is None or self._busy:
+            return
+        if self._turn_active:
+            self._queued.append(text)
+            self._active_input().value = ""
+            self._append_line(_c("muted", f"⏳ queued: {self._escape(text)}"))
+            return
+        if not self._started:
+            await self._enter_conversation()
+        await self._submit_text(text)
+
+    def _prefill_composer(self, text: str) -> None:
+        """Put `text` in the composer and focus it, WITHOUT submitting — for
+        commands that stage a message for the user to complete (mirrors the
+        CHAT_ABOUT_IT decision fallback)."""
+        inp = self._active_input()
+        inp.value = text
+        inp.focus()
+
     # ---- structured clarification ----
 
     def _on_decision(self, index: "int | None") -> None:

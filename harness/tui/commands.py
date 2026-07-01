@@ -60,6 +60,21 @@ async def _yolo(app, arg: str = "") -> None:
         app._notify_line("usage: /yolo [pin|unpin]")
 
 
+async def _loop(app, arg: str = "") -> None:
+    # A "loop" is a self-paced (Dynamic) scheduled job the agent creates via the
+    # create_loop tool after the four gates. The bare keystroke can't supply the
+    # message/cost/grant, so /loop routes through the normal gated chat flow:
+    #   /loop <text> → submit a create-loop request (agent calls create_loop)
+    #   /loop        → prefill a template in the composer for the user to complete
+    task = arg.strip()
+    if task:
+        await app._seed_prompt(
+            f"Create a self-paced loop that does the following, "
+            f"pacing itself between runs: {task}")
+    else:
+        app._prefill_composer("Create a self-paced loop that: ")
+
+
 async def _compress_aware(app, arg: str = "") -> None:
     sub = arg.strip().lower()
     if sub == "":
@@ -78,6 +93,7 @@ def build_registry() -> list[Command]:
         Command("models", "Select the active model", _models),
         Command("yolo", "Toggle auto-allow (pin/unpin to persist)", _yolo),
         Command("compress-aware", "Toggle context compression (pin/unpin to persist)", _compress_aware),
+        Command("loop", "Create a self-paced recurring task (/loop <what to do>)", _loop),
         Command("reload", "Reload everything (restart the app)", _reload),
         Command("persona", "Open the agents rail (your personas + which is active)", _persona),
         Command("clear", "Fresh conversation (restart the agent)", _clear),

@@ -234,6 +234,79 @@ def test_registry_has_yolo():
     assert "yolo" in names
 
 
+def test_bare_loop_prefills_composer_on_real_app():
+    """Integration: /loop with no arg prefills the real composer (proves the app
+    has _prefill_composer wired with the right name, not just a fake)."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            inp = app.query_one("#landing-input", PromptArea)
+            inp.focus()
+            inp.value = "/loop"
+            await pilot.pause()
+            await app._run_slash("/loop")
+            await pilot.pause()
+            # composer now holds the template, ready for the user to complete
+            assert "loop" in app._active_input().value.lower(), (
+                f"bare /loop should prefill a template, got {app._active_input().value!r}")
+
+    asyncio.run(go())
+
+
+def test_registry_has_loop():
+    names = {c.name for c in build_registry()}
+    assert "loop" in names
+
+
+def test_resolve_loop_by_name():
+    from harness.tui.commands import resolve_command
+    cmd = resolve_command(build_registry(), "loop")
+    assert cmd is not None and cmd.name == "loop"
+
+
+def test_loop_with_arg_seeds_a_create_loop_prompt():
+    """/loop <text> submits a create-loop request through the normal gated chat
+    flow (which drives the create_loop tool)."""
+    import asyncio
+    from harness.tui.commands import build_registry
+
+    class _App:
+        def __init__(self): self.seeded = []
+        async def _seed_prompt(self, text): self.seeded.append(text)
+        def _prefill_composer(self, text): self.seeded.append(("prefill", text))
+
+    reg = {c.name: c for c in build_registry()}
+    app = _App()
+    asyncio.run(reg["loop"].handler(app, "watch the deploy and pace yourself"))
+    assert len(app.seeded) == 1
+    sent = app.seeded[0]
+    assert isinstance(sent, str)                       # submitted, not prefilled
+    # The seeded prompt must name a self-paced loop and carry the user's ask.
+    assert "loop" in sent.lower()
+    assert "watch the deploy and pace yourself" in sent
+
+
+def test_loop_without_arg_prefills_a_template():
+    """Bare /loop can't submit a meaningful request, so it prefills the composer
+    with a template for the user to fill in (mirrors the CHAT_ABOUT_IT fallback)."""
+    import asyncio
+    from harness.tui.commands import build_registry
+
+    class _App:
+        def __init__(self): self.seeded = []
+        async def _seed_prompt(self, text): self.seeded.append(("submit", text))
+        def _prefill_composer(self, text): self.seeded.append(("prefill", text))
+
+    reg = {c.name: c for c in build_registry()}
+    app = _App()
+    asyncio.run(reg["loop"].handler(app, ""))
+    assert len(app.seeded) == 1
+    kind, text = app.seeded[0]
+    assert kind == "prefill"                            # prefilled, not submitted
+    assert "loop" in text.lower()
+
+
 def test_registry_has_compress_aware():
     names = {c.name for c in build_registry()}
     assert "compress-aware" in names
