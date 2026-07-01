@@ -7,7 +7,8 @@ IMPORTED = {"test-driven-development", "systematic-debugging",
             "verification-before-completion", "receiving-code-review"}
 # the curated maturity spine = imported + harness-authored adaptations
 EXPECTED = IMPORTED | {"clarify-before-acting", "planning-before-coding", "ask-done",
-                       "create-job", "create-persona", "review", "quick-review"}  # create-*: gate-gated privileged write paths (cron job / persona)
+                       "create-job", "create-persona", "review", "quick-review",
+                       "developer"}  # developer: umbrella coding-discipline skill + home for coding lessons; create-*: gate-gated privileged write paths (cron job / persona)
 REMOVED = {"git-pr-flow", "python-testing", "poker-domain-rules"}
 
 
