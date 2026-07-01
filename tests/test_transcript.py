@@ -62,3 +62,17 @@ def test_router_preamble_includes_user_and_chat_assistant_excludes_agent():
 
 def test_router_preamble_empty_history_is_empty():
     assert router_preamble([]) == ""
+
+
+def test_router_preamble_caps_to_recent_turns():
+    # #256: an unbounded preamble re-sends the whole growing transcript to the
+    # cheap classifier every turn. Cap to the most recent turns; triage only needs
+    # recent context. Keep the LATEST turns (tail), drop the oldest.
+    from harness.transcript import ROUTER_PREAMBLE_MAX_TURNS
+    history = [{"role": "user", "content": f"turn {i}", "origin": "chat"}
+               for i in range(ROUTER_PREAMBLE_MAX_TURNS + 20)]
+    pre = router_preamble(history)
+    lines = pre.splitlines()
+    assert len(lines) == ROUTER_PREAMBLE_MAX_TURNS          # bounded, not unbounded
+    assert f"turn {ROUTER_PREAMBLE_MAX_TURNS + 19}" in pre  # newest kept
+    assert "turn 0" not in pre                              # oldest dropped
