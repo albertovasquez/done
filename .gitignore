@@ -19,6 +19,11 @@ vendor/
 # accidentally redirected to a file instead of stdout)
 .task_complete
 
+# pytest-textual-snapshot writes this HTML failure report into whatever cwd
+# pytest was invoked from on any snapshot mismatch/failure — not test output we
+# want tracked (the baseline .svg files under tests/__snapshots__/ ARE tracked).
+snapshot_report.html
+
 # The ROOT AGENTS.md is a SHARED, committed operating standard for this repo. The
 # user's global gitignore (~/.config/git/ignore) ignores AGENTS.md everywhere;
 # this negation re-includes ONLY the root one so the team gets it. (CLAUDE.md
