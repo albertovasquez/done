@@ -5,6 +5,9 @@ system**: when building or changing TUI UI, base it on these components and the
 shared tokens — don't invent one-off widgets or hardcode colors.
 
 - **Decisions & rationale:** `docs/superpowers/specs/2026-06-26-tui-design-system-design.md`
+- **Visual regression net:** `docs/tui-snapshot-testing.md` — SVG snapshot tests
+  that freeze rendered layout so a change here can't silently break it. Judge any
+  new/updated baseline against this catalog before committing it.
 - **Living brand book (see it rendered):** `harness/tui/styles/brandbook.html` —
   the palette, glyph map, status states, and shipped components rendered on the
   real terminal background. Generated from the live tokens; refresh with
