@@ -167,9 +167,13 @@ class SubagentTool:
                 return (False, f"{type(e).__name__}: {e}")
 
         max_workers = min(subagent_max_concurrent(), len(tasks))
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            results = list(pool.map(_safe, enumerate(tasks)))
-
-        collector.finished()
+        try:
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                results = list(pool.map(_safe, enumerate(tasks)))
+        finally:
+            # ALWAYS emit finished() — even if the pool raises or the tool is
+            # cancelled mid-batch — so the live worker card resolves to a summary
+            # and clears from the pinned region instead of sticking on "running".
+            collector.finished()
         return {"output": _format_digest(results, goals), "returncode": 0,
                 "exception_info": None}
