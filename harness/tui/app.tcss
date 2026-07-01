@@ -214,3 +214,5 @@ AgentDashboard #agent-dashboard { width: 96; height: auto; max-height: 80%;
     border: round $accent; background: $surface; padding: 1 2; }
 AgentDashboard #dashboard-header { padding-bottom: 1; }
 AgentDashboard #dashboard-jobs { height: auto; color: $foreground; }
+AgentDashboard #dashboard-command { margin-top: 1; border: round $surface; }
+AgentDashboard #dashboard-status { height: auto; padding-top: 1; color: $muted; }
