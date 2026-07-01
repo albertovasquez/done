@@ -177,3 +177,23 @@ def test_esc_closes_agents_drawer_when_focus_on_prompt():
             assert not app._drawer_visible(), "ESC must close drawer even when focus is on prompt"
 
     asyncio.run(go())
+
+
+def test_tab_toggles_agents_drawer_closed():
+    """Tab should close an open agents drawer, avoiding ESC for ordinary drawer exit."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.query_one("#landing-input", PromptArea).focus()
+
+            await pilot.press("tab")
+            await pilot.pause()
+            assert app._drawer_visible(), "drawer should be visible after first Tab"
+
+            await pilot.press("tab")
+            await pilot.pause()
+            assert not app._drawer_visible(), "drawer should close after second Tab"
+            assert isinstance(app.focused, PromptArea), "focus should return to prompt"
+
+    asyncio.run(go())

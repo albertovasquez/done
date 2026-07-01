@@ -935,13 +935,11 @@ class HarnessTui(App):
                 event.stop()
                 return
             # Focus-traversal model for the agents rail:
-            # Tab from the prompt (when rail is hidden) → reveal and focus the rail.
+            # Tab from the prompt opens the drawer; Tab from the visible drawer
+            # closes it so users don't need ESC to leave the rail.
             if event.key == "tab":
-                rail = self.query_one("#agent-rail", AgentRail)
-                if isinstance(self.focused, PromptArea) and not self._drawer_visible():
-                    rail.set_rows(self._persona_rows(), subline_of=self._persona_subline)
-                    self._show_drawer(True)
-                    rail.focus()
+                if isinstance(self.focused, PromptArea) or self._drawer_visible():
+                    self.action_toggle_rail()
                     event.stop()
                 # Otherwise let Tab do normal focus traversal (don't stop).
                 return
