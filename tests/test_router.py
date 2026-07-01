@@ -152,6 +152,21 @@ def test_5_system_prompt_tells_router_it_runs_in_a_real_project():
     assert "code_explain" in seen["system"], seen["system"]
 
 
+def test_system_prompt_distinguishes_project_explain_from_general_knowledge():
+    """#257: 'how does X work?' must route to code_explain only when X plausibly
+    refers to THIS project; general-knowledge / conceptual questions with no
+    project referent belong in chat_question (the cheap path), not a full agent
+    turn. Advisory-text check on the prompt the router sends."""
+    from harness.router import _system_prompt
+    p = _system_prompt([]).lower()
+    # it must steer general-knowledge questions to chat_question
+    assert "general" in p or "conceptual" in p or "general-knowledge" in p
+    assert "chat_question" in p
+    # and it must still tie the code_explain steer to a PROJECT referent
+    assert "code_explain" in p
+    assert "project" in p
+
+
 # ---- structured clarification options (#66) ----
 
 def test_classify_parses_options_array():
