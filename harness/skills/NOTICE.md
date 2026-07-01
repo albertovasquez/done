@@ -27,8 +27,14 @@ this harness's voice and loader — no text is copied from the sources:
   the open").
 - `ask-done` — a user-invoked router over the harness's skills and flows, after
   **mattpocock/skills** `ask-matt`.
+- `developer` — the general coding-discipline skill and home for coding lessons
+  learned; its cross-cutting rules (think-first, simplicity, surgical changes,
+  verifiable goals) are seeded from **andrej-karpathy-skills** `karpathy-guidelines`
+  (MIT), re-authored in this harness's voice and reframed as an umbrella that
+  defers to the sharper spine skills.
 
-Sources: https://github.com/garrytan/gstack and https://github.com/mattpocock/skills
+Sources: https://github.com/garrytan/gstack, https://github.com/mattpocock/skills,
+and https://github.com/andrej-karpathy-skills (karpathy-guidelines, MIT)
 
 ---
 
