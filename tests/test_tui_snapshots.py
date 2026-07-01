@@ -29,3 +29,16 @@ def test_completed_turn_ordering(snap_compare):
         await drive_completed_turn(pilot, app, "hello there")
 
     assert snap_compare(app, run_before=run_before, terminal_size=(120, 40))
+
+
+def test_agent_dashboard_screen(snap_compare):
+    """Full-screen AgentDashboard baseline: fresh isolated store → empty jobs
+    state. That's the honest first render (no fabricated jobs)."""
+    app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+
+    async def run_before(pilot):
+        await pilot.pause()
+        await app.action_open_agent_dashboard()
+        await pilot.pause()
+
+    assert snap_compare(app, run_before=run_before, terminal_size=(120, 40))

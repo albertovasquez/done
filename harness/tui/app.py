@@ -49,6 +49,7 @@ from harness.tui.widgets.activity_region import ActivityRegion, worker_summary_l
 from harness.tui.widgets.permission_modal import PermissionModal
 from harness.tui.widgets.select_modal import SelectModal, SelectOption
 from harness.tui.widgets.agent_rail import AgentRail, PersonaSelected
+from harness.tui.screens.agent_dashboard import AgentDashboard
 from harness.tui.widgets.cron_dashboard import CronDashboard, JobActionFailed
 from harness.tui.widgets.cron_detail import CronDetail
 from harness.tui.widgets.slash_menu import SlashMenu
@@ -126,7 +127,8 @@ class HarnessTui(App):
     CSS_PATH = "app.tcss"  # relative to this module's dir (harness/tui/)
     BINDINGS = [("escape", "cancel", "Cancel turn"),
                 ("ctrl+o", "toggle_details", "Tool details"),
-                ("ctrl+j", "toggle_cron", "Cron jobs")]
+                ("ctrl+j", "toggle_cron", "Cron jobs"),
+                ("j", "open_agent_dashboard", "Agent dashboard")]
 
     def __init__(self, agent_cmd: list[str], cwd: str, model: str,
                  worker_model_id: str | None = None, version: str = "0.5.0",
@@ -1673,6 +1675,14 @@ class HarnessTui(App):
             self.query_one("#cron-drawer").display = visible
         except Exception:
             pass
+
+    async def action_open_agent_dashboard(self) -> None:
+        """Open the per-agent jobs dashboard for the active persona."""
+        snap = self._snapshot.active
+        agent_id = snap.id if snap else "default"
+        agent_name = snap.name if snap else "agent"
+        agent_state = snap.state.value if snap else ""
+        await self.push_screen(AgentDashboard(agent_id, agent_name, agent_state))
 
     def action_toggle_cron(self) -> None:
         from harness.jobs import ops

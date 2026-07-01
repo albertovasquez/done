@@ -419,6 +419,22 @@ the `CronDashboard` roster, which inlines status+next-run per row itself).
 □ Weekly report cron · emails reports          in 2d 14h   SCHEDULED
 ```
 
+### `JobsTable`   `✅ shipped`
+A single agent's jobs list — TASK · STATUS · PROGRESS · ELAPSED, one job per row
+with its description on the line below (dashboard P1a).
+- **In:** `harness.jobs.view.job_rows(agent_id, now)` → `tuple[JobRow, ...]`, a
+  pure mapping over `harness.jobs.ops.list_jobs` (no Textual, no live data access
+  in the widget itself).
+- **Look:** bold `$foreground` task name, a status chip colored by
+  `_STATUS_TOKEN` (`RUNNING`→`$accent`, `SCHEDULED`→`$scheduled`,
+  `COMPLETED`→`$success`, `FAILED`→`$error`, `QUEUED`/`DISABLED`→`$muted`), and a
+  PROGRESS cell that renders `—` (Phase 1 has no truthful progress fraction — no
+  fabricated bars, #252). Empty state: "No jobs for this agent — nothing
+  scheduled."
+- **When to use:** the dedicated per-agent jobs list (dashboard). Renders via the
+  pure `render_table(rows)` helper (`widgets/jobs_table.py`), unit-testable apart
+  from the widget.
+
 ---
 
 ## F. Shell & navigation
