@@ -10,7 +10,9 @@ readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11,<3.15"
 dependencies = [
-    "mini-swe-agent",            # the vendored engine (see [tool.uv.sources] below)
+    "mini-swe-agent==2.4.2",     # the vendored engine; pinned so plain pip (which
+                                 # ignores [tool.uv.sources] below) resolves the
+                                 # SAME version as upstream/ — see #104.
     "agent-client-protocol>=0.10.1,<0.11",
     "textual>=8,<9",
     "textual-plotext>=0.2",

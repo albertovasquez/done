@@ -68,10 +68,10 @@ def _run_one_worker(task: dict, env, *, agent_id: str):
     remaining = getattr(env, "_remaining_secs", None)
 
     import yaml
-    from pathlib import Path
-    _root = Path(__file__).resolve().parent.parent.parent
-    agent_cfg = yaml.safe_load(
-        (_root / "upstream/src/minisweagent/config/mini.yaml").read_text())["agent"]
+    from harness.paths import mini_yaml_path
+    # Resolve mini.yaml via find_spec (install-layout agnostic) rather than a
+    # hardcoded upstream/ disk path, which does not exist in a wheel install (#104).
+    agent_cfg = yaml.safe_load(mini_yaml_path().read_text())["agent"]
 
     if remaining is not None:
         _default_wt = agent_cfg.get("wall_time_limit_seconds", 0) or remaining

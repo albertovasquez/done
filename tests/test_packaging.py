@@ -54,6 +54,52 @@ def test_requires_python_floor_supports_tomllib():
     )
 
 
+def _vendored_engine_version() -> str:
+    """The version the vendored `upstream/` tree actually is, read from its
+    UPSTREAM_VERSION stamp (line 1: `mini-swe-agent <version>`)."""
+    text = (REPO / "upstream" / "UPSTREAM_VERSION").read_text(encoding="utf-8")
+    m = re.search(r"mini-swe-agent\s+(\d+\.\d+\.\d+)", text)
+    assert m, f"could not parse version from UPSTREAM_VERSION: {text!r}"
+    return m.group(1)
+
+
+def test_engine_dependency_pinned_to_vendored_version():
+    """`[tool.uv.sources]` redirects mini-swe-agent to `upstream/` for uv only;
+    plain pip ignores it and resolves the bare `mini-swe-agent` name from PyPI.
+    Pinning the dependency to `==<vendored version>` makes pip resolve the SAME
+    engine uv uses locally, instead of whatever floats on PyPI. Regression for
+    #104."""
+    text = (REPO / "pyproject.toml").read_text(encoding="utf-8")
+    version = _vendored_engine_version()
+    m = re.search(r'"mini-swe-agent([^"]*)"', text)
+    assert m, "mini-swe-agent dependency not found in pyproject.toml"
+    spec = m.group(1).strip()
+    assert spec == f"=={version}", (
+        f"engine dep must be pinned to =={version} (the vendored upstream/ "
+        f"version) so pip resolves the same engine as uv; got {spec!r}"
+    )
+
+
+def test_no_hardcoded_upstream_disk_path_for_mini_yaml():
+    """`subagent.py` and `executor.py` resolved mini.yaml via a hardcoded
+    `<repo>/upstream/src/minisweagent/config/mini.yaml` path relative to
+    `__file__`. That path only exists in a source checkout — a pip/uv WHEEL
+    install (where `upstream/` is not shipped) has no such file, so those code
+    paths break even after the dependency is pinned. They must resolve the
+    config through `paths.mini_yaml_path()` (find_spec-based, install-layout
+    agnostic). Regression for #104."""
+    for rel in ("harness/tools/subagent.py", "harness/jobs/executor.py"):
+        src = (REPO / rel).read_text(encoding="utf-8")
+        assert "upstream/src/minisweagent" not in src, (
+            f"{rel} still hardcodes the upstream/ disk path for mini.yaml; "
+            f"use paths.mini_yaml_path() instead"
+        )
+        assert 'upstream" / "src"' not in src.replace("'", '"'), (
+            f"{rel} still hardcodes the upstream/ disk path (split form) for "
+            f"mini.yaml; use paths.mini_yaml_path() instead"
+        )
+
+
 def test_wheel_includes_tui_assets_and_skills(tmp_path):
     whl = _build_wheel(tmp_path)
     names = zipfile.ZipFile(whl).namelist()
