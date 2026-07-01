@@ -17,6 +17,7 @@ def test_render_interpolates_environment_values():
     assert "/repo/proj" in out
     assert "macOS-15" in out
     assert "January 2026" in out
+    assert "separate processes" in out   # the new Surface line, not the identity "terminal"
 
 
 def test_cutoff_defaults_to_module_constant():
@@ -52,8 +53,14 @@ def test_policy_mentions_dedicated_file_tools_over_shell():
     assert "prefer" in body  # the file-tools-over-shell guidance line
 
 
-def test_policy_does_not_promise_parallel_tool_calls():
-    assert "parallel" not in base_prompt.BASE_POLICY.lower()  # deferred follow-up
+def test_policy_promises_parallel_tool_calls():
+    assert "parallel" in base_prompt.BASE_POLICY.lower()
+
+
+def test_policy_explains_harness_voice_and_denial():
+    low = base_prompt.BASE_POLICY.lower()
+    assert "system-reminder" in low          # harness-injected, not the user
+    assert "denied" in low or "declined" in low   # denied tool call = user declined
 
 
 # --------------------------------------------------------------------------
