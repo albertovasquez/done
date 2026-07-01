@@ -28,6 +28,7 @@ dependencies = [
 # redirect) — pairs with the --debug trace file (see docs/debugging.md).
 dev = [
     "textual-dev>=1.7",
+    "pytest-textual-snapshot>=1.0",
 ]
 
 [project.scripts]
