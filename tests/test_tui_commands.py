@@ -234,6 +234,55 @@ def test_registry_has_yolo():
     assert "yolo" in names
 
 
+def test_registry_has_goal():
+    assert "goal" in {c.name for c in build_registry()}
+
+
+class _GoalApp:
+    """Minimal app double for the /goal handler: records ext calls + seeds."""
+    def __init__(self):
+        self.calls = []
+        self._active_goal_text = None
+        class _Conn:
+            def __init__(self, outer): self.outer = outer
+            async def ext_method(self, method, params=None):
+                self.outer.calls.append((method, params or {}))
+                return {"ok": True}
+        self._conn = _Conn(self)
+    async def _seed_prompt(self, t): self.calls.append(("seed", t))
+    def _notify_line(self, m): self.calls.append(("notify", m))
+
+
+def test_goal_with_arg_arms_and_seeds():
+    import asyncio
+    reg = {c.name: c for c in build_registry()}
+    app = _GoalApp()
+    asyncio.run(reg["goal"].handler(app, "get tests green"))
+    methods = [c[0] for c in app.calls]
+    assert "harness/set_goal" in methods
+    # the set_goal call carried the goal text
+    setcall = next(c for c in app.calls if c[0] == "harness/set_goal")
+    assert setcall[1]["text"] == "get tests green"
+    assert any(c[0] == "seed" for c in app.calls)
+
+
+def test_goal_clear_disarms():
+    import asyncio
+    reg = {c.name: c for c in build_registry()}
+    app = _GoalApp()
+    asyncio.run(reg["goal"].handler(app, "clear"))
+    assert "harness/clear_goal" in [c[0] for c in app.calls]
+
+
+def test_bare_goal_shows_state():
+    import asyncio
+    reg = {c.name: c for c in build_registry()}
+    app = _GoalApp()
+    asyncio.run(reg["goal"].handler(app, ""))     # no goal set yet
+    notifies = [c for c in app.calls if c[0] == "notify"]
+    assert notifies and "no goal" in notifies[0][1].lower()
+
+
 def test_bare_loop_prefills_composer_on_real_app():
     """Integration: /loop with no arg prefills the real composer (proves the app
     has _prefill_composer wired with the right name, not just a fake)."""

@@ -145,6 +145,40 @@ class HarnessAgent(acp.Agent):
                                      self._persona_key())
                     ok = False
             return {"ok": ok, "model": self._worker_model_id}
+        if method == "harness/set_goal":
+            # Arm the /goal stop-gate on the active session's state (read by the
+            # engine gate each turn). Resolve the session via the seat, exactly as
+            # set_model does — there is no session_id param.
+            from harness.goal_gate import GoalContext
+            text = (params or {}).get("text")
+            if not text:
+                return {"ok": False, "error": "goal text required"}
+            # Reviewer model: explicit override wins, else the persona's Layer A
+            # reviewer-role config (that's the whole point of role-model config),
+            # else the worker model. Codex #8.
+            reviewer = (params or {}).get("reviewer_model")
+            if not reviewer:
+                from harness.role_model import load_role_tables, resolve_role_candidates
+                reviewer = resolve_role_candidates(
+                    self._active_persona, "reviewer",
+                    load_role_tables(), self._worker_model_id or "")[0]
+            seat = self._persona_sessions.seat_of(self._active_persona)
+            if seat is None:
+                return {"ok": False, "error": "no active session to arm the goal on"}
+            try:
+                self._store.get(seat.session_id).goal = GoalContext(
+                    text=text, reviewer_model=reviewer)
+            except KeyError:
+                return {"ok": False, "error": "no active session"}
+            return {"ok": True}
+        if method == "harness/clear_goal":
+            seat = self._persona_sessions.seat_of(self._active_persona)
+            if seat is not None:
+                try:
+                    self._store.get(seat.session_id).goal = None
+                except KeyError:
+                    pass
+            return {"ok": True}
         if method == "harness/set_yolo":
             # Live auto-allow toggle (+ optional persisted pin). The ACP process
             # owns the permission gate, so it owns both the flip and the write.
@@ -321,7 +355,9 @@ class HarnessAgent(acp.Agent):
 
     async def cancel(self, session_id, **kw) -> None:
         try:
-            self._store.get(session_id).cancel_flag.set()
+            state = self._store.get(session_id)
+            state.cancel_flag.set()
+            state.goal = None      # cancel disarms the goal so it can't hijack the next turn
         except KeyError:
             pass
 
@@ -724,6 +760,8 @@ class HarnessAgent(acp.Agent):
                                      registry=getattr(model_obj, "registry", None),
                                      # ESC checkpoint: the loop ends between steps when set.
                                      cancel_flag=state.cancel_flag,
+                                     # /goal stop-gate: None when unarmed → no-op.
+                                     goal_ctx=state.goal,
                                      **cfg)
                 agent_ref["agent"] = agent
                 model = agent.model
@@ -738,6 +776,11 @@ class HarnessAgent(acp.Agent):
                             "streamed": streamed["buf"],
                             "compacted": compacted["event"]}
                 finally:
+                    # Write the goal ctx back to the session: the gate clears it on
+                    # met/escape and mutates attempts on continue, all on the agent's
+                    # copy — persist that so the next turn sees the true state (not a
+                    # stale re-armed goal). Codex #3/#7.
+                    state.goal = getattr(agent, "goal_ctx", None)
                     # never marshal a delta to a dead loop after the turn ends.
                     if hasattr(model, "on_delta"):
                         model.on_delta = None

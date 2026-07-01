@@ -23,22 +23,16 @@ def _raw() -> dict:
 
 def resolve_subagent_model(agent_id: str, *, per_task: str | None = None,
                            parent_model: str) -> str:
+    # A subagent worker is the "worker" role. Delegate to the one role ladder so
+    # there's no second parallel resolver; the worker ladder includes the legacy
+    # [agents.<id>].subagent_model / [subagent].model rungs, so this is
+    # byte-identical to the previous inline implementation.
     if per_task:
         return per_task
-    data = _raw()
-    agents = data.get("agents")
-    if isinstance(agents, dict):
-        table = agents.get(agent_id)
-        if isinstance(table, dict):
-            m = table.get("subagent_model")
-            if isinstance(m, str) and m:
-                return m
-    sub = data.get("subagent")
-    if isinstance(sub, dict):
-        m = sub.get("model")
-        if isinstance(m, str) and m:
-            return m
-    return parent_model
+    from harness.role_model import resolve_role_candidates
+    # Parse via THIS module's _raw() (which reads sc.conf_path) so the resolver
+    # sees the same config, and tests monkeypatching sc.conf_path still work.
+    return resolve_role_candidates(agent_id, "worker", _raw(), parent_model)[0]
 
 
 def subagent_max_concurrent(default: int = 4) -> int:

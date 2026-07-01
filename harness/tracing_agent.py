@@ -32,6 +32,8 @@ from minisweagent.exceptions import (FormatError, InterruptAgentFlow,
 
 from harness import compaction as _compaction
 from harness.events import Emitter
+from harness.goal_gate import GateLimits, decide
+from harness.goal_reviewer import review_goal
 from harness.permcheck import PermissionRequest, classify_path
 
 
@@ -69,7 +71,8 @@ class TracingAgent(DefaultAgent):
     def __init__(self, model, env, *, emitter: Emitter, skill_block: str = "",
                  persona_block: str = "", memory_block: str = "",
                  base_block: str = "", registry=None,
-                 cancel_flag: threading.Event | None = None, **kwargs):
+                 cancel_flag: threading.Event | None = None,
+                 goal_ctx=None, **kwargs):
         # C1: AgentConfig (Pydantic) silently drops unknown keys via extra="ignore",
         # so a "compaction" key passed in kwargs would be swallowed and lost.
         # Pop it BEFORE super().__init__ so we own it.
@@ -81,6 +84,9 @@ class TracingAgent(DefaultAgent):
         # ESC sets this flag (from the async loop thread); the step loop checks it
         # between steps to end the turn promptly. None => never cancelled (CLI/mock).
         self._cancel_flag = cancel_flag
+        # The armed /goal (GoalContext) for this session, or None. When None the
+        # exit-check gate is a byte-identical no-op.
+        self.goal_ctx = goal_ctx
         self._emitter = emitter
         self._skill_block = skill_block
         self._persona_block = persona_block
@@ -207,7 +213,10 @@ class TracingAgent(DefaultAgent):
                 finally:
                     self.save(self.config.output_path)
                 if self.messages[-1].get("role") == "exit":
-                    break
+                    if self._apply_goal_gate():
+                        break
+                    # else: the /goal gate replaced the exit with a continue
+                    # message; keep looping so the agent works toward the goal.
             return self.messages[-1].get("extra", {})
             # --- end reimplemented body ---
         except BaseException as e:  # noqa: BLE001 — record then re-raise
@@ -225,6 +234,65 @@ class TracingAgent(DefaultAgent):
                 exception_type=exc_type,
                 exception_str=exc_str,
             )
+
+    def _apply_goal_gate(self) -> bool:
+        """At the exit-check: if a goal is armed AND the exit is a genuine
+        'Submitted', run the reviewer and decide. Returns True if the turn should
+        still exit (stop/escape), False if it should continue (a user message was
+        put in place of the exit). Non-Submitted exits (cancel/limits/format) and
+        no-goal → True (byte-identical no-op). Reviewer attempts are counted on the
+        goal ctx, separate from the worker's n_calls."""
+        ctx = getattr(self, "goal_ctx", None)
+        if ctx is None:
+            return True
+        if self.messages[-1].get("extra", {}).get("exit_status") != "Submitted":
+            return True                       # hard-terminal exits always win
+        ctx.attempts += 1
+        try:
+            verdict = review_goal(ctx.text, self._transcript_text(), ctx.reviewer_model)
+        except Exception:  # noqa: BLE001 — a broken reviewer must not crash the turn
+            verdict = None
+        d = decide(goal=ctx.text, verdict=verdict, reviewer_attempts=ctx.attempts,
+                   limits=GateLimits(max_attempts=ctx.max_attempts))
+        if d.action == "continue":
+            # Drop the exit message, then close any dangling tool call from the
+            # submit (a bash submit re-raises Submitted BEFORE its observation is
+            # appended, leaving the assistant tool_calls message unpaired — the
+            # next query() would send a malformed request). Then add the reminder.
+            self.messages.pop()                      # remove the exit message
+            self._close_dangling_tool_calls()
+            self.add_messages(self.model.format_message(
+                role="user",
+                content=f"Keep working toward the goal: {ctx.text}. Not yet met: {d.reason}"))
+            return False
+        # stop or escape → end the turn; clear the goal so it can't hijack the next.
+        self.goal_ctx = None
+        return True
+
+    def _close_dangling_tool_calls(self) -> None:
+        """Append a synthetic `tool` message for any assistant tool_call that has
+        no matching response yet — so the message list stays valid when the /goal
+        gate continues after a bash submit (whose observation was never appended)."""
+        answered = {m.get("tool_call_id") for m in self.messages
+                    if m.get("role") == "tool"}
+        last_assistant = next((m for m in reversed(self.messages)
+                               if m.get("role") == "assistant"), None)
+        if not last_assistant:
+            return
+        for tc in last_assistant.get("tool_calls", []) or []:
+            tcid = tc.get("id")
+            if tcid and tcid not in answered:
+                self.add_messages({"role": "tool", "tool_call_id": tcid,
+                                   "content": "(interrupted: continuing toward the goal)"})
+
+    def _transcript_text(self) -> str:
+        """Compact recent transcript for the reviewer prompt (last ~20 messages)."""
+        parts = []
+        for m in self.messages[-20:]:
+            c = m.get("content")
+            if isinstance(c, str) and c:
+                parts.append(f"[{m.get('role', '?')}] {c}")
+        return "\n".join(parts)
 
     # --- seam 2: LLM call ---
     def query(self) -> dict:

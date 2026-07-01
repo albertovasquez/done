@@ -26,6 +26,7 @@ class SessionState:
     persona_emitted: bool = False        # C2a: identity chip sent once per session
     workspace_dir: "Path | None" = None  # the persona workspace this session uses (Phase B isolation core)
     worker_model: "str | None" = None    # the resolved worker model for this session's persona seat
+    goal: "object | None" = None         # GoalContext | None — the armed /goal (duck-typed to dodge import cycle)
     memory_block: str | None = None      # None = not-yet-composed; "" = composed-empty
     memory_load: "MemoryLoad | None" = None
     memory_load_emitted: bool = False

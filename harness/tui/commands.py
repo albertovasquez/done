@@ -75,6 +75,31 @@ async def _loop(app, arg: str = "") -> None:
         app._prefill_composer("Create a self-paced loop that: ")
 
 
+async def _goal(app, arg: str = "") -> None:
+    # A /goal is a directive the agent must satisfy before it can end its turn:
+    #   /goal <text> → arm the goal (harness/set_goal) + start work
+    #   /goal clear  → disarm (harness/clear_goal)
+    #   /goal        → show the active goal (tracked app-side, no round-trip)
+    sub = arg.strip()
+    if sub == "":
+        active = getattr(app, "_active_goal_text", None)
+        app._notify_line(f"active goal: {active}" if active
+                         else "no goal set. /goal <what to accomplish>")
+        return
+    if sub.lower() == "clear":
+        await app._conn.ext_method("harness/clear_goal", {})
+        app._active_goal_text = None
+        app._notify_line("goal cleared.")
+        return
+    resp = await app._conn.ext_method("harness/set_goal", {"text": sub})
+    if not (isinstance(resp, dict) and resp.get("ok")):
+        app._notify_line(f"could not arm goal: {resp.get('error', 'unknown') if isinstance(resp, dict) else resp}")
+        return
+    app._active_goal_text = sub
+    app._notify_line(f"goal armed: {sub}")
+    await app._seed_prompt(sub)
+
+
 async def _compress_aware(app, arg: str = "") -> None:
     sub = arg.strip().lower()
     if sub == "":
@@ -94,6 +119,7 @@ def build_registry() -> list[Command]:
         Command("yolo", "Toggle auto-allow (pin/unpin to persist)", _yolo),
         Command("compress-aware", "Toggle context compression (pin/unpin to persist)", _compress_aware),
         Command("loop", "Create a self-paced recurring task (/loop <what to do>)", _loop),
+        Command("goal", "Set a goal the agent must reach before it can stop (/goal <what>)", _goal),
         Command("reload", "Reload everything (restart the app)", _reload),
         Command("persona", "Open the agents rail (your personas + which is active)", _persona),
         Command("clear", "Fresh conversation (restart the agent)", _clear),
