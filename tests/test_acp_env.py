@@ -35,6 +35,20 @@ def test_executes_and_returns_full_output(tmp_path):
     assert calls[1][2]["output"] == result["output"]    # done callback carries the full dict
 
 
+def test_emit_progress_forwards_to_callback(tmp_path):
+    seen = []
+    env = _env(tmp_path, on_command=lambda *a: None,
+               on_progress=lambda meta: seen.append(meta))
+    env.emit_progress({"workers": {"action": "dispatched"}})
+    assert seen == [{"workers": {"action": "dispatched"}}]
+
+
+def test_emit_progress_is_safe_noop_without_callback(tmp_path):
+    # off the ACP path (no on_progress) emit_progress must not raise.
+    env = _env(tmp_path, on_command=lambda *a: None)
+    env.emit_progress({"anything": 1})   # no callback → silently ignored
+
+
 def test_cancel_flag_skips_execution(tmp_path):
     flag = threading.Event(); flag.set()
     ran = []

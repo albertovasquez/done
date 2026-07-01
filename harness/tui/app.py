@@ -37,7 +37,7 @@ from textual.widgets import LoadingIndicator, Markdown, Static, TextArea
 from harness.tui.client import TuiClient
 from harness.tui.commands import build_registry, resolve_command
 from harness.tui.messages import SessionUpdate, PermissionRequest
-from harness.tui.render import render_update, harness_chips, format_cwd
+from harness.tui.render import render_update, harness_chips, format_cwd, worker_batch
 from harness.tui.state import (
     initial_snapshot, reduce, TurnStarted, TurnEnded, ItemReceived,
     TokensUpdated, DecisionOpened, decision_from_meta,
@@ -45,7 +45,7 @@ from harness.tui.state import (
 )
 from harness.tui.stream_painter import StreamPainter
 from harness.tui.theme import HARNESS_THEME, COLORS
-from harness.tui.widgets.activity_region import ActivityRegion
+from harness.tui.widgets.activity_region import ActivityRegion, worker_summary_line
 from harness.tui.widgets.permission_modal import PermissionModal
 from harness.tui.widgets.select_modal import SelectModal, SelectOption
 from harness.tui.widgets.agent_rail import AgentRail, PersonaSelected
@@ -1467,6 +1467,16 @@ class HarnessTui(App):
             self._apply(PersonaResolved(pid))
             self._persona_seen = True
             self._refresh_persona()
+        # fold a worker-batch update (SubagentTool's live card) if present. On
+        # 'finished', leave a one-line summary in the transcript; the reducer clears
+        # the live rows from the pinned ActivityRegion.
+        wb = worker_batch(getattr(msg.update, "field_meta", None))
+        if wb is not None:
+            self._apply(wb)
+            if wb.action == "finished" and wb.summary is not None:
+                self._append_streaming_below_footer(
+                    Static(worker_summary_line(wb.summary), markup=True))
+            return   # the carrier is an empty message_chunk — nothing else to render
         for chip in harness_chips(getattr(msg.update, "field_meta", None)):
             self._append_line(_c("muted", f"\\[{chip}]"), classes="turn-meta")
         item = render_update(msg.update)

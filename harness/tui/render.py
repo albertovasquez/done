@@ -90,6 +90,41 @@ def harness_chips(field_meta: dict | None) -> list[str]:
     return chips
 
 
+def worker_batch(field_meta: dict | None):
+    """Decode field_meta['workers'] (emitted by SubagentTool's Collector) into a
+    state.WorkerBatch event, or None when absent/malformed. Returns the event
+    lazily-imported to keep this module's import graph light."""
+    if not isinstance(field_meta, dict):
+        return None
+    harness = field_meta.get("harness")
+    if not isinstance(harness, dict):
+        return None
+    w = harness.get("workers")
+    if not isinstance(w, dict):
+        return None
+    action = w.get("action")
+    if action not in ("dispatched", "progress", "finished"):
+        return None
+    from harness.tui.state import WorkerBatch, WorkerSummary, WorkerView
+    if action == "finished":
+        s = w.get("summary") or {}
+        summary = WorkerSummary(
+            ok=int(s.get("ok", 0)), failed=int(s.get("failed", 0)),
+            total_elapsed=float(s.get("total_elapsed", 0.0)),
+            total_tokens=int(s.get("total_tokens", 0)))
+        return WorkerBatch(action="finished", summary=summary)
+    rows = tuple(
+        WorkerView(
+            idx=int(r.get("idx", 0)), goal=str(r.get("goal", "")),
+            status=str(r.get("status", "pending")),
+            started_at=float(r.get("started_at", 0.0)),
+            elapsed=float(r.get("elapsed", 0.0)),
+            tokens=int(r.get("tokens", 0)))
+        for r in (w.get("workers") or [])
+    )
+    return WorkerBatch(action=action, workers=rows)
+
+
 def format_cwd(cwd: str, home: str | None = None, max_width: int = 48) -> str:
     """Two-tone, home-relative cwd for the status bar (Textual content markup).
 

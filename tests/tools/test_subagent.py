@@ -19,7 +19,7 @@ def test_schema_shape():
 
 
 def test_runs_all_tasks_and_digests(monkeypatch):
-    def fake(task, env, *, agent_id):  # returns (ok, summary_or_error)
+    def fake(task, env, *, agent_id, on_event=None):  # returns (ok, summary_or_error)
         return (True, f"summary for {task['goal']}")
     _patch_worker(monkeypatch, fake)
     out = SubagentTool().execute(
@@ -32,7 +32,7 @@ def test_runs_all_tasks_and_digests(monkeypatch):
 
 
 def test_one_failure_does_not_abort_siblings(monkeypatch):
-    def fake(task, env, *, agent_id):
+    def fake(task, env, *, agent_id, on_event=None):
         if task["goal"] == "bad":
             raise RuntimeError("boom")
         return (True, "ok")
@@ -60,7 +60,7 @@ def test_empty_tasks_returns_error():
 
 def test_concurrency_isolation_no_crosstalk(monkeypatch):
     # N concurrent mock workers must each return their OWN goal (no shared state).
-    def fake(task, env, *, agent_id):
+    def fake(task, env, *, agent_id, on_event=None):
         return (True, f"[{task['goal']}]")
     _patch_worker(monkeypatch, fake)
     tasks = [{"goal": f"g{i}", "context": "c"} for i in range(8)]

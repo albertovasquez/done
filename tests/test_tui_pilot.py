@@ -1325,11 +1325,13 @@ def test_yolo_chip_click_toggles_state():
         async with app.run_test() as pilot:
             await pilot.pause()
             chip = app.query_one("#statusbar-mode", Static)
-            assert "bypass permissions off" in chip._Static__content   # starts off
+            assert "bypass OFF" in chip._Static__content              # OFF spells it out
             app.action_toggle_yolo()
             await pilot.pause(); await pilot.pause()
             assert app._yolo is True
-            assert "bypass permissions on" in app.query_one("#statusbar-mode", Static)._Static__content
+            # ON collapses to the bare glyph (▶▶), coloured red.
+            content = app.query_one("#statusbar-mode", Static)._Static__content
+            assert "▶▶" in content and "bypass" not in content
 
     asyncio.run(go())
 
@@ -1343,8 +1345,10 @@ def test_status_right_shows_context_used_and_remaining():
 
     markup = app._status_right()
 
-    assert "ctx 12.3K/1.0M" in markup
-    assert "| 987.7K left" in markup
+    # ctx bar: 'ctx <bar> <pct>% · 12.3K/1.0M' (visual bar replaced the plain text).
+    assert "ctx" in markup
+    assert "12.3K/1.0M" in markup
+    assert "%" in markup
 
 
 def test_status_right_shows_context_window_before_usage():
@@ -1354,7 +1358,9 @@ def test_status_right_shows_context_window_before_usage():
     app._started = True
     app._tokens = 0
 
-    assert "ctx --/400.0K" in app._status_right()
+    # zero tokens → placeholder dashes, no percentage.
+    out = app._status_right()
+    assert "ctx" in out and "--/400.0K" in out
 
 
 def test_compose_meta_shows_persona_name():

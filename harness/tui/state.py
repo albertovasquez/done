@@ -57,6 +57,24 @@ class DecisionView:
 
 
 @dataclass(frozen=True)
+class WorkerView:
+    idx: int
+    goal: str
+    status: str = "pending"      # pending | running | done | failed
+    started_at: float = 0.0      # monotonic stamp; TUI recomputes elapsed from this
+    elapsed: float = 0.0
+    tokens: int = 0
+
+
+@dataclass(frozen=True)
+class WorkerSummary:
+    ok: int
+    failed: int
+    total_elapsed: float
+    total_tokens: int
+
+
+@dataclass(frozen=True)
 class AgentSnapshot:
     id: str
     name: str
@@ -70,6 +88,8 @@ class AgentSnapshot:
     tools: tuple[ToolView, ...] = ()
     schedule: ScheduleView | None = None
     decision: DecisionView | None = None
+    workers: tuple[WorkerView, ...] = ()          # live worker rows while subagent runs
+    worker_summary: WorkerSummary | None = None   # set on finished; persists for the summary line
 
 
 @dataclass(frozen=True)
@@ -147,6 +167,13 @@ class DecisionOpened:
 @dataclass(frozen=True)
 class PersonaResolved:
     id: str
+
+
+@dataclass(frozen=True)
+class WorkerBatch:
+    action: str                                   # dispatched | progress | finished
+    workers: tuple["WorkerView", ...] = ()        # dispatched/progress payload
+    summary: "WorkerSummary | None" = None        # finished payload
 
 
 def _tool_status(raw: str) -> ToolStatus:
@@ -257,6 +284,18 @@ def _reduce_agent(a: AgentSnapshot, event) -> AgentSnapshot:
     if isinstance(event, TurnEnded):
         return replace(a, state=AgentState.DONE if event.ok else AgentState.FAILED,
                        tool=None, activity_label="")
+    if isinstance(event, WorkerBatch):
+        if event.action == "dispatched":
+            return replace(a, workers=event.workers, worker_summary=None)
+        if event.action == "progress":
+            # Merge by idx into the live rows; a progress with no matching live
+            # row is ignored (e.g. arriving after 'finished' cleared the rows).
+            deltas = {w.idx: w for w in event.workers}
+            merged = tuple(deltas.get(w.idx, w) for w in a.workers)
+            return replace(a, workers=merged)
+        if event.action == "finished":
+            return replace(a, workers=(), worker_summary=event.summary)
+        return a
     if isinstance(event, ItemReceived):
         # TurnEnded is TERMINAL for the activity state. A late session_update
         # notification (message/tool chunk) can drain on Textual's queue AFTER the

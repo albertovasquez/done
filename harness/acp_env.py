@@ -30,6 +30,7 @@ class AcpEnvironment(LocalEnvironment):
                  cancel_flag: threading.Event | None = None,
                  client_terminal: Callable[[str], dict] | None = None,
                  on_plan: Callable[[list[tuple[str, str]]], None] | None = None,
+                 on_progress: Callable[[dict], None] | None = None,
                  output_filter: Callable[[str, str, int], str] | None = None,
                  **kwargs: Any):
         super().__init__(**kwargs)
@@ -38,7 +39,16 @@ class AcpEnvironment(LocalEnvironment):
         self._cancel_flag = cancel_flag
         self._client_terminal = client_terminal
         self._on_plan = on_plan
+        self._on_progress = on_progress
         self._output_filter = output_filter
+
+    def emit_progress(self, meta: dict) -> None:
+        """Push a mid-turn progress payload onto the ACP stream via field_meta.
+        Used by tools (e.g. SubagentTool's Collector) to surface sub-activity
+        while execute() is still running. No-op off the ACP path (on_progress
+        None) so the same call is safe for cron/CLI workers."""
+        if self._on_progress is not None:
+            self._on_progress(meta)
 
     def execute(self, action: dict, cwd: str = "", *, timeout: int | None = None) -> dict[str, Any]:
         if self._cancel_flag is not None and self._cancel_flag.is_set():

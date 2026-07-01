@@ -237,12 +237,15 @@ def mock_tool_status_chips() -> str:
 
 
 def mock_yolo() -> str:
-    off = markup_to_html(_chip_markup(StatusChip.for_yolo(False, False)))
-    on = markup_to_html(_chip_markup(StatusChip.for_yolo(True, False)))
-    pinned = markup_to_html(_chip_markup(StatusChip.for_yolo(True, True)))
-    return term(f'<div class="line">{off}</div><div class="line">{on}</div>'
-                f'<div class="line">{pinned}</div>',
-                "StatusChip.for_yolo — footer permission-mode line")
+    # Both footer toggles collapse to a bare glyph when ON, and spell themselves
+    # out when OFF. Show ON (glyph) and OFF (labeled) for each.
+    y_on = markup_to_html(_chip_markup(StatusChip.for_yolo(True, False)))
+    y_off = markup_to_html(_chip_markup(StatusChip.for_yolo(False, False)))
+    c_on = markup_to_html(_chip_markup(StatusChip.for_compress_aware(True, False)))
+    c_off = markup_to_html(_chip_markup(StatusChip.for_compress_aware(False, False)))
+    return term(f'<div class="line">{y_on}</div><div class="line">{y_off}</div>'
+                f'<div class="line">{c_on}</div><div class="line">{c_off}</div>',
+                "footer mode chips — glyph when ON, labeled when OFF")
 
 
 def mock_state_dots() -> str:
