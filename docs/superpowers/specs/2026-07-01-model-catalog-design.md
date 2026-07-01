@@ -51,12 +51,20 @@ Every model is tracked with **three distinct ids**, never conflated:
 
 ### Component 2 — `availability.py` (reconciler; pure)
 
+**`keys_present` is a two-source union (F8).** Provider key/auth state comes from two different places today and the reconciler must combine both:
+- **OAuth / browser-login providers** (anthropic, codex, xai, kimi, antigravity) — from the proxy management `get-auth-status` endpoint (`management._AUTH_URL_PATHS`, surfaced by `lifecycle.status()`).
+- **`api_key` providers** (neuralwatt, gemini) — from **env-var presence** (`NEURALWATT_API_KEY`, etc.), read the same way `config_gen.py:46` reads it. These never appear in `get-auth-status`.
+
+**Prerequisite:** `providers.py` currently omits neuralwatt and carries no env-var names. Add neuralwatt to the provider registry with `env: ["NEURALWATT_API_KEY"]`, and give every `api_key` provider its env-var name(s), so `keys_present` is derivable rather than hand-waved. `keys_present` is computed by a small adapter that unions the two sources into `{provider_id: bool}`; the reconciler itself stays pure (takes the dict as input).
+
 - `reconcile(catalog, proxy_ids, keys_present) -> list[ModelStatus]` where
   `ModelStatus{provider, bind_id | None, display_name, status}` and status ∈:
   - `available` — a proxy-served id whose `canonical` matches a catalog model; `bind_id` = the proxy id.
   - `login_needed` — catalog model, provider key absent; `bind_id = None` (can't bind until login).
   - `stale_config` — catalog model, key **present**, but not served (config generated before the key existed) → offer regen. `bind_id = None` until regen.
-- `resolve_or_warn(configured_model, statuses) -> (model, warning | None)`: if the configured model is `available`, return it; otherwise return the configured string plus a **structured warning** (never a silent swap). The caller surfaces the warning; the turn is not hard-blocked (avoids the "warn-storm makes agent unusable" failure — the warning is informational, the user's configured model is still attempted).
+- `resolve_or_warn(configured_model, statuses) -> (model, warning | None)`: if the configured model is `available`, return it; otherwise return the configured string plus a **structured warning** (never a silent swap). The turn is not hard-blocked (avoids the "warn-storm makes agent unusable" failure — the warning is informational, the user's configured model is still attempted).
+
+**Warning transport (F9 — must be specified, not hand-waved).** `resolve_model`/`resolve_session_model` run in **headless contexts** — `tui_main.py:51` (pre-spawn footer) and `persona_sessions.py:72` (`get_or_create`, inside the agent process, no TUI). Neither can render UI. So `resolve_or_warn` only *computes* the warning; **surfacing is a separate, explicit step**: the agent process emits the warning to the TUI over the **existing ACP relay** (the same `session_update` channel `set_model`/the turn loop already use), so it appears as a notice line in the session. The reconcile/validate call that produces the warning happens at **session start** (when the seat is created and the model is bound), emitting one notice — not on every turn (no warn-storm). The picker path additionally shows status inline, so the validation warning and the picker are consistent.
 
 ### Component 3 — UI + config_gen
 
@@ -94,6 +102,7 @@ keys present (providers.py auth + NEURALWATT_API_KEY)─┘                     
 - **Rejected: exact-id matching.** Fails for both neuralwatt aliases and Claude date drift → would mark served models unavailable → warn-storm. Replaced with canonical normalization.
 - **Rejected: hard-block on unavailable model.** Too disruptive; `resolve_or_warn` warns but still attempts, so a transient reconcile miss can't brick a turn.
 - **Watch:** normalization over-collision (two catalog variants → same canonical). Low-risk on current data; mitigated by keeping normalization match-only (never rewrites display/bind).
+- **Known limitation (F10): `available` means "served," not "callable this instant."** A model can be in `/v1/models` yet be **cooling down / rate-limited** (`router.py:65-73`), invisible to the model list. We do not probe callability. This is acceptable — the router already fails over on cooldown (`router.py:100`) — but the status label means "the proxy serves this id," not "a call will succeed right now." The picker/warning copy must not over-promise.
 
 ## Out of scope (v1)
 
