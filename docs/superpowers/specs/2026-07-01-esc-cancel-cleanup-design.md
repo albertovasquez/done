@@ -112,18 +112,36 @@ Key properties:
 
 ### Where the primitive is applied (backend)
 
+> **Caveman-review correction (2026-07-01):** the recurring error in the first
+> draft was assuming every LLM call goes through the model object. It does not —
+> the **chat** and **classify** paths each make their *own* `litellm.completion`
+> call with their *own* exception handling. The table and notes below are
+> corrected to wrap each real call site, and to respect each site's existing
+> `except` so a cancel is never misreported.
+
 | Call site | File / anchor | Change |
 |---|---|---|
 | Agent-loop model call | `streaming_model.py` `_query` (both branches, L50-91); reached via `tracing_agent.py` `query()` L308 | Run `litellm.completion(...)` through `run_interruptible(..., cancel_flag)`. The existing per-token `emit_delta` abort stays as the fast path (fires first when tokens flow); the watchdog covers the stalled / pre-first-token case. |
-| Chat answer | `acp_agent.py` `pump()` ~L526-537 | Poll `cancel_flag` per streamed piece; raise `UserInterruption` when set (mirror `emit_delta`). Covers the streaming chat path with the fast per-piece check; the underlying `answer_stream`'s litellm call is itself wrapped by the model-layer change above. |
-| Classify / router | `acp_agent.py` ~L407 | `run_interruptible` around the executor classify call. |
-| Preamble | `acp_agent.py` persona ~L388, memory ~L400, compose_context ~L549 | Check `cancel_flag` before/after each executor call; short-circuit to a `cancelled` return when set. |
+| Chat answer | `chat_handler.py` `answer_stream` L201 (the **real** litellm call) + `acp_agent.py` `pump()` ~L526-537 | **(Finding 1+2)** `answer_stream` calls `litellm.completion(stream=True)` DIRECTLY — NOT via `StreamingLitellmModel`. Wrap that `completion()` call in `run_interruptible(cancel_flag)` so a *stalled* chat call (blocked before the first chunk) is killable. Keep a per-piece `cancel_flag` check in the `for chunk` loop (and/or `pump()`) as the fast path once pieces flow. `answer_stream` takes an optional `cancel_flag` param (default `None` ⇒ unchanged for CLI/mock). |
+| Classify / router | `acp_agent.py` ~L406-417 | **(Finding 3)** classify sits inside `except Exception → return refusal("router unavailable")`. `UserInterruption` IS an `Exception`, so raising inside that try would be swallowed as a fake router failure. Do a **check-and-return BEFORE the try** (`if cancel_flag.is_set(): return cancelled`), then wrap the executor classify call in `run_interruptible`, and make the `except` **re-raise `InterruptAgentFlow`** before its refusal branch. |
+| Preamble | `acp_agent.py` persona ~L388, memory ~L400, compose_context ~L549 | **(Finding 5)** per-site, explicit: add `if state.cancel_flag.is_set(): return _cancelled()` immediately BEFORE persona.resolve, memory.resolve, classify, and compose_context. These are cheap cooperative gates (the executor calls themselves are short); no watchdog needed here. `_cancelled()` returns the existing cancelled shape. |
 
-Threading the flag: `streaming_model` needs access to `cancel_flag`. The
-`StreamingLitellmModel` already receives per-run wiring from `acp_agent` (it sets
-`model.on_delta = emit_delta` at L770). Add a parallel `model.cancel_flag`
-binding set at the same site (bound to `state.cancel_flag`, cleared to `None`
-for mock/CLI). `_query` passes it into `run_interruptible`.
+**Threading the flag (Finding 4).** Not every path touches the model object, so
+"bind `model.cancel_flag`" alone is insufficient:
+
+- **Model path:** bind `model.cancel_flag = state.cancel_flag` at the same site
+  that sets `model.on_delta` (`acp_agent.py:770`), guarded by
+  `hasattr(model, "cancel_flag")` so the mock model is untouched. `_query`
+  reads `self.cancel_flag` (default `None`) and passes it to `run_interruptible`.
+  `StreamingLitellmModel.__init__` gains `cancel_flag=None`.
+- **Chat path:** pass `state.cancel_flag` directly into
+  `handler.answer_stream(text, history=..., cancel_flag=state.cancel_flag)`.
+- **Classify path:** pass `state.cancel_flag` directly into the
+  `run_interruptible` wrapper in `prompt()`; the router itself stays
+  flag-agnostic.
+
+In every case `cancel_flag=None` (CLI / cron / mock / reviewer) ⇒ the call runs
+inline, byte-identical to today.
 
 ### TUI — immediate feedback + verified clearing
 
@@ -144,8 +162,9 @@ ESC → action_cancel → (show "Cancelling…") → conn.cancel() over ACP
 
 turn worker thread (run_in_executor):
     preamble check  → cancel_flag set? → cancelled return
-    classify        → run_interruptible(cancel_flag) → raises UserInterruption
-    chat pump()     → per-piece cancel_flag check → raises UserInterruption
+    preamble gates  → cancel_flag set before each? → cancelled return
+    classify        → pre-try check + run_interruptible + except re-raises → cancelled
+    chat answer_stream → run_interruptible(completion) + per-piece check → UserInterruption
     agent loop      → top-of-loop check (existing) → break with cancelled exit
       model.query   → run_interruptible(cancel_flag) → raises on stall
         emit_delta  → per-token check (existing) → raises on next token
@@ -165,6 +184,14 @@ turn worker thread (run_in_executor):
 - Preamble short-circuits return the existing cancelled result shape
   (`{"stop_reason": "cancelled", "exit_status": "cancelled", "assistant": ""}`,
   as at `acp_agent.py:805-809`).
+- **classify must not misreport a cancel as a router failure (Finding 3).** Its
+  `except Exception` refusal branch re-raises `InterruptAgentFlow` first, so a
+  `UserInterruption` from the wrapped classify call becomes a clean cancelled
+  turn, never a "router unavailable" message.
+- **chat: a stalled call is killed at `completion()` (Finding 1+2)**, not only
+  between pieces — the watchdog wraps the blocking `litellm.completion` call in
+  `answer_stream`, so a chat answer that never produces a first token is still
+  interruptible.
 
 ## Testing (deterministic, mock-model — no live proxy)
 
@@ -177,11 +204,16 @@ New / extended tests, all runnable via `.venv/bin/python -m pytest tests/ -q`:
    - re-raises `fn()`'s own exception;
    - `cancel_flag=None` runs `fn()` on the current thread (no worker), result
      identical.
-2. **Chat path interruptible** (`tests/`): a mock chat handler whose
-   `answer_stream` blocks; set `cancel_flag`; assert the turn ends `cancelled`
-   and does not stream further pieces.
+2. **Chat path interruptible — stalled call (Finding 1+2)**: patch
+   `litellm.completion` (used by `answer_stream`) to block on an `Event` before
+   yielding any chunk; set `cancel_flag`; assert `run_interruptible` raises and
+   the turn ends `cancelled` — proving the pre-first-token case is covered, not
+   just the between-pieces case.
 3. **Preamble interruptible**: set `cancel_flag` before classify; assert the
    turn returns `cancelled` without classifying.
+3b. **Classify cancel not misreported (Finding 3)**: set `cancel_flag` so the
+   wrapped classify raises `UserInterruption`; assert the turn resolves as
+   `cancelled`, NOT as a `refusal` / "router unavailable" message.
 4. **Stalled model call**: a mock model whose `query` blocks on an `Event`; set
    `cancel_flag`; assert `UserInterruption` → `cancelled` exit and the loop does
    not proceed to a second call.
@@ -195,11 +227,16 @@ New / extended tests, all runnable via `.venv/bin/python -m pytest tests/ -q`:
 ## Files touched (estimate)
 
 - `harness/interruptible.py` — new.
-- `harness/streaming_model.py` — wrap both `_query` branches; accept `cancel_flag`.
-- `harness/acp_agent.py` — bind `model.cancel_flag`; wrap classify; poll in
-  `pump()`; preamble checks.
+- `harness/streaming_model.py` — wrap both `_query` branches; `__init__` gains
+  `cancel_flag=None`.
+- `harness/chat_handler.py` — `answer_stream` gains `cancel_flag=None`; wrap its
+  `litellm.completion` in `run_interruptible`; per-piece check in the loop.
+- `harness/acp_agent.py` — bind `model.cancel_flag`; pre-try classify check +
+  wrap + re-raise `InterruptAgentFlow` in the `except`; pass `cancel_flag` into
+  `answer_stream`; per-site preamble gates.
 - `harness/tui/app.py` — "Cancelling…" immediate feedback in `action_cancel`.
-- `tests/…` — new + extended per above.
+- `tests/…` — new + extended per above (incl. stalled-chat and
+  classify-not-misreported cases).
 
 Explicitly untouched: upstream `minisweagent/*`, `acp_env.py` `client_terminal`
 path, non-bash file tools.
