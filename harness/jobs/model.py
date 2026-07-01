@@ -13,7 +13,9 @@ class At:    when_iso: str
 class Every: seconds: int; anchor: float | None = None
 @dataclass(frozen=True)
 class Cron:  expr: str; tz: str | None = None; stagger_ms: int | None = None
-Schedule = Union[At, Every, Cron]
+@dataclass(frozen=True)
+class Dynamic: pass   # self-paced: the turn stamps its own next-fire delay
+Schedule = Union[At, Every, Cron, Dynamic]
 
 # ---- Payload union ----
 @dataclass(frozen=True)
@@ -62,12 +64,14 @@ class JobRun:
 def schedule_to_dict(s: Schedule) -> dict:
     if isinstance(s, At):    return {"kind": "at", "when_iso": s.when_iso}
     if isinstance(s, Every): return {"kind": "every", "seconds": s.seconds, "anchor": s.anchor}
+    if isinstance(s, Dynamic): return {"kind": "dynamic"}
     return {"kind": "cron", "expr": s.expr, "tz": s.tz, "stagger_ms": s.stagger_ms}
 
 def schedule_from_dict(d: dict) -> Schedule:
     k = d["kind"]
     if k == "at":    return At(when_iso=d["when_iso"])
     if k == "every": return Every(seconds=d["seconds"], anchor=d.get("anchor"))
+    if k == "dynamic": return Dynamic()
     if k == "cron":  return Cron(expr=d["expr"], tz=d.get("tz"), stagger_ms=d.get("stagger_ms"))
     raise ValueError(f"unknown schedule kind {k!r}")
 
@@ -105,7 +109,8 @@ def job_from_dict(d: dict) -> Job:
         grant=Grant(**d["grant"]), cost=CostGate(**d["cost"]), state=JobState(**d["state"]),
     )
 
-def next_run_at(schedule: "Schedule", now: float, state: "JobState") -> float | None:
+def next_run_at(schedule: "Schedule", now: float, state: "JobState",
+                *, override: int | None = None, min_cadence_s: int = 0) -> float | None:
     if isinstance(schedule, At):
         if state.last_run_at is not None:
             return None
@@ -119,4 +124,10 @@ def next_run_at(schedule: "Schedule", now: float, state: "JobState") -> float | 
         tzinfo = ZoneInfo(schedule.tz) if schedule.tz else None
         base = datetime.fromtimestamp(state.last_run_at or now, tz=tzinfo)
         return croniter(schedule.expr, base).get_next(datetime).timestamp()
+    if isinstance(schedule, Dynamic):
+        if state.last_run_at is None:
+            return now                      # fresh: arm on next tick
+        if override is not None:
+            return now + max(override, min_cadence_s)
+        return None                          # ran, no reschedule → pause
     raise ValueError(f"unknown schedule {schedule!r}")
