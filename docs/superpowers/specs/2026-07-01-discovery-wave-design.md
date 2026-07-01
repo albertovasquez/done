@@ -4,7 +4,8 @@
 **Status:** Design (brainstorming → spec). Adversarially reviewed (Codex, 5
 findings — all incorporated: fail-open labeling, `context-only` traceability,
 width caps, absence-claim search-scope, form recommendation flipped to
-enforced-script-first). Awaiting user review, then writing-plans.
+enforced-script-first). §5 form decision **resolved** (2026-07-01): form (c),
+orchestrator-driven — see §5. Awaiting user review, then writing-plans.
 **Author:** brainstormed with Claude Code (Opus 4.8)
 
 ---
@@ -214,6 +215,12 @@ contexts on the honor system. The `Workflow` script (c) is where read-only
 constraints are mechanical and proven, at which point reuse in audits/pre-mission
 scoping is actually safe. (b) is rejected — it couples the pattern to one skill
 and is not reusable.
+
+**RESOLVED (2026-07-01):** Form = (c) orchestrator-driven, built on the existing
+`subagent` tool (no `Workflow` engine exists in the harness). The `discovery-wave`
+skill encodes the protocol; caps are prompt-enforced; token budget deferred. See
+`docs/superpowers/plans/2026-07-01-discovery-wave.md`. Graduation to a richer
+form (a) remains available since the skill is already flow-tagged.
 
 ## 6. Out of scope
 

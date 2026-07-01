@@ -107,6 +107,19 @@ scoping entirely and uses the full catalog — identical to the pre-flows behavi
 2. Add `flows = ["seo"]` to the persona's `persona.toml`.
 3. Done. No edit to `router.py`, no new `task_type`, no dispatch branch.
 
+### Enabling the discovery flow
+
+The `discovery-wave` skill fans out parallel read-only discovery + divergent
+approach-generation at the front of planning. It is scoped to the `discovery`
+flow, so it stays out of a persona's catalog until opted in. To enable it, add to
+the persona's `persona.toml`:
+
+    flows = ["discovery"]
+
+With no `flows` key, all global (untagged) skills remain available and nothing is
+scoped out (pre-flows behavior). The orchestrator invokes `discovery-wave`
+directly; there is no `/`-only restriction on it.
+
 ## The curated maturity spine (default)
 
 The harness ships a small set of **global** skills that make the model work like a
