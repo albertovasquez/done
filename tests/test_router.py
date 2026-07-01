@@ -30,6 +30,27 @@ def test_classify_includes_preamble_in_user_message():
     assert "the first one" in seen["user"]            # current prompt remains the target
 
 
+def test_router_prompt_steers_persona_create_to_code_feature():
+    """Regression for the create-Robbie misroute: "create a persona named X" was
+    classified ops_task -> create-job (the only create-* skill) because the router
+    prompt had no persona-create guidance and create_persona is a tool, not a
+    skill. The prompt must now steer persona/agent creation to code_feature (the
+    agent-path task_type whose registry has the create_persona tool), NOT
+    create-job/ops_task."""
+    seen = {}
+
+    def stub(system, user):
+        seen["system"] = system
+        return '{"task_type": "code_feature", "skills": [], "confidence": 0.9, "reasoning": "x"}'
+
+    Router(stub, catalog=_CATALOG).classify("create a persona named Robbie")
+    sys = seen["system"].lower()
+    assert "persona" in sys and "agent" in sys
+    assert "code_feature" in sys
+    # it must explicitly reject the two paths that can't reach the tool
+    assert "create-job" in sys or "ops_task" in sys
+
+
 def test_classify_without_history_passes_bare_prompt():
     seen = {}
 
