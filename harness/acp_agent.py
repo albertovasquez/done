@@ -36,7 +36,9 @@ from harness.transcript import flatten_agent_messages
 from harness.instance_templates import (
     ANSWER_ONLY_INSTANCE, OBSERVE_FIRST_INSTANCE, _instance_template_for,
 )
-from minisweagent.exceptions import UserInterruption
+from minisweagent.exceptions import InterruptAgentFlow, UserInterruption
+
+from harness.interruptible import run_interruptible
 
 logger = logging.getLogger("harness.acp_agent")
 
@@ -373,6 +375,11 @@ class HarnessAgent(acp.Agent):
         text = "".join(getattr(b, "text", "") for b in prompt)
         transcript = state.transcript           # read once; every branch writes back per §6
 
+        def _cancelled() -> acp.PromptResponse:
+            # A cancel that lands during the turn preamble ends the turn cleanly —
+            # same stop_reason the post-run_engine cancel checks use (L805/808).
+            return acp.PromptResponse(stop_reason="cancelled")
+
         # Persona: compose once per session (cached). None => not-yet-read. Both the
         # chat and agent dispatch paths read state.persona_block, so the COMPOSE
         # must happen before routing; the telemetry EMIT is deferred until after
@@ -385,6 +392,8 @@ class HarnessAgent(acp.Agent):
             # per-agent self._workspace_dir — so persona and memory agree on the
             # session's workspace (the Phase-B isolation invariant). new_session
             # records state.workspace_dir = self._workspace_dir at session start.
+            if state.cancel_flag.is_set():
+                return _cancelled()
             persona_first_load = await loop.run_in_executor(
                 None, persona.resolve_persona, state.workspace_dir)
             state.persona_block = persona_first_load.block
@@ -397,15 +406,28 @@ class HarnessAgent(acp.Agent):
         # skipped on the clarify/ambiguous branches — mirroring persona_load.
         if state.memory_block is None:
             from datetime import date
+            if state.cancel_flag.is_set():
+                return _cancelled()
             mload = await loop.run_in_executor(
                 None, lambda: memory_mod.resolve_memory(state.workspace_dir, today=date.today()))
             state.memory_block = mload.block
             state.memory_load = mload
 
-        # 1) classify in the executor (sync litellm call must not block the loop)
+        # 1) classify in the executor (sync litellm call must not block the loop).
+        # Cancel handling (Finding 3): check BEFORE the try — the except below
+        # returns a "router unavailable" refusal, and UserInterruption IS an
+        # Exception, so a raise inside the try would be misreported as a router
+        # failure. run_interruptible aborts a stalled classify; the except
+        # re-raises InterruptAgentFlow so a mid-flight cancel stays a clean cancel.
+        if state.cancel_flag.is_set():
+            return _cancelled()
         try:
             cls: Classification = await loop.run_in_executor(
-                None, lambda: self._router.classify(text, history=transcript))
+                None, lambda: run_interruptible(
+                    lambda: self._router.classify(text, history=transcript),
+                    state.cancel_flag))
+        except InterruptAgentFlow:
+            return _cancelled()
         except Exception as e:  # router/VibeProxy unreachable
             # A turn that dies before it even classifies is one of the most
             # confusing failures to debug — log it (always) AND trace it (--debug),
@@ -528,13 +550,22 @@ class HarnessAgent(acp.Agent):
                 # worker thread and marshal each piece back to the loop as its own
                 # message_chunk — same idiom as the tool-call path above. Accumulate
                 # the pieces so the full answer can be written to the transcript.
-                for piece in handler.answer_stream(text, history=transcript):
+                # cancel_flag: ESC aborts a stalled/streaming chat answer (raises
+                # UserInterruption from answer_stream, caught below).
+                for piece in handler.answer_stream(text, history=transcript,
+                                                   cancel_flag=state.cancel_flag):
                     pieces.append(piece)
                     asyncio.run_coroutine_threadsafe(
                         self._conn.session_update(session_id, message_chunk(piece)),
                         loop).result()
 
-            await loop.run_in_executor(None, pump)
+            try:
+                await loop.run_in_executor(None, pump)
+            except UserInterruption:
+                # ESC during a chat answer: end the turn cleanly (not a crash /
+                # disconnect). Persist nothing partial; the TUI clears on turn-end.
+                await self._trace(session_id, "chat.cancelled", sid=session_id)
+                return acp.PromptResponse(stop_reason="cancelled")
             answer = "".join(pieces)
             self._store.record(session_id, {"prompt": text, "stop_reason": "end_turn",
                                             "kind": "chat"})
@@ -546,6 +577,8 @@ class HarnessAgent(acp.Agent):
 
         # agent path
         # offload compose_context: it does filesystem I/O (skills); keep the event loop free
+        if state.cancel_flag.is_set():
+            return _cancelled()
         ctx = await loop.run_in_executor(
             None, persona.compose_context, state.persona_block or "",
             state.memory_block or "", _skill_roots, cls.skills)
@@ -768,6 +801,11 @@ class HarnessAgent(acp.Agent):
                 # mock model has no on_delta attr → bind nothing → mock mode unchanged.
                 if hasattr(model, "on_delta"):
                     model.on_delta = emit_delta
+                # Same guard for cancel_flag: lets _query abort a stalled /
+                # pre-first-token litellm call (emit_delta only fires once a token
+                # arrives). Mock model lacks the attr → untouched.
+                if hasattr(model, "cancel_flag"):
+                    model.cancel_flag = state.cancel_flag
                 try:
                     result = agent.run(text, prior=prior)
                     return {"stop_reason": "end_turn",
@@ -784,6 +822,10 @@ class HarnessAgent(acp.Agent):
                     # never marshal a delta to a dead loop after the turn ends.
                     if hasattr(model, "on_delta"):
                         model.on_delta = None
+                    # unbind cancel_flag so a later abandoned worker can't observe
+                    # a flag that now belongs to the next turn.
+                    if hasattr(model, "cancel_flag"):
+                        model.cancel_flag = None
             except BaseException:  # engine/construction failure → refusal; capture any prose
                 # BaseException (not just Exception): tracing_agent re-raises
                 # BaseException, so a BaseException-only exc (asyncio.CancelledError,

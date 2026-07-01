@@ -16,7 +16,10 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 from typing import Iterator
+
+from harness.interruptible import run_interruptible
 
 # `litellm` is imported lazily inside answer_stream() — at module scope it costs
 # ~1s and this module is on the agent-startup path. Mock mode returns first.
@@ -172,9 +175,17 @@ class ChatHandler:
         self._base_block = base_block
 
     def answer_stream(self, prompt: str,
-                      history: list[dict] | None = None) -> Iterator[str]:
+                      history: list[dict] | None = None,
+                      cancel_flag: threading.Event | None = None) -> Iterator[str]:
         """Yield the answer in pieces (one message_chunk per delta downstream).
         `history` (plain {role, content} turns) is prepended for context.
+
+        `cancel_flag` (threading.Event | None): when set, ESC aborts the answer.
+        Two checkpoints, because the chat path makes its OWN litellm.completion
+        call (NOT via StreamingLitellmModel): (1) run_interruptible wraps the
+        blocking `completion()` open so a stalled / pre-first-token call is
+        killable; (2) a per-piece check in the loop aborts once tokens flow.
+        None => CLI/mock => runs inline, unchanged.
 
         A self-directed TOOLS question is always answered deterministically from
         the live registry (`_format_tools`); its regex is possessive-only, so it
@@ -197,17 +208,27 @@ class ChatHandler:
             return
         import litellm  # lazy: keep the ~1s import out of startup (mock never hits this)
         from harness import vibeproxy
+        from minisweagent.exceptions import UserInterruption
         system_content = self._base_block + self._persona_block
-        stream = litellm.completion(
-            model=vibeproxy.model_id(self._model_id),
-            **vibeproxy.completion_kwargs(),
-            messages=(([{"role": "system", "content": system_content}]
-                       if system_content else [])
-                      + (history or []) + [{"role": "user", "content": prompt}]),
-            max_tokens=1000,
-            stream=True,
+        # Wrap the blocking completion() open: a stalled call that never yields a
+        # first token is aborted here (the per-piece check below can't reach it).
+        stream = run_interruptible(
+            lambda: litellm.completion(
+                model=vibeproxy.model_id(self._model_id),
+                **vibeproxy.completion_kwargs(),
+                messages=(([{"role": "system", "content": system_content}]
+                           if system_content else [])
+                          + (history or []) + [{"role": "user", "content": prompt}]),
+                max_tokens=1000,
+                stream=True,
+            ),
+            cancel_flag,
         )
         for chunk in stream:
+            if cancel_flag is not None and cancel_flag.is_set():
+                raise UserInterruption({
+                    "role": "exit", "content": "Cancelled by user.",
+                    "extra": {"exit_status": "cancelled", "submission": ""}})
             piece = (chunk.choices[0].delta.content or "") if chunk.choices else ""
             if piece:
                 yield piece

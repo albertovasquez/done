@@ -25,6 +25,7 @@ from minisweagent.exceptions import FormatError
 from minisweagent.models.litellm_model import LitellmModel
 from minisweagent.models.utils.actions_toolcall import parse_toolcall_actions
 
+from harness.interruptible import run_interruptible
 from harness.tools.registry import build_registry
 
 
@@ -38,9 +39,16 @@ def _extract_delta(chunk) -> str:
 
 
 class StreamingLitellmModel(LitellmModel):
-    def __init__(self, *, on_delta: Callable[[str], None] | None = None, registry=None, **kwargs):
+    def __init__(self, *, on_delta: Callable[[str], None] | None = None, registry=None,
+                 cancel_flag=None, **kwargs):
         super().__init__(**kwargs)
         self.on_delta = on_delta   # set/cleared per run by the caller
+        # cancel_flag (threading.Event | None): bound per-run by acp_agent. When
+        # set mid-flight, run_interruptible aborts the blocking litellm.completion
+        # call (the stalled / pre-first-token case that emit_delta can't catch,
+        # since emit_delta only fires once a token arrives). None => CLI/mock =>
+        # calls run inline (byte-identical to before).
+        self.cancel_flag = cancel_flag
         # Fresh registry per construction — never a shared module-global.
         self.registry = registry if registry is not None else build_registry()
 
@@ -51,24 +59,35 @@ class StreamingLitellmModel(LitellmModel):
         if self.on_delta is None:
             # Blocking path. NOT super()._query — that re-hardcodes tools=[BASH_TOOL].
             # Re-issue here with the full registry so mock/CLI/non-streaming see every tool.
+            # run_interruptible: ESC aborts a stalled blocking call (cancel_flag=None
+            # => runs inline, unchanged).
             try:
-                return litellm.completion(
-                    model=self.config.model_name,
-                    messages=messages,
-                    tools=self._tool_schemas(),
-                    **(self.config.model_kwargs | kwargs),
+                return run_interruptible(
+                    lambda: litellm.completion(
+                        model=self.config.model_name,
+                        messages=messages,
+                        tools=self._tool_schemas(),
+                        **(self.config.model_kwargs | kwargs),
+                    ),
+                    self.cancel_flag,
                 )
             except litellm.exceptions.AuthenticationError as e:
                 e.message += " You can permanently set your API key with `mini-extra config set KEY VALUE`."
                 raise
         chunks = []
         try:
-            stream = litellm.completion(
-                model=self.config.model_name,
-                messages=messages,
-                tools=self._tool_schemas(),
-                stream=True,
-                **(self.config.model_kwargs | kwargs),
+            # Only the initial completion() call blocks until the first chunk; the
+            # per-token emit_delta abort handles the rest of the stream. Wrap just
+            # the opening call so a stall BEFORE the first token is still killable.
+            stream = run_interruptible(
+                lambda: litellm.completion(
+                    model=self.config.model_name,
+                    messages=messages,
+                    tools=self._tool_schemas(),
+                    stream=True,
+                    **(self.config.model_kwargs | kwargs),
+                ),
+                self.cancel_flag,
             )
             for chunk in stream:
                 chunks.append(chunk)

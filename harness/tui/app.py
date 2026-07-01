@@ -1559,9 +1559,16 @@ class HarnessTui(App):
             self._cancel_posted = True
             if self._tracer is not None:
                 self._tracer.emit("dn", "tx.cancel", sid=self._session_id)
-            await self._conn.cancel(session_id=self._session_id)
+            # Immediate feedback: stop the spinner NOW rather than waiting for the
+            # turn to wind down and prompt() to return. The backend cancel is now
+            # prompt (run_interruptible + cooperative gates), but there is still a
+            # short teardown window; killing the spinner here acknowledges the ESC
+            # at once. _hide_working is idempotent, and _send_prompt's finally
+            # calls it again harmlessly on turn-end.
             if self._started:
+                self._hide_working()
                 self._append_line(_c("muted", "— canceling… —"))
+            await self._conn.cancel(session_id=self._session_id)
 
     async def action_clear(self) -> None:
         if self._busy:

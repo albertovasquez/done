@@ -1,8 +1,10 @@
 # tests/test_streaming_model.py
 
+import threading
 import types
 import pytest
 
+from minisweagent.exceptions import UserInterruption
 from harness.streaming_model import StreamingLitellmModel, _extract_delta
 
 
@@ -13,10 +15,11 @@ def _chunk(content):
     return types.SimpleNamespace(choices=[choice])
 
 
-def _make_model(on_delta=None):
+def _make_model(on_delta=None, cancel_flag=None):
     # api_base/api_key live in model_kwargs per LitellmModelConfig (no top-level fields).
     return StreamingLitellmModel(
         on_delta=on_delta,
+        cancel_flag=cancel_flag,
         model_name="openai/fake",
         model_kwargs={"api_base": "http://localhost:1/v1", "api_key": "x"},
         cost_tracking="ignore_errors",
@@ -173,3 +176,65 @@ def test_reassembled_response_preserves_tool_calls(monkeypatch):
     assert tool_calls and tool_calls[0].function.name == "bash"
     assert '"command": "ls"' in tool_calls[0].function.arguments
     assert seen == []                          # tool-call deltas are not prose
+
+
+def test_stalled_blocking_call_is_interrupted_by_cancel_flag(monkeypatch):
+    """A blocking litellm.completion that never returns (stalled connection) must
+    abort when cancel_flag sets — the emit_delta per-token path can't help here
+    because no token ever arrives."""
+    flag = threading.Event()
+    started = threading.Event()
+    release = threading.Event()
+
+    def fake_completion(**kwargs):
+        started.set()
+        release.wait(timeout=5)
+        return "SHOULD_NOT_RETURN"
+
+    import litellm
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+
+    def canceller():
+        started.wait(timeout=5)
+        flag.set()
+
+    threading.Thread(target=canceller, daemon=True).start()
+    model = _make_model(on_delta=None, cancel_flag=flag)     # blocking branch
+    with pytest.raises(UserInterruption):
+        model._query([{"role": "user", "content": "x"}])
+    release.set()
+
+
+def test_stalled_stream_open_is_interrupted_before_first_token(monkeypatch):
+    """A streaming call that blocks in completion() BEFORE yielding the first
+    chunk must abort on cancel — this is the pre-first-token gap emit_delta
+    cannot cover (it only fires once a token arrives)."""
+    flag = threading.Event()
+    started = threading.Event()
+    release = threading.Event()
+
+    def fake_completion(**kwargs):
+        assert kwargs.get("stream") is True
+        started.set()
+        release.wait(timeout=5)
+        return iter([_chunk("late")])
+
+    import litellm
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+
+    def canceller():
+        started.wait(timeout=5)
+        flag.set()
+
+    threading.Thread(target=canceller, daemon=True).start()
+    model = _make_model(on_delta=lambda p: None, cancel_flag=flag)   # streaming branch
+    with pytest.raises(UserInterruption):
+        model._query([{"role": "user", "content": "x"}])
+    release.set()
+
+
+def test_cancel_flag_none_runs_inline_unchanged(monkeypatch):
+    """cancel_flag=None (CLI/mock) => completion runs inline, result unchanged."""
+    monkeypatch.setattr("litellm.completion", lambda **kw: "OK")
+    model = _make_model(on_delta=None, cancel_flag=None)
+    assert model._query([{"role": "user", "content": "x"}]) == "OK"
