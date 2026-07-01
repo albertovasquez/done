@@ -1051,7 +1051,14 @@ class HarnessTui(App):
         """Tear down the landing view, build the transcript + bottom composer."""
         self._started = True
         await self.query_one("#landing", Container).remove()
-        await self.mount(VerticalScroll(id="transcript"), before="#statusbar")
+        transcript = VerticalScroll(id="transcript")
+        await self.mount(transcript, before="#statusbar")
+        # Anchor: keep the view pinned to the bottom as content streams in, but
+        # only until the user scrolls up to read earlier content — Textual then
+        # releases the anchor and re-engages it when they scroll back to the
+        # bottom. This is what stops a streaming response from yanking the view
+        # down while the user is reading up.
+        transcript.anchor()
         composer = Vertical(id="composer", classes="compose")
         await self.mount(composer, before="#statusbar")
         await composer.mount(PromptArea(placeholder=self._conversation_placeholder(),
@@ -1095,21 +1102,30 @@ class HarnessTui(App):
         return self.query_one("#transcript", VerticalScroll)
 
     def _append(self, widget) -> None:
-        """Mount a widget into the transcript and keep the view pinned to the end."""
+        """Mount a widget into the transcript.
+
+        The transcript is anchored (see `_enter_conversation`): Textual keeps the
+        view pinned to the bottom as content is added, but only while the user is
+        at the bottom. Once the user scrolls up, the anchor releases and mounts no
+        longer yank the view down — it re-engages when they scroll back. A user
+        action that should force the view down (submitting a message) calls
+        `scroll_end` explicitly; see `_add_user_message`."""
         self._transcript.mount(widget)
-        self._transcript.scroll_end(animate=False)
 
     def _append_streaming_below_footer(self, widget) -> None:
         """Mount a streaming answer widget, keeping any trailing run-caption footer
         last. A late-draining response (deltas arrive after prompt() returned and
         already mounted this turn's footer) must render ABOVE the footer, not under
         it. If the last transcript child is a `_copyable` footer, mount before it;
-        otherwise append at the end."""
+        otherwise append at the end.
+
+        The transcript is anchored (see `_enter_conversation`), so Textual keeps
+        the view pinned to the bottom on mount only while the user hasn't scrolled
+        up — no explicit scroll_end needed here."""
         kids = self._transcript.children
         footer = kids[-1] if kids else None
         if footer is not None and getattr(footer, "_copyable", False):
             self._transcript.mount(widget, before=footer)
-            self._transcript.scroll_end(animate=False)
         else:
             self._append(widget)
 
@@ -1163,6 +1179,9 @@ class HarnessTui(App):
         self._boundary_after = False
         # accent bar glyph + bold text (the bordered-box look, inline).
         self._append_line(f"{_c('accent', '▌')} [b]{self._escape(text)}[/b]")
+        # Submitting is a deliberate action: snap to the bottom (and re-engage the
+        # anchor) even if the user had scrolled up while reading the prior answer.
+        self._transcript.scroll_end(animate=False)
 
     @staticmethod
     def _escape(s: str) -> str:
@@ -1406,7 +1425,9 @@ class HarnessTui(App):
                 self._ensure_stream_timer()   # arm for the chunks that follow
         else:
             self._ensure_stream_timer()
-        self._transcript.scroll_end(animate=False)
+        # No explicit scroll here: the anchored transcript (see _enter_conversation)
+        # follows the stream to the bottom while the user is there, and holds
+        # position once they scroll up to read earlier content.
 
     def _ensure_stream_timer(self) -> None:
         # R2: start a 12Hz flusher on stream-open; it is stopped on close/reset.
