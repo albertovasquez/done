@@ -68,6 +68,27 @@ def test_non_rate_limit_error_propagates(monkeypatch, _stub_vibeproxy):
     assert len(calls) == 1                        # did NOT try the fallback
 
 
+def test_falls_back_when_primary_model_id_unknown_to_proxy(monkeypatch, _stub_vibeproxy):
+    # Regression: a stale ROUTER_MODEL alias (e.g. `qwen` after the aliases were
+    # removed in PR #260) makes the proxy answer 502 "unknown provider for model
+    # qwen". That is NOT a rate-limit, but retrying the SAME dead id on the
+    # fallback slot is pointless — a different, live id must be tried instead.
+    fake, calls = _fake_litellm([
+        (None, Exception("unknown provider for model qwen")),
+        (None, "chat_question"),
+    ])
+    monkeypatch.setitem(sys.modules, "litellm", fake)
+    out = router.complete("sys", "user")
+    assert out == "chat_question"
+    assert len(calls) == 2                        # tried primary, then fallback
+
+
+def test_unknown_model_detection():
+    assert router._is_unknown_model(Exception("unknown provider for model qwen"))
+    assert router._is_unknown_model(Exception("unknown model: glm-fast"))
+    assert not router._is_unknown_model(ValueError("malformed request body"))
+
+
 def test_rate_limit_detection():
     assert router._is_rate_limit(_RateLimit("x"))
     assert router._is_rate_limit(Exception("All credentials are cooling down"))
