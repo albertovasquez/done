@@ -50,12 +50,12 @@ def test_loaded_set_is_reset_between_turns(tmp_path):
 
 
 def test_registry_no_op_without_roots():
-    # The always-present tools: bash, read, write, edit, create_job, create_persona,
-    # subagent, review. subagent is included for non-worker agents; workers exclude it
-    # via is_worker=True.
+    # The always-present tools: bash, read, write, edit, create_job, create_loop,
+    # create_persona, subagent, review, set_next_run. subagent/review/create_loop are
+    # included for non-worker agents only; workers exclude them via is_worker=True.
     names = [t.name for t in build_registry()]
-    assert names == ["bash", "read", "write", "edit", "create_job", "create_persona",
-                     "subagent", "review"]
+    assert names == ["bash", "read", "write", "edit", "create_job", "create_loop",
+                     "create_persona", "subagent", "review", "set_next_run"]
 
 
 def test_registry_appends_load_skill_with_roots(tmp_path):
