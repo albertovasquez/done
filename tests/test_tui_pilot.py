@@ -663,8 +663,8 @@ def _mouse_down() -> "events.MouseDown":
 
 
 def test_on_event_drops_mouse_event_during_stream_remount_race():
-    """_flush_stream remounts the answer widget's children at 12Hz while
-    streaming (Markdown.update → remove+mount_all). A mouse event landing in
+    """The StreamPainter flush remounts the answer widget's children at 12Hz
+    while streaming (Markdown.update → remove+mount_all). A mouse event landing in
     that window can resolve to a since-removed child, and Textual's own
     Screen._forward_event dereferences `container.region` unguarded, raising
     AttributeError. Verify on_event treats that as a missed click instead of a
