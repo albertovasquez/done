@@ -139,3 +139,26 @@ read them with `jq`/`grep`. **`docs/debugging.md` is the full reference**: the
 three formats, how to find the latest run, the event vocabulary, and copy-paste
 `jq` recipes. Reach for `--debug` + the trace file when a failure isn't
 reproducible in a unit test.
+
+## 10. Test through seams — coverage never justifies patch-shaped code
+
+Drive tests through the same interfaces production callers use: the fake ACP
+wire (`tests/fake_agent.py`), the router stub (`HARNESS_ROUTER_STUB=1`),
+`--model mock`, the `TranscriptView` fakes, Pilot + SVG snapshots. When
+something is hard to test that way, treat it as a design signal — add or deepen
+a seam (a Protocol, an injected function, a pure core) rather than reaching
+into internals with `monkeypatch`. Patching is acceptable only at a boundary
+that already is a seam (env vars, a module-level function that exists to be
+replaced — e.g. conftest's cron-autostart neutralization); never on private
+attributes, and never such that production code must be arranged to keep a
+patch target alive.
+
+Rationale (why this is a standard, not a taste): hermes-agent — the most mature
+open agent codebase we've mapped (2026-07-01; ~1.3M LoC, 35k tests) — let test
+monkeypatching become load-bearing. Its production symbols are resolved through
+a late-import indirection partly *so existing test patches keep landing*, and
+the 219-method god object at its core can no longer be reshaped without
+breaking thousands of tests. Coverage acquired that way calcifies the very
+structure it should protect. Our seam-driven fakes are a compounding asset;
+when a test is hard to write, fix the shape of the module — do not trade this
+discipline for coverage numbers.
