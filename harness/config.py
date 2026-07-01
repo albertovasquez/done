@@ -139,6 +139,48 @@ def _quote(value: str) -> str:
     return f'"{escaped}"'
 
 
+def _emit_scalar(lines: list, key: str, value) -> None:
+    """Emit one `key = value` line for a scalar or list-of-scalars TOML value."""
+    if isinstance(value, bool):
+        lines.append(f"{key} = {'true' if value else 'false'}")
+    elif isinstance(value, list):
+        inner = ", ".join(_quote(str(x)) for x in value)
+        lines.append(f"{key} = [{inner}]")
+    else:
+        lines.append(f"{key} = {_quote(str(value))}")
+
+
+def _emit_nested_agent_tables(lines: list, agent_key: str, preserve: dict | None) -> None:
+    """Re-emit dict-valued (nested) keys under [agents.<key>] from the prior raw
+    config — e.g. `roles` and `roles.fallback` — which _serialize's flat schema
+    does not own. Flat scalars are already emitted by the caller. Without this,
+    any write drops nested agent tables (they live under the OWNED `agents` key)."""
+    if not preserve:
+        return
+    agents_raw = preserve.get("agents")
+    if not isinstance(agents_raw, dict):
+        return
+    table = agents_raw.get(agent_key)
+    if not isinstance(table, dict):
+        return
+    for k, v in table.items():
+        if not isinstance(v, dict):
+            continue  # flat scalars already emitted by the caller
+        # one level of nesting, e.g. [agents.<key>.roles]
+        lines.append(f"[agents.{agent_key}.{k}]")
+        for kk, vv in v.items():
+            if not isinstance(vv, dict):
+                _emit_scalar(lines, kk, vv)
+        lines.append("")
+        # a second level, e.g. [agents.<key>.roles.fallback]
+        for kk, vv in v.items():
+            if isinstance(vv, dict):
+                lines.append(f"[agents.{agent_key}.{k}.{kk}]")
+                for k3, v3 in vv.items():
+                    _emit_scalar(lines, k3, v3)
+                lines.append("")
+
+
 def _serialize(
     agents: dict[str, AgentConfig],
     *,
@@ -172,6 +214,9 @@ def _serialize(
         if not cfg.compress_aware:
             lines.append("compress_aware = false")
         lines.append("")
+        # Round-trip any nested [agents.<key>.roles(.fallback)] tables the flat
+        # schema doesn't own — else every write silently drops them.
+        _emit_nested_agent_tables(lines, key, preserve)
     # Emit partial (incomplete) agent tables — no backend/model.
     if partial:
         for key in sorted(partial.keys()):

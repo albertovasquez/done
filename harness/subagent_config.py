@@ -29,9 +29,10 @@ def resolve_subagent_model(agent_id: str, *, per_task: str | None = None,
     # byte-identical to the previous inline implementation.
     if per_task:
         return per_task
-    from harness.role_model import load_role_tables, resolve_role_candidates
-    return resolve_role_candidates(
-        agent_id, "worker", load_role_tables(), parent_model)[0]
+    from harness.role_model import resolve_role_candidates
+    # Parse via THIS module's _raw() (which reads sc.conf_path) so the resolver
+    # sees the same config, and tests monkeypatching sc.conf_path still work.
+    return resolve_role_candidates(agent_id, "worker", _raw(), parent_model)[0]
 
 
 def subagent_max_concurrent(default: int = 4) -> int:
