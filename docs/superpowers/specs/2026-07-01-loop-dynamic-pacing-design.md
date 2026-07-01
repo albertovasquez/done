@@ -217,6 +217,35 @@ new behavior is "override present → arm; absent → pause," localized to the
 - No migration. No config flag needed — a loop only exists if a `create_loop`
   call made one.
 
+## 8a. Review hardening (added after adversarial review)
+
+Three finder passes surfaced a coupled critical bug and two footguns; all fixed
+before merge, at the create gate (`handle_create_job`) so every schedule kind
+benefits:
+
+- **Poison-pill crash-loop (critical, two finders reproduced).** A normalized
+  cost missing `min_cadence_s` yields `None`; `max(override, None)` in
+  `next_run_at` raises `TypeError` — and that call runs OUTSIDE `ops.run`'s
+  try/except, so the state write is skipped, `next_run_at` never advances, and
+  the job re-fires + re-crashes every tick without ever incrementing the failure
+  counter (undisableable). **Fix (defense in depth):** (1) `next_run_at`'s
+  Dynamic branch uses `min_cadence_s or 0` so the call site never raises; (2) the
+  gate rejects any cost with a `None` field fail-closed, so `None` never persists.
+- **Tick-hammer footgun.** A Dynamic loop with `min_cadence_s=0` re-fires every
+  30 s daemon tick. **Fix:** the gate requires a *positive* `min_cadence_s` for
+  Dynamic schedules (parallels the existing Every cadence-floor check).
+- **Dynamic + Reminder = one-shot "loop".** A Reminder never runs an LLM turn, so
+  it can never call `set_next_run` → the loop pauses after one fire. Reachable via
+  the raw `create_job` door (not `create_loop`). **Fix:** the gate rejects a
+  Dynamic schedule paired with a Reminder payload.
+- **Fractional delay.** `set_next_run(30.5)` now floors to 30 rather than
+  rejecting (a rejection would pause the loop). Sub-second delays (`<1`) still
+  reject as ≤0.
+
+Explicitly kept as designed (not bugs): a paused loop does not auto-resume
+(pause-when-done is the contract; resume is a manual op), and an "ok" turn that
+omits `set_next_run` pauses without counting as an error.
+
 ## 9. Open questions (non-blocking)
 
 - Whether `set_next_run` should also allow an absolute ISO time (like

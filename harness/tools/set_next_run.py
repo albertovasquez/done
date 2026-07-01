@@ -41,12 +41,16 @@ class SetNextRunTool:
 
     def execute(self, args: dict, env) -> dict:
         raw = args.get("delay_seconds")
-        # Accept ints and int-valued floats; reject bools, strings, None, <= 0.
-        ok = isinstance(raw, int) and not isinstance(raw, bool)
-        if not ok and isinstance(raw, float) and raw.is_integer():
-            raw, ok = int(raw), True
-        if not ok or raw <= 0:
-            return {"output": f"delay_seconds must be a positive integer, got {raw!r}.",
+        # Accept ints and any positive float (floored to whole seconds); reject
+        # bools, strings, None, and <= 0. Flooring a fractional delay is kinder
+        # than rejecting it: a rejected call ends the turn with no override, which
+        # PAUSES the loop — a 30.5 typo must not silently kill a running loop.
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            return {"output": f"delay_seconds must be a positive number, got {raw!r}.",
                     "returncode": 1, "exception_info": None}
-        env._next_run_override = int(raw)
-        return {"output": f"Next run in {raw}s.", "returncode": 0, "exception_info": None}
+        secs = int(raw)                       # floor toward zero
+        if secs <= 0:
+            return {"output": f"delay_seconds must be > 0, got {raw!r}.",
+                    "returncode": 1, "exception_info": None}
+        env._next_run_override = secs
+        return {"output": f"Next run in {secs}s.", "returncode": 0, "exception_info": None}

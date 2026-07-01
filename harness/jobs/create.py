@@ -22,11 +22,27 @@ def handle_create_job(spec: dict, *, now: float) -> dict:
 
     schedule = m.schedule_from_dict(spec["schedule"])
     cost = m.CostGate(**spec["cost"])
-    # Cadence-floor footgun guard. v1 enforces the floor only for Every schedules
-    # (a fixed interval is cheap to check). At is one-shot (skip). Cron's implied
-    # interval isn't floor-checked yet (no cheap interval read).
+    # Fail closed on a malformed cost gate. A missing key normalizes to None
+    # (create_job._normalize_cost), which would otherwise persist and later blow
+    # up `max(override, min_cadence_s)` in next_run_at OUTSIDE ops.run's
+    # try/except — an undisableable per-tick crash-loop. Reject at the door.
+    if cost.min_cadence_s is None or cost.timeout_s is None \
+            or cost.max_consecutive_failures is None:
+        raise ValueError("cost gate fields must be set (fail closed)")
+    # Cadence-floor footgun guard. Enforced for Every (a fixed interval is cheap
+    # to check) and for Dynamic (a self-paced loop with min_cadence_s=0 would
+    # re-fire every daemon tick — require a positive floor). At is one-shot
+    # (skip). Cron's implied interval isn't floor-checked yet (no cheap read).
     if isinstance(schedule, m.Every) and schedule.seconds < cost.min_cadence_s:
         raise ValueError("cadence below min_cadence_s floor")
+    if isinstance(schedule, m.Dynamic) and cost.min_cadence_s <= 0:
+        raise ValueError("a self-paced loop requires a positive min_cadence_s floor")
+    # A Dynamic schedule is meaningless with a Reminder payload: a Reminder never
+    # runs an LLM turn, so it can never call set_next_run → the loop pauses after
+    # one fire. Reject the combination rather than ship a one-shot "loop".
+    payload = m.payload_from_dict(spec["payload"])
+    if isinstance(schedule, m.Dynamic) and isinstance(payload, m.Reminder):
+        raise ValueError("a Dynamic loop needs an agent_turn payload, not a reminder")
 
     job = m.Job(
         id=spec["id"],
@@ -37,7 +53,7 @@ def handle_create_job(spec: dict, *, now: float) -> dict:
         delete_after_run=spec.get("delete_after_run"),
         session_target=spec.get("session_target", "isolated"),
         schedule=schedule,
-        payload=m.payload_from_dict(spec["payload"]),
+        payload=payload,
         grant=m.Grant(**spec["grant"]),
         cost=cost,
         state=m.JobState(),

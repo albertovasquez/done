@@ -128,6 +128,10 @@ def next_run_at(schedule: "Schedule", now: float, state: "JobState",
         if state.last_run_at is None:
             return now                      # fresh: arm on next tick
         if override is not None:
-            return now + max(override, min_cadence_s)
+            # `min_cadence_s or 0` tolerates an unset/None floor (0 = no floor).
+            # Must not raise here: this call runs OUTSIDE ops.run's try/except, so
+            # a TypeError would skip the state write and crash-loop the job
+            # undisableably (next_run_at never advances, error count never rises).
+            return now + max(override, min_cadence_s or 0)
         return None                          # ran, no reschedule → pause
     raise ValueError(f"unknown schedule {schedule!r}")
