@@ -205,3 +205,12 @@ DecisionModal #decision-footer { padding-top: 1; color: $muted; }
     border: round $surface; border-title-color: $accent; border-title-style: bold;
     padding: 1 1;
 }
+
+/* ---- AgentDashboard (full-screen, jobs-first per-agent view) — same
+   centered-box language as SelectModal/DecisionModal, sized wider to host
+   the jobs table columns. ---- */
+AgentDashboard { align: center middle; }
+AgentDashboard #agent-dashboard { width: 96; height: auto; max-height: 80%;
+    border: round $accent; background: $surface; padding: 1 2; }
+AgentDashboard #dashboard-header { padding-bottom: 1; }
+AgentDashboard #dashboard-jobs { height: auto; color: $foreground; }
