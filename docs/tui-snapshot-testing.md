@@ -128,6 +128,13 @@ the UI first.
 4. **Judge the baseline before committing it** (see below). Only then `git add`
    the `.svg`.
 
+**Where the baselines live.** You don't choose the path — the plugin writes each
+baseline to `tests/__snapshots__/<test-module>/<test-name>.svg` (derived from the
+test's module + function name) and these SVGs **are committed to git** (they are
+the source of truth the diff compares against). The only image the plugin writes
+that is *not* tracked is `snapshot_report.html`, the transient before/after
+failure viewer, dropped in the cwd on a mismatch and git-ignored.
+
 ## The baseline acceptance rule
 
 A snapshot freezes *whatever* renders — it can't tell a good layout from a bug.

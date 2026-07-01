@@ -845,6 +845,29 @@ def test_busy_guard_blocks_models_picker_and_prompt_send():
     asyncio.run(go())
 
 
+def test_models_unavailable_copy_is_branded_not_flag_jargon():
+    """When /models can't pick a model (non-proxy backend, e.g. mock), the dead-end
+    message must follow the branded 'X unavailable — <what to do>' pattern used
+    elsewhere (clipboard, agent). It must NOT expose the internal launch flag
+    '--model vibeproxy' — that's jargon that tells the user nothing actionable.
+    Surveyed live: /models advertises 'Select the active model' then refused with
+    the flag string."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            # landing screen (not started): _notify_line writes to #header-text
+            await app.action_select_model()
+            await pilot.pause()
+            msg = str(app.query_one("#header-text", Static).content)
+            assert "--model" not in msg and "vibeproxy" not in msg, (
+                f"dead-end message exposes internal flag jargon: {msg!r}")
+            assert "unavailable" in msg.lower(), (
+                f"message should follow the 'unavailable — <what to do>' pattern: {msg!r}")
+
+    asyncio.run(go())
+
+
 def test_send_prompt_finally_no_reenable_after_generation_bump():
     # An old prompt worker whose generation is stale must NOT re-enable input
     # (that would undo a _fatal disable after a reload failure).

@@ -982,7 +982,13 @@ class HarnessTui(App):
         if self._busy:
             return            # lifecycle guard (§6): no model picker mid-reload
         if self.model != "vibeproxy":
-            self._notify_line("model selection requires launching with --model vibeproxy")
+            # Branded dead-end copy: state the condition + the path, in the
+            # "X unavailable — <what to do>" pattern used elsewhere (clipboard,
+            # agent). No internal launch-flag jargon — the model name the user
+            # sees in the footer is enough to know they're on a fixed backend.
+            self._notify_line(
+                "model switching unavailable on this backend — "
+                "launch with a proxy backend to pick models")
             return
         # Best-effort: a down/empty proxy must NOT empty the picker — the static
         # catalog still renders every supported model as login_needed/stale_config
