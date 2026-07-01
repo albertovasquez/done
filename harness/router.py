@@ -74,13 +74,31 @@ def _is_rate_limit(exc: Exception) -> bool:
             or "rate limit" in msg or " 429" in msg or "status 429" in msg)
 
 
+def _is_unknown_model(exc: Exception) -> bool:
+    """True if the proxy rejected the model id itself (e.g. a stale ROUTER_MODEL
+    alias like `qwen` after PR #260 removed it → CLIProxyAPI 502 'unknown provider
+    for model qwen'). Retrying the SAME dead id is pointless, but the fallback slot
+    holds a DIFFERENT id, so we should try it rather than brick the whole turn."""
+    msg = str(exc).lower()
+    return "unknown provider for model" in msg or "unknown model" in msg
+
+
+def _should_try_next(exc: Exception) -> bool:
+    """A model-specific failure (this id is throttled or unknown) that a different
+    fallback id might survive — as opposed to a malformed-request error that would
+    fail identically on every id and must propagate."""
+    return _is_rate_limit(exc) or _is_unknown_model(exc)
+
+
 def complete(system: str, user: str) -> str:
     """Thin cheap-model completion for classification. Used by the CLI; tests
     inject a stub instead. Plain text in, text out — no tool calls.
 
     Tries the router models in order (primary, then fallback). If a model is
-    rate-limited / cooling down, falls through to the next so one provider's
-    cooldown does not brick every turn. Non-rate-limit errors propagate."""
+    rate-limited / cooling down OR its id is unknown to the proxy (a stale alias),
+    falls through to the next so one dead or throttled id does not brick every
+    turn. Malformed-request errors (which would fail identically on any id)
+    propagate."""
     import litellm  # lazy: keep the ~1s import out of startup (see module note)
     from harness import vibeproxy
     models = _router_models()
@@ -97,9 +115,9 @@ def complete(system: str, user: str) -> str:
             return resp.choices[0].message.content or ""
         except Exception as e:
             last_exc = e
-            if _is_rate_limit(e) and i < len(models) - 1:
-                logger.warning("router model %s rate-limited; falling back to %s",
-                               model, models[i + 1])
+            if _should_try_next(e) and i < len(models) - 1:
+                logger.warning("router model %s failed (%s); falling back to %s",
+                               model, type(e).__name__, models[i + 1])
                 continue
             raise
     raise last_exc        # pragma: no cover - loop always returns or raises above
