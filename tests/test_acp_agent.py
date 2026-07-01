@@ -491,3 +491,82 @@ def test_set_persona_returns_message_count(agent_default, isolated_config):
     ])
     resp2 = agent._activate_seat("default")
     assert resp2["message_count"] == 2
+
+
+def test_classify_cancel_is_not_misreported_as_router_failure(caplog):
+    """Finding 3: UserInterruption IS an Exception; the classify `except` returns
+    a 'router unavailable' refusal. A cancel during classify must resolve as
+    `cancelled`, NOT a refusal, and must NOT log a router failure."""
+    import acp
+    from minisweagent.exceptions import UserInterruption
+
+    class _CancelRouter:
+        def classify(self, *a, **k):
+            raise UserInterruption({"role": "exit", "content": "Cancelled by user.",
+                                    "extra": {"exit_status": "cancelled", "submission": ""}})
+
+    class _FakeConn:
+        def __init__(self):
+            self.updates = []
+        async def session_update(self, session_id, update, **kw):
+            self.updates.append(update)
+
+    agent = HarnessAgent(
+        model_factory=lambda *a, **k: None, agent_cfg={}, skills_dir=[],
+        router=_CancelRouter(), worker_model_id="m", backend="vibeproxy", debug=True)
+    conn = _FakeConn()
+    agent.on_connect(conn)
+    sid = agent._store.new(cwd=".", workspace_dir=None)
+
+    async def go():
+        return await agent.prompt([acp.text_block("do a thing")], sid)
+
+    with caplog.at_level("ERROR", logger="harness.acp_agent"):
+        resp = asyncio.run(go())
+
+    assert resp.stop_reason == "cancelled"       # NOT "refusal"
+    assert not any("router classify failed" in r.message for r in caplog.records), \
+        "a cancel must not be logged as a router failure"
+
+
+def test_preamble_cancel_mid_load_returns_cancelled_without_classifying(monkeypatch):
+    """A cancel that lands DURING the preamble (ESC while persona/memory load)
+    short-circuits to `cancelled` before the router is invoked. NB: prompt()
+    clears the flag at turn entry (a fresh turn starts uncancelled), so the cancel
+    must arrive after entry — here the persona resolver simulates that."""
+    import acp
+
+    calls = {"classify": 0}
+
+    class _CountingRouter:
+        def classify(self, *a, **k):
+            calls["classify"] += 1
+            raise AssertionError("router must not be called after a preamble cancel")
+
+    class _FakeConn:
+        def __init__(self):
+            self.updates = []
+        async def session_update(self, session_id, update, **kw):
+            self.updates.append(update)
+
+    agent = HarnessAgent(
+        model_factory=lambda *a, **k: None, agent_cfg={}, skills_dir=[],
+        router=_CountingRouter(), worker_model_id="m", backend="vibeproxy", debug=True)
+    conn = _FakeConn()
+    agent.on_connect(conn)
+    sid = agent._store.new(cwd=".", workspace_dir=None)
+
+    # ESC lands while persona resolves: set the flag from inside the resolver.
+    import harness.acp_agent as mod
+    real = mod.persona.resolve_persona
+    def resolve_then_cancel(workspace_dir, *a, **k):
+        agent._store.get(sid).cancel_flag.set()
+        return real(workspace_dir, *a, **k)
+    monkeypatch.setattr(mod.persona, "resolve_persona", resolve_then_cancel)
+
+    async def go():
+        return await agent.prompt([acp.text_block("do a thing")], sid)
+
+    resp = asyncio.run(go())
+    assert resp.stop_reason == "cancelled"
+    assert calls["classify"] == 0                # short-circuited before classify

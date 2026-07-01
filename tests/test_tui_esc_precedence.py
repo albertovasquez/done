@@ -197,3 +197,43 @@ def test_tab_toggles_agents_drawer_closed():
             assert isinstance(app.focused, PromptArea), "focus should return to prompt"
 
     asyncio.run(go())
+
+
+def test_esc_hides_working_spinner_immediately():
+    """The user's report: after cancel, the bottom spinner keeps spinning. ESC
+    must stop the #working LoadingIndicator AT ONCE (in action_cancel), not only
+    when the turn winds down and prompt() returns. Uses the SLOW fake-agent path
+    (0.6s pre-token gap) so the spinner is up when ESC lands."""
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.query_one("#landing-input", PromptArea).focus()
+            app.query_one("#landing-input", PromptArea).value = "SLOW hello"
+            await pilot.press("enter")
+
+            # Wait until the turn is active and the spinner is showing.
+            spinner_seen = False
+            for _ in range(60):
+                await pilot.pause()
+                if app._turn_active and app.query("#working"):
+                    spinner_seen = True
+                    break
+            assert spinner_seen, "spinner (#working) never appeared during the SLOW turn"
+
+            # ESC — the spinner must be gone right away, well before the 0.6s
+            # SLOW sleep elapses and prompt() returns.
+            await pilot.press("escape")
+            await pilot.pause()
+            assert not app.query("#working"), \
+                "ESC must hide the working spinner immediately, not wait for turn-end"
+
+            # Let the in-flight worker finish so teardown is clean, then confirm it
+            # stays cleared after the turn actually ends.
+            for _ in range(80):
+                await pilot.pause()
+                if not app._turn_active:
+                    break
+            assert not app.query("#working"), "spinner must stay cleared after turn-end"
+
+    asyncio.run(go())

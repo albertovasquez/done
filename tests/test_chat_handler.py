@@ -339,3 +339,67 @@ def test_base_block_becomes_system_message_before_persona(monkeypatch):
     assert sys_msgs, "chat path must have a system message when base_block is set"
     content = sys_msgs[0]["content"]
     assert content.index("BASEBLOCK") < content.index("PERSONA")
+
+
+def test_stalled_chat_call_is_interrupted_before_first_token(monkeypatch):
+    """A chat completion() that blocks before yielding any chunk must abort on
+    cancel_flag (Finding 1+2): the per-piece check can't reach a pre-first-token
+    stall, so run_interruptible wraps the completion() open."""
+    import threading
+    import pytest
+    from minisweagent.exceptions import UserInterruption
+
+    flag = threading.Event()
+    started = threading.Event()
+    release = threading.Event()
+
+    def fake_completion(**kwargs):
+        started.set()
+        release.wait(timeout=5)
+        return iter([_Chunk("late")])
+
+    import litellm
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+
+    def canceller():
+        started.wait(timeout=5)
+        flag.set()
+
+    threading.Thread(target=canceller, daemon=True).start()
+    gen = ChatHandler("vibeproxy").answer_stream("hi", cancel_flag=flag)
+    with pytest.raises(UserInterruption):
+        list(gen)
+    release.set()
+
+
+def test_chat_cancel_between_pieces(monkeypatch):
+    """Once tokens flow, a cancel_flag set mid-stream aborts on the next piece."""
+    import threading
+    import pytest
+    from minisweagent.exceptions import UserInterruption
+
+    flag = threading.Event()
+
+    def fake_completion(**kwargs):
+        return iter([_Chunk("a"), _Chunk("b"), _Chunk("c")])
+
+    import litellm
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+
+    out = []
+    gen = ChatHandler("vibeproxy").answer_stream("hi", cancel_flag=flag)
+    with pytest.raises(UserInterruption):
+        for piece in gen:
+            out.append(piece)
+            flag.set()             # cancel after the first piece
+    assert out == ["a"]            # stopped on the next iteration, no "b"/"c"
+
+
+def test_chat_cancel_flag_none_streams_unchanged(monkeypatch):
+    """cancel_flag=None (CLI/mock) => streaming unchanged."""
+    def fake_completion(**kwargs):
+        return iter([_Chunk("x"), _Chunk("y")])
+
+    import litellm
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+    assert list(ChatHandler("vibeproxy").answer_stream("hi")) == ["x", "y"]
