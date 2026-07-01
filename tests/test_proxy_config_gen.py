@@ -60,3 +60,33 @@ def test_alias_to_upstream_is_identity_after_alias_removal():
     assert m["qwen3.5-397b-fast"] == "qwen3.5-397b-fast"
     assert m["glm-5.2"] == "glm-5.2"
     assert m["glm-5.2-short-fast"] == "glm-5.2-short-fast"
+
+
+def test_config_drift_missing_when_no_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "config_path", lambda: tmp_path / "config.yaml")
+    assert config_gen.config_drift(env={}) == "missing"
+
+
+def test_config_drift_ok_when_file_matches_generate(tmp_path, monkeypatch):
+    cfg_path = tmp_path / "config.yaml"
+    monkeypatch.setattr(paths, "config_path", lambda: cfg_path)
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path)
+    env = {"NEURALWATT_API_KEY": "nw-123"}
+    cfg_path.write_text(config_gen.generate(env=env))
+    assert config_gen.config_drift(env=env) == "ok"
+
+
+def test_config_drift_drifted_when_key_changed(tmp_path, monkeypatch):
+    cfg_path = tmp_path / "config.yaml"
+    monkeypatch.setattr(paths, "config_path", lambda: cfg_path)
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path)
+    cfg_path.write_text(config_gen.generate(env={"NEURALWATT_API_KEY": "old-key"}))
+    assert config_gen.config_drift(env={"NEURALWATT_API_KEY": "new-key"}) == "drifted"
+
+
+def test_config_drift_drifted_when_key_removed(tmp_path, monkeypatch):
+    cfg_path = tmp_path / "config.yaml"
+    monkeypatch.setattr(paths, "config_path", lambda: cfg_path)
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path)
+    cfg_path.write_text(config_gen.generate(env={"NEURALWATT_API_KEY": "nw-123"}))
+    assert config_gen.config_drift(env={}) == "drifted"

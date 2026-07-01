@@ -43,6 +43,25 @@ def generate(port: int = 8317, *, env=None) -> str:
     return base
 
 
+def config_drift(*, env=None) -> str:
+    """Compare config.yaml on disk against what generate() would produce now.
+
+    Returns "missing" (no config.yaml yet — never installed), "drifted"
+    (config.yaml exists but differs from current generate() output — e.g.
+    NEURALWATT_API_KEY changed since the last install/upgrade), or "ok"
+    (matches). Effectively pure — generate() calls paths.data_dir(), which
+    mkdirs the data dir as a side effect (harmless, idempotent, same dir
+    install() creates anyway), but this function never writes config.yaml
+    itself and never raises on a missing file.
+    """
+    cfg_path = paths.config_path()
+    if not cfg_path.exists():
+        return "missing"
+    current = generate(env=env)
+    on_disk = cfg_path.read_text()
+    return "ok" if current == on_disk else "drifted"
+
+
 def ensure_management_password() -> str:
     p = paths.secret_path()
     if p.exists():
