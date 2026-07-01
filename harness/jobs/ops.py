@@ -48,6 +48,9 @@ def run(job_id: str, *, executor, now: float, force: bool = False) -> m.JobRun:
         store.append_run(run_rec, now=now)
         return run_rec
     error = None
+    # A self-paced (Dynamic) turn returns its chosen reschedule delay via the
+    # executor's return value; stays None on error/timeout → the loop pauses.
+    override = None
     timeout_s = job.cost.timeout_s
     t0 = time.perf_counter()
     try:
@@ -63,11 +66,11 @@ def run(job_id: str, *, executor, now: float, force: bool = False) -> m.JobRun:
             pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
             try:
                 fut = pool.submit(executor, job)
-                fut.result(timeout=timeout_s)
+                override = fut.result(timeout=timeout_s)
             finally:
                 pool.shutdown(wait=False)
         else:
-            executor(job)                # timeout disabled (timeout_s <= 0) — run inline
+            override = executor(job)     # timeout disabled (timeout_s <= 0) — run inline
         status = "ok"
     except OrphanPersona:
         raise                            # daemon.tick handles orphan — do NOT record a run
@@ -82,7 +85,9 @@ def run(job_id: str, *, executor, now: float, force: bool = False) -> m.JobRun:
     new_state = replace(job.state, last_run_at=now, last_status=status, last_error=error,
                         last_duration=elapsed,
                         consecutive_errors=consec,
-                        next_run_at=m.next_run_at(job.schedule, now, replace(job.state, last_run_at=now)),
+                        next_run_at=m.next_run_at(
+                            job.schedule, now, replace(job.state, last_run_at=now),
+                            override=override, min_cadence_s=job.cost.min_cadence_s),
                         version=job.state.version + 1)
     disable = consec >= job.cost.max_consecutive_failures
     def fn(jobs):
