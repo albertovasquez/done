@@ -4,7 +4,8 @@
 **Date:** 2026-07-01
 **Author:** Claude (with Alberto)
 **Tracks:** #226 (this work) · feeds #175 Missions (Layer C = Phase 2, gated — NOT built here)
-**Reviewed:** Codex adversarial design pass (6 defects, all folded in — §7)
+**Reviewed:** two Codex adversarial passes — Layer A (6 defects) + Layer B (5
+defects, 2 blockers); all folded in — §7
 
 ## 1. Summary
 
@@ -18,7 +19,11 @@ configured models. This spec builds the two **ungated, additive** layers:
   goal (or later, a mission) never needs the UI to pick them.
 - **Layer B — the `/goal` stop-gate engine**: an in-loop intercept that, when the
   agent tries to end its turn, runs an LLM reviewer self-check and re-prompts the
-  agent until the goal is met (bounded, with an escape hatch).
+  agent until the goal is met (bounded, with an escape hatch). Because the TUI and
+  agent are **separate processes**, the goal crosses the boundary via a
+  `SessionState` field + `set_goal`/`clear_goal` ACP ext-methods (mirroring
+  `create_job`), and the gate hooks the engine's common exit-check guarded on a
+  genuine "Submitted" status.
 
 **Explicitly out of scope → #175 Missions Phase 2 (gated):** cron-scheduled
 advancement, milestone decomposition, `validate:` assertions, checkpoint
@@ -27,15 +32,27 @@ validation gate clears.
 
 ## 2. Why this shape
 
-The engine has one clean turn-termination seam. In `tracing_agent.py`, the run
-loop (≈180–211) breaks when the last message's role is `"exit"`. A submit
-sentinel raises `Submitted` (an `InterruptAgentFlow`) in `execute_actions`, which
-is caught at the `except InterruptAgentFlow` handler (≈line 202) that appends the
-exit message. **That handler is the single intercept point.** Re-prompting is
-therefore *in-place loop continuation* — append a user message instead of the
-exit message and the existing loop steps again, feeding the full transcript back
+The engine's turn-termination convergence point is the loop's exit-check, not any
+single exception handler. In `tracing_agent.py`, the run loop (≈180–211) breaks
+when the last message's role is `"exit"` (line 209). **Multiple paths append that
+exit message** — the `InterruptAgentFlow` catch (202, covering `Submitted` /
+`LimitsExceeded` / `TimeExceeded`), a successful `create_job` inside
+`execute_actions` (287–292), a cancel at the loop top (186–190), and
+RepeatedFormatError (196–199). Hooking only line 202 (as a first draft did) would
+**miss the create_job Submitted exit** and **wrongly gate cancel/limit/error
+exits.**
+
+**The gate therefore hooks the common exit-check (line 209), guarded on
+`exit_status == "Submitted"`** — the only status that represents a genuine "I'm
+done" claim. Cancel (`cancelled`), engine hard limits (`LimitsExceeded`,
+`TimeExceeded`), and `RepeatedFormatError` are **hard-terminal** and pass through
+untouched (§4.2). This covers both real submit paths (sentinel + create_job) with
+one hook and lets everything else end the turn as it does today.
+
+Re-prompting is *in-place loop continuation* — replace the pending exit with a
+user message and the existing loop steps again, feeding the full transcript back
 to the model. No fresh `prompt()`, no new session, no thread. (Verified by an
-Explore trace of the ACP + CLI paths.)
+Explore trace + a Codex adversarial pass of the ACP + CLI paths.)
 
 Role-model resolution already has a seed: `resolve_subagent_model` in
 `subagent_config.py` reads `[agents.<id>].subagent_model` → `[subagent].model` →
@@ -160,52 +177,95 @@ class GateDecision:
     reason: str = ""
 
 def decide(*, goal: str | None, verdict: Verdict | None,
-           n_calls: int, cost: float, limits: GateLimits) -> GateDecision: ...
+           reviewer_attempts: int, limits: GateLimits) -> GateDecision: ...
 ```
 
 - No goal armed → `stop` (byte-identical no-op path).
-- Retry budget exhausted (`n_calls`/`cost` past `limits`) → `escape` (with reason).
+- `reviewer_attempts` past `limits.max_attempts` → `escape` (with reason). This
+  is the GATE's OWN budget, counted separately from the worker's `n_calls`/`cost`
+  (Codex B4) — a reviewer call never consumes the worker's step_limit.
 - `verdict.met` is True → `stop`.
 - `verdict.met` is False → `continue` (reason = why-not, for the re-prompt).
 - `verdict is None` (reviewer call failed) → `escape` (fail-safe: never loop on a
   broken reviewer).
 
-`Verdict` is `{met: bool, reason: str}` — produced by the ENGINE, not the gate.
+`Verdict` is `{met: bool, reason: str}` — produced by the reviewer client (§4.5),
+not the gate. The gate is pure policy over the verdict + its own attempt count.
 
-### 4.2 Engine wiring (`tracing_agent.py`, the `InterruptAgentFlow` catch)
+### 4.2 Engine wiring (`tracing_agent.py`, at the line-209 exit-check)
 
-When the agent tries to exit:
+The gate runs at the loop's exit-check (line 209), NOT the line-202 catch, so it
+sees every exit path (Codex BLOCKER 2). When `self.messages[-1]["role"] ==
+"exit"`:
 
-1. Read the armed goal from goal state (§4.3). None → append exit message, break
-   (the existing behavior — **byte-identical no-op invariant**).
-2. Goal armed → run ONE reviewer self-check: an LLM call using the **reviewer**
-   role model (Layer A) — "Given the transcript, is this goal satisfied? Answer
-   met=yes/no + one-line why." → `Verdict`.
-3. `GoalGate.decide(...)`:
-   - `stop` → append the exit message, break, **clear the goal**.
-   - `continue` → append `{"role": "user", "content": "Keep working toward the
-     goal: <goal>. Not yet met: <why>."}` and DO NOT append the exit → loop
-     continues, next step uses the worker/orchestrator role model.
-   - `escape` → append exit + a surfaced note (`"goal not met after N attempts:
-     <why>"`), break. Never trap the turn.
-4. `cancel_flag`/ESC is honored exactly as today (checked at loop top, ≈line
-   186) — a user cancel always ends the turn, goal or not.
+1. If `exit_status != "Submitted"` → break unchanged. Cancel, `LimitsExceeded`,
+   `TimeExceeded`, `RepeatedFormatError` are **hard-terminal and always win**
+   (Codex MAJOR 4) — the goal never suppresses them.
+2. If no goal armed (goal ctx is None) → break unchanged (**byte-identical no-op
+   invariant** — the whole hook is skipped when the turn wasn't launched with a
+   goal).
+3. Goal armed + `exit_status == "Submitted"` → run ONE reviewer self-check via a
+   **separate one-shot completion** (§4.5, NOT `TracingAgent.query()`) using the
+   **reviewer** role model (Layer A) → `Verdict{met, reason}`.
+4. `GoalGate.decide(...)`:
+   - `stop` → leave the exit message, break, **clear the goal** (via the goal ctx
+     callback so the session sees it cleared).
+   - `continue` → **remove/replace the pending exit** with `{"role": "user",
+     "content": "Keep working toward the goal: <goal>. Not yet met: <why>."}` so
+     `messages[-1]["role"]` is no longer `"exit"` → loop continues; the next
+     worker `query()` uses the worker/orchestrator role model.
+   - `escape` → leave the exit + append a surfaced note (`"goal not met after N
+     attempts: <why>"`), break. Never trap the turn.
+5. Reviewer attempts + cost are tracked in the **goal ctx, separate from the
+   worker's `n_calls`/`cost`** (Codex MAJOR 4) — a reviewer call must not consume
+   the worker's step_limit.
+6. `cancel_flag`/ESC honored exactly as today (loop top, line 186) → yields
+   `exit_status == "cancelled"` → step 1 passes it through, and the goal is
+   **cleared on cancel** (§4.4, Codex MAJOR 5).
 
-### 4.3 Goal state
+### 4.3 Goal reaches the engine across the process boundary (Codex BLOCKER 1)
 
-Session-scoped store — a small `goal_state.py`, mirroring `prompt_state.py`
-(get/set/clear the active goal + its retry budget for the session). The
-durable-file layer is a **seam** Layer C fills later; this spec does not persist
-to disk. Goal is set by the `/goal` command (§4.4).
+The TUI and the agent are **separate OS processes**; a TUI slash command cannot
+write into the agent's in-process state. So (mirroring `create_job`, #159, which
+crosses the same boundary via an ext-method):
+
+- **`SessionState.goal`** — a new field on `harness/acp_session.py:SessionState`
+  (`goal: GoalContext | None`), holding the goal text, retry budget, reviewer
+  attempts/cost, and the reviewer role model resolved for this session.
+- **`harness/set_goal` / `harness/clear_goal` ext-methods** — added to the
+  `HarnessAgent.ext_method` switch (`acp_agent.py`, alongside `harness/create_job`
+  et al.). `/goal <text>` in the TUI calls `harness/set_goal`; `/goal clear` calls
+  `harness/clear_goal`.
+- **`TracingAgent` gets an explicit goal context** at construction
+  (`acp_agent.py` where it's built with `cancel_flag`) — the gate reads the goal +
+  reviewer-model from this context, never from a global. When the session has no
+  goal, the context is `None` and the hook is a no-op (§4.2 step 2).
+- The CLI path (`run_traced.py`) constructs `TracingAgent` with goal context
+  `None` — `/goal` is a TUI feature; the engine hook degrades to no-op there.
 
 ### 4.4 `/goal` surface
 
 - A `/goal` slash command (`harness/tui/commands.py`, per the #225 pattern):
-  - `/goal <text>` → arm the goal (store the text), notify the user it's active,
-    and seed the first turn (via `_seed_prompt`, added in #225) so work starts.
-  - bare `/goal` → show the active goal + how to clear it (`/goal clear`).
-  - `/goal clear` → disarm.
-- The gate reads the armed goal from goal state; no per-turn UI.
+  - `/goal <text>` → call `harness/set_goal`, notify the user it's active, and
+    seed the first turn (via `_seed_prompt`, #225) so work starts.
+  - bare `/goal` → show the active goal + `/goal clear` hint.
+  - `/goal clear` → call `harness/clear_goal`.
+- **Cancel clears the goal** (Codex MAJOR 5): ESC/cancel disarms the goal so it
+  cannot hijack an unrelated next turn. Re-arming is an explicit new `/goal`.
+
+### 4.5 The reviewer client (Codex MAJOR 3)
+
+The reviewer is a **separate one-shot LiteLLM completion with NO tools and NO
+sentinel path** — it must NOT reuse `TracingAgent.query()` (which increments
+`n_calls`, mutates `self.messages`) or `StreamingLitellmModel` (which always
+advertises tool schemas — upstream `actions_toolcall.py` raises `FormatError`
+when the model returns prose instead of a tool call, which the reviewer
+correctly does). It follows the existing direct-LiteLLM pattern in
+`harness/tools/review.py` (`litellm.completion(model=reviewer_model,
+messages=[{"role":"user","content": <prompt>}], **vibeproxy.completion_kwargs())`).
+The prompt asks for a single `met: yes|no` + one-line reason; parse leniently
+(default to `met=no` if unparseable — err toward keeping the agent working, but
+the retry cap in §4.1 bounds it).
 
 ## 5. Component boundaries (each independently testable)
 
@@ -216,9 +276,11 @@ to disk. Goal is set by the `/goal` command (§4.4).
 | `first_available(...)` | PURE probe over candidates | a probe callable |
 | `config._serialize` (fixed) | round-trip incl. nested agent tables | raw prior config |
 | `GoalGate.decide(...)` | PURE stop/continue/escape policy | nothing |
-| engine hook (tracing_agent) | run reviewer call, act on decision | GoalGate, Layer A, goal_state |
-| `goal_state` | session goal store | nothing (in-memory) |
-| `/goal` command | arm/show/clear + seed | goal_state, app._seed_prompt |
+| reviewer client | one-shot no-tools LiteLLM met/why call | litellm, reviewer model |
+| engine hook (tracing_agent) | at line-209, act on decision | GoalGate, reviewer client, goal ctx |
+| `GoalContext` (on SessionState) | goal text + budget + reviewer model + attempts | nothing (per-session) |
+| `set_goal`/`clear_goal` ext-methods | cross-process arm/disarm | SessionState |
+| `/goal` command | arm/show/clear + seed (calls ext-methods) | app._seed_prompt, ext-methods |
 
 ## 6. Data flow (one goal lifecycle)
 
@@ -247,17 +309,32 @@ to disk. Goal is set by the `/goal` command (§4.4).
 Dropped (correctly, per Codex): nested TOML is valid; `null` model rejected by
 tomllib; order-preserving dedup after filtering is sound.
 
+**Layer B — second Codex pass (the engine hook, previously unreviewed):**
+
+| # | Sev | Finding | Where fixed |
+|---|---|---|---|
+| B1 | blocker | goal state has no cross-process path to the engine (TUI ≠ agent process) | §4.3 SessionState.goal + set_goal/clear_goal ext-methods + explicit goal ctx into TracingAgent |
+| B2 | blocker | line-202 hook misses create_job + RepeatedFormatError terminal exits | §2/§4.2 hook line-209 guarded on `exit_status=="Submitted"` |
+| B3 | major | reviewer via `query()`/streaming model corrupts loop or raises FormatError (no tool call) | §4.5 separate one-shot no-tools LiteLLM client (review.py pattern) |
+| B4 | major | engine hard-limits (LimitsExceeded/TimeExceeded) obscured/replayed by gate | §4.2 hard-terminal statuses always win; reviewer budget separate from worker n_calls |
+| B5 | major | cancel leaves stale armed goal that hijacks the next turn | §4.4 cancel clears the goal |
+
+Layer A: the second pass found NO new Layer A defect and confirmed §3.2–§3.6
+correctly fold the original six. No sandbox false-positives in either pass.
+
 ## 8. Error handling
 
 | Situation | Behavior |
 |---|---|
-| No goal armed | no-op, byte-identical to today |
+| No goal armed (goal ctx None) | no-op, byte-identical to today |
+| Non-Submitted exit (cancel/limits/format) | passes through untouched — hard-terminal, goal never suppresses |
 | Reviewer LLM call fails | `verdict=None` → `escape` (stop + surface); never loop |
-| Retry budget exhausted | `escape` with reason |
-| ESC / cancel mid-goal | cancel wins, turn ends (goal left armed for next turn) |
+| Retry budget exhausted | `escape` with reason; reviewer budget tracked separate from worker n_calls |
+| ESC / cancel mid-goal | cancel wins, turn ends, **goal cleared** (no next-turn hijack) |
 | Malformed role config | skipped, falls through to `parent_model` |
 | Write with roles present | round-trips (writer fixed) |
 | Legacy subagent config, no roles | `resolve_subagent_model` byte-identical |
+| create_job completion with goal armed | seen by the gate (line-209 hook), reviewed like any Submitted |
 
 ## 9. Testing
 
@@ -275,13 +352,23 @@ tomllib; order-preserving dedup after filtering is sound.
   `roles.fallback` table.
 
 **Layer B:**
-- `GoalGate.decide`: no-goal→stop; met→stop; unmet→continue(reason);
+- `GoalGate.decide` (pure): no-goal→stop; met→stop; unmet→continue(reason);
   verdict-None→escape; budget-exhausted→escape.
-- engine hook: no-goal path byte-identical no-op; unmet→loop continues (asserts
-  no exit message appended, a user message appended); met→exit + goal cleared;
-  reviewer-failure→escape; ESC escapes regardless of goal.
-- `/goal` command: arm/show/clear; bare `/goal` shows active; seeds via
-  `_seed_prompt`.
+- reviewer client: builds a no-tools `litellm.completion` call; parses
+  `met yes/no`; unparseable→met=no; is NOT `TracingAgent.query` (asserts no
+  `n_calls` mutation).
+- engine hook (line-209): no-goal ctx → byte-identical no-op (exit unchanged);
+  non-Submitted exit_status (cancelled/LimitsExceeded/TimeExceeded/
+  RepeatedFormatError) → passes through even with a goal armed (B2/B4);
+  Submitted+unmet → loop continues (asserts last message flipped from exit to a
+  user message); Submitted+met → exit kept + goal cleared; reviewer-failure→
+  escape; retry-cap→escape; reviewer budget separate from worker n_calls.
+- create_job exit with goal armed → reviewed (not bypassed) (B2).
+- cross-process: `harness/set_goal`/`harness/clear_goal` ext-methods set/clear
+  `SessionState.goal`; `TracingAgent` built with goal ctx None → no-op (B1).
+- cancel clears the goal → a following unrelated turn is NOT gated (B5).
+- `/goal` command: arm (calls set_goal)/show/clear (calls clear_goal); bare
+  `/goal` shows active; seeds via `_seed_prompt`.
 
 Run: `.venv/bin/python -m pytest tests/ -q`.
 
