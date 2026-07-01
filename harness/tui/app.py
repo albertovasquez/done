@@ -42,8 +42,8 @@ from harness.tui.state import (
     initial_snapshot, reduce, TurnStarted, TurnEnded, ItemReceived,
     TokensUpdated, DecisionOpened, decision_from_meta,
     PersonaResolved, persona_from_meta, AgentState,
-    strip_done_sentinel_prose,
 )
+from harness.tui.stream_painter import StreamPainter
 from harness.tui.theme import HARNESS_THEME, COLORS
 from harness.tui.widgets.activity_region import ActivityRegion
 from harness.tui.widgets.permission_modal import PermissionModal
@@ -92,6 +92,35 @@ def extract_agent_trace(tracer, update) -> None:
             tracer.emit("agent", tr["type"], **(tr.get("data") or {}))
 
 
+class _TranscriptViewAdapter:
+    """Adapts the live TUI to the StreamPainter's TranscriptView seam. Holds the
+    app (not the transcript) so #transcript resolves lazily at call time — the
+    painter is constructed in __init__, before widgets are mounted. Scheduling
+    delegates to the App's message pump, never the answer widget, so the paint
+    timer shares the App's lifecycle (ADR-0001)."""
+
+    def __init__(self, app: "HarnessTui") -> None:
+        self._app = app
+
+    def children(self) -> list:
+        return list(self._app._transcript.children)
+
+    def mount(self, widget) -> None:
+        self._app._append(widget)
+
+    def mount_before_footer(self, widget) -> None:
+        self._app._append_streaming_below_footer(widget)
+
+    def after_refresh(self, fn, *args) -> None:
+        self._app.call_after_refresh(fn, *args)
+
+    def schedule(self, fn, interval):
+        return self._app.set_interval(interval, fn)
+
+    def hide_working(self) -> None:
+        self._app._hide_working()
+
+
 class HarnessTui(App):
     CSS_PATH = "app.tcss"  # relative to this module's dir (harness/tui/)
     BINDINGS = [("escape", "cancel", "Cancel turn"),
@@ -134,12 +163,10 @@ class HarnessTui(App):
         self._pending_perm = None             # the in-flight permission Future, if any
         self._started = False                 # have we left the landing state?
         self._turn_start = 0.0                # monotonic at send, for elapsed meta
-        self._streaming_md = None             # the live Markdown widget for the current answer, else None
-        self._stream_buf = ""                 # accumulated text for _streaming_md
-        self._stream_dirty = False            # buffer changed since last paint
-        self._stream_timer = None             # Textual Timer while a stream is open
-        self._stream_closed = True            # True => the next message delta starts a fresh widget
-        self._boundary_after = False          # True => an in-turn boundary (tool/thought/stream_reset) closed the block; next prose opens a FRESH widget (vs. a late delta of the prior answer, which extends in place)
+        # Streaming render lives in a dedicated deep module (see ADR-0001): the App
+        # feeds it deltas/boundaries and never touches stream-widget state directly.
+        # The adapter resolves #transcript lazily (widgets aren't mounted yet here).
+        self._painter = StreamPainter(_TranscriptViewAdapter(self))
         self._tokens = 0                      # last-known token count from usage updates
         self._compacted: dict | None = None   # context.compacted event for the current turn, if any
         self._persona_seen = False            # True after the first real PersonaResolved lands
@@ -354,8 +381,9 @@ class HarnessTui(App):
                 self.log(f"reapply_model failed ({self._worker_model_id!r}): {e!r}")
 
     async def on_event(self, event: events.Event) -> None:
-        # Streaming repaints the answer widget at 12Hz (_flush_stream → Markdown.
-        # update), which removes and remounts its children on every flush. A mouse
+        # Streaming repaints the answer widget at 12Hz (StreamPainter flush →
+        # Markdown.update), which removes and remounts its children on every flush.
+        # A mouse
         # event landing in that window can resolve to a child that's mid-remount,
         # and Textual's own Screen._forward_event dereferences it unguarded —
         # crashing the whole app on what should be a harmless stray click. Treat
@@ -1074,14 +1102,10 @@ class HarnessTui(App):
         the persona switch) — unlike async _reset_conversation."""
         if self._started:
             self._transcript.remove_children()
-        # R2: stop the flusher and clear dirty BEFORE nulling the widget so a
-        # stale flush can't fire (or paint into) a reset/replaced stream.
-        self._stop_stream_timer()
-        self._stream_dirty = False
-        self._streaming_md = None
-        self._stream_buf = ""
-        self._stream_closed = True
-        self._boundary_after = False
+        # Reset stream-accumulation state so no late delta bleeds into a fresh
+        # view (the painter stops its flusher and clears dirty before nulling the
+        # widget, so a stale flush can't paint into a reset stream).
+        self._painter.reset()
 
     async def _reset_conversation(self) -> None:
         """Empty the transcript and reset per-conversation state WITHOUT leaving
@@ -1161,22 +1185,17 @@ class HarnessTui(App):
         next prose is a genuinely NEW step that must open its own widget. The
         default (`boundary=False`) is the turn-end / new-user-turn close, after
         which a trailing late delta of the just-closed answer extends it in
-        place. `_stream_message` keys on `_boundary_after` to tell the two
-        apart."""
-        self._stream_closed = True
-        self._flush_stream()          # R1: paint any unpainted tail before close
-        self._stop_stream_timer()     # R2: no free-running timer between turns
-        if boundary:
-            self._boundary_after = True
+        place. The painter keys on its boundary flag to tell the two apart."""
+        self._painter.end(boundary=boundary)
 
     def _add_user_message(self, text: str) -> None:
         # A new user turn: close the prior answer's stream first so its widget is
         # finalized and any late delta lands in it, not under this message. This
-        # is NOT an in-turn boundary — clear _boundary_after so a trailing late
+        # is NOT an in-turn boundary — clear the boundary flag so a trailing late
         # delta of the prior answer extends its widget rather than opening a new
         # block under this prompt.
-        self._end_stream()
-        self._boundary_after = False
+        self._painter.end()
+        self._painter.clear_boundary()
         # accent bar glyph + bold text (the bordered-box look, inline).
         self._append_line(f"{_c('accent', '▌')} [b]{self._escape(text)}[/b]")
         # Submitting is a deliberate action: snap to the bottom (and re-engage the
@@ -1358,105 +1377,36 @@ class HarnessTui(App):
     # ---- streaming session updates → themed transcript ----
 
     def _stream_message(self, text: str) -> None:
-        """Accumulate an agent message delta into a single live Markdown widget.
+        """Feed an agent message delta to the painter, which decides whether it
+        opens a fresh block or extends an existing one (see StreamPainter)."""
+        self._painter.delta(text)
 
-        Routing distinguishes three cases for a delta that arrives after the
-        stream was closed:
-          - a NEW answer (its first delta) opens a fresh widget at the bottom;
-          - a NEW agent STEP within the same turn (after a tool call / thought /
-            explicit stream_reset) opens its own fresh widget — so multi-step
-            narration does not merge into the previous step's block;
-          - a LATE delta for the just-finished answer (notification lag, after a
-            NEW USER turn began) extends that prior widget in place — never a
-            stray block under the next prompt.
-        The new-step and late-delta cases have IDENTICAL positional signals
-        (prior widget closed and no longer last), so position alone cannot
-        separate them. We use the `_boundary_after` flag instead: set by
-        `_end_stream(boundary=True)` on an in-turn boundary, cleared by
-        `_add_user_message` (a new user turn) and `_reset_conversation`. Flag set
-        ⇒ new step (fresh widget); flag clear with a closed prior ⇒ late delta
-        (extend in place).
+    # ---- compat shims: existing pilot tests read these stream fields directly.
+    # The painter is now the owner; these forward to it (read-only). ----
 
-        Markdown.update() is a no-op until the widget is mounted, so the render is
-        scheduled via call_after_refresh — by the next refresh the mount has
-        completed and the accumulated buffer renders."""
-        kids = list(self._transcript.children)
-        prior_is_last = self._streaming_md is not None and kids and kids[-1] is self._streaming_md
-        # An IN-TURN boundary (tool line / thought / explicit stream_reset) closed
-        # the prior block while the agent keeps producing this turn, so the next
-        # prose is a genuinely NEW step that must open its own widget — NOT a late
-        # delta of the just-closed answer. `_boundary_after` is set by
-        # _end_stream(boundary=True) and cleared by _add_user_message (a new user
-        # turn is the late-delta case, where the prior widget extends in place).
-        boundary_after = self._boundary_after and self._streaming_md is not None
+    @property
+    def _streaming_md(self):
+        return self._painter.widget
 
-        opened_new = False
-        if self._stream_closed and self._streaming_md is not None \
-                and not prior_is_last and not boundary_after:
-            # late delta for the just-closed answer → extend its widget in place;
-            # the stream stays CLOSED (this delta does not begin a new answer).
-            pass
-        elif self._streaming_md is None or self._stream_closed:
-            # new answer / new in-turn step → fresh widget at the bottom; stream
-            # is now OPEN and the boundary has been consumed.
-            self._hide_working()
-            self._streaming_md = Markdown("")
-            # Late-delivery ordering: prompt() can return (mounting THIS turn's
-            # footer) before the trailing message deltas arrive. If the run-caption
-            # footer is already the last child, mount the answer ABOVE it so the
-            # '… (copy)' caption stays BELOW the prose — otherwise the answer lands
-            # under the footer (footer-above-answer bug).
-            self._append_streaming_below_footer(self._streaming_md)
-            self._stream_buf = ""
-            self._stream_closed = False
-            self._boundary_after = False
-            opened_new = True
-        # else: stream already open → keep extending it.
-        self._stream_buf += text
-        self._stream_dirty = True
-        if self._stream_closed or opened_new:
-            # R1: a late delta after close cannot rely on the interval (stopped on
-            # close) → flush SYNC. opened_new: the first chunk of a new answer must
-            # paint immediately, not wait up to 80ms for the timer (avoids a
-            # post-_hide_working blank flicker). Subsequent open-stream chunks
-            # coalesce on the timer.
-            self._flush_stream()
-            if not self._stream_closed:
-                self._ensure_stream_timer()   # arm for the chunks that follow
-        else:
-            self._ensure_stream_timer()
-        # No explicit scroll here: the anchored transcript (see _enter_conversation)
-        # follows the stream to the bottom while the user is there, and holds
-        # position once they scroll up to read earlier content.
+    @property
+    def _stream_buf(self) -> str:
+        return self._painter.buf
 
-    def _ensure_stream_timer(self) -> None:
-        # R2: start a 12Hz flusher on stream-open; it is stopped on close/reset.
-        if self._stream_timer is None:
-            self._stream_timer = self.set_interval(1 / 12, self._flush_stream)
+    @property
+    def _stream_closed(self) -> bool:
+        return self._painter.closed
 
-    def _stop_stream_timer(self) -> None:
-        if self._stream_timer is not None:
-            self._stream_timer.stop()
-            self._stream_timer = None
+    @property
+    def _stream_dirty(self) -> bool:
+        return self._painter.dirty
 
-    def _flush_stream(self) -> None:
-        # R2/R3: no-op when nothing to paint or the widget is gone (teardown);
-        # capture the CURRENT widget+buffer so a flush can't paint a stale buffer
-        # into a new widget after a reset.
-        if not self._stream_dirty or self._streaming_md is None:
-            return
-        md, buf = self._streaming_md, self._stream_buf
-        self._stream_dirty = False
-        # Drop the turn-end sentinel if a model typed it into its prose (the
-        # tool-row guard _is_done_sentinel never sees a typed line). Stripping the
-        # WHOLE buffer here — not the raw _stream_buf accumulator — keeps the
-        # rendered widget clean (which is also what the (copy) affordance reads,
-        # see _copy_turn_response) while leaving the accumulator untouched so a
-        # sentinel split across chunks is matched once fully assembled.
-        buf = strip_done_sentinel_prose(buf)
-        # R4: md.update is a no-op until the widget mounts; call_after_refresh
-        # guarantees the FIRST paint lands post-mount, matching prior behavior.
-        self.call_after_refresh(md.update, buf)
+    @property
+    def _boundary_after(self) -> bool:
+        return self._painter.boundary_pending
+
+    @property
+    def _stream_timer(self):
+        return self._painter.timer
 
     def on_session_update(self, msg: SessionUpdate) -> None:
         if not self._started:
