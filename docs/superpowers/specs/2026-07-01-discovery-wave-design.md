@@ -220,7 +220,11 @@ and is not reusable.
 `subagent` tool (no `Workflow` engine exists in the harness). The `discovery-wave`
 skill encodes the protocol; caps are prompt-enforced; token budget deferred. See
 `docs/superpowers/plans/2026-07-01-discovery-wave.md`. Graduation to a richer
-form (a) remains available since the skill is already flow-tagged.
+form (a) remains available since the skill is already flow-tagged. Note this
+ships as a flow-tagged skill (structurally form (a)) with form (c)'s enforcement
+semantics: read-only is mechanically enforced (default worker toolset), while the
+caps remain prompt-enforced — a much smaller honor-system surface than the
+original §5 concern about gate-less reuse.
 
 ## 6. Out of scope
 

@@ -1,6 +1,6 @@
 ---
 name: discovery-wave
-description: Fan out parallel read-only discovery then divergent approach-generation at the front of brainstorming. Use when a planning task is broad enough that a single linear exploration pass would miss prior art, constraints, or non-obvious solution approaches — BEFORE writing a spec. Bounded and read-only by design.
+description: Fan out parallel read-only discovery then divergent approach-generation at the front of brainstorming. Use when a planning task is broad enough that a single linear exploration pass would miss prior art, constraints, or non-obvious solution approaches — BEFORE writing a spec. Read-only by design; bounded by protocol caps the orchestrator honors.
 flows: discovery
 ---
 
@@ -25,26 +25,31 @@ is the load-bearing step, not optional QA.
    prior-art-in-this-codebase, constraints, external research). If it needs more
    than 8, the goal is too broad — narrow scope or pick the top 8 by design
    relevance and state which you deferred.
-2. **Fan out finders** in ONE `subagent` call, one task per slice. Do NOT pass a
-   `tools` field — the default `{read, bash}` toolset is read-only and is enforced
-   in code (a finder cannot write). Each finder's task `context` must instruct it
+2. **Fan out finders** in ONE `subagent` call, one task per slice.
+   Do NOT pass a `tools` field — the default `{read, bash}` toolset is read-only
+   and is enforced in code (a finder cannot write). Each finder's task `context`
+   must instruct it
    to return, for every claim: a tag `will-shape-design | context-only`, a
    confidence `high|med|low`, and a citation (`file:line`, URL, or metric) — or
    drop the claim.
 3. **Read the digest.** Merge the handoffs.
 4. **Verify (adversarial, default-on).** Only `will-shape-design` claims are
    verified. Batch them by slice/file into a SECOND `subagent` call of ≤ 8
-   verifier tasks (default read-only toolset). Each verifier is told to *refute*:
+   verifier tasks (default read-only toolset — do NOT pass a `tools` field). Each
+   verifier is told to *refute*:
    confirm the citation says what the claim says, and default to `unverified`
    when it cannot. A verifier must state what it checked (the file:line re-read /
    command re-run); a bare "verified" with no trail is treated as `unverified`.
    - **Absence/negative claims** ("X does not already exist") may be marked
      `verified` ONLY if the verifier states its search scope (terms, paths,
-     synonyms). Otherwise `unverified`.
+     synonyms) AND that scope is broad enough to be credible — it must cover
+     likely synonyms and alternate names, not one literal term. A too-narrow
+     scope is downgraded to `unverified`. Otherwise `unverified`.
    - `context-only` claims are NOT verified but are labeled `unverified` in the
      brief so they can't silently become assumptions.
 5. **Extend (bounded).** Fire AT MOST ONE narrow re-wave (≤ 3 finders + ≤ 3
-   verifiers) and only for: (A) a coverage gap (empty slice / unanswered
+   verifiers; same read-only rule: no `tools` field) and only for: (A) a coverage
+   gap (empty slice / unanswered
    design-shaping question), or (B) a refuted/contested design-shaping claim.
    Hard cap: 2 discovery waves total. Everything else is flagged `unverified` in
    the brief as an explicit design risk.
@@ -57,8 +62,10 @@ or explicitly `unverified/contested`.
 The `will-shape-design | context-only` tag is a guess made before the design
 exists. RULE: any claim you cite in a derived approach frame or in the final spec
 MUST be `verified`. If it was `context-only`, pull it back through a verifier
-(counts against the caps) before it shapes the design. Keep a claim→spec trace so
-every spec assumption resolves to a verified brief entry.
+(a single targeted verifier, exempt from the re-wave depth cap; if that
+verification cannot be run, the claim stays `unverified` and MUST NOT enter the
+spec) before it shapes the design. Keep a claim→spec trace so every spec
+assumption resolves to a verified brief entry.
 
 ## Wave 2 — Approach (creativity)
 
@@ -68,8 +75,8 @@ every spec assumption resolves to a verified brief entry.
    wasted wave. If the brief yields no tension, fall back to fixed lenses:
    MVP-first, risk-first, reuse-first, greenfield.
 7. **Fan out generators** in ONE `subagent` call, ≤ 4 tasks, one per tension-pole
-   (default read-only toolset — generators propose, they do not write code). Each
-   is blind to the others (isolation → divergence).
+   (default read-only toolset — do NOT pass a `tools` field; generators propose,
+   they do not write code). Each is blind to the others (isolation → divergence).
 8. **Synthesize** the returns into the 2–3 options brainstorming expects, then
    hand back to the normal `present design → write spec → writing-plans` flow.
 
@@ -81,9 +88,11 @@ whole wave can't run (tool errors), fall back to linear brainstorming AND stamp
 the resulting brief `unverified — degraded mode` so no fact from it is trusted
 downstream.
 
-## Caps (stated so they're checkable)
+## Protocol caps (soft — prompt-enforced)
 
 ≤ 8 finders, ≤ 8 verifiers per wave; ≤ 3 + 3 for the single re-wave; ≤ 4
 generators. Global concurrency is bounded by `[subagent].max_concurrent` (done.conf).
 A per-run *token* budget is future work — not enforced yet; per-worker wall-time
-still applies.
+still applies. These are protocol caps the orchestrator must honor; only global
+concurrency is code-enforced, so treat them as discipline, not a hard runtime
+ceiling.
