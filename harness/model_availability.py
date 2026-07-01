@@ -36,7 +36,7 @@ def resolve_or_warn(configured_model, statuses):
     """Return (model, warning|None). Never substitutes: returns the configured
     model verbatim; if it isn't an available bind_id, returns a warning string."""
     for s in statuses:
-        if s.bind_id == configured_model and s.status == "available":
+        if s.status == "available" and s.bind_id is not None and model_ids.matches(s.bind_id, configured_model):
             return configured_model, None
     warning = (f"Configured model '{configured_model}' is not available from the "
                f"proxy right now — it may need login or a proxy config refresh.")

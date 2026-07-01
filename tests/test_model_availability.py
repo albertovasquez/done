@@ -45,3 +45,16 @@ def test_resolve_or_warn_warns_never_swaps():
     model, warning = av.resolve_or_warn("glm", out)
     assert model == "glm"              # NEVER substituted
     assert warning and "glm" in warning
+
+
+def test_resolve_or_warn_matches_dated_proxy_id_no_warning():
+    # proxy serves the DATED id; catalog + config use the bare id
+    out = av.reconcile(_CATALOG, proxy_ids=["claude-opus-4-8-20251115"],
+                       keys_present={"neuralwatt": False, "anthropic": True})
+    # available bind_id is the dated proxy id
+    s = next(st for st in out if st.display_name == "Claude Opus 4.8")
+    assert s.status == "available"
+    # configured with the BARE id must still resolve WITHOUT a warning (canonical match)
+    model, warning = av.resolve_or_warn("claude-opus-4-8", out)
+    assert model == "claude-opus-4-8"
+    assert warning is None
