@@ -993,19 +993,32 @@ class HarnessTui(App):
         if self.model != "vibeproxy":
             self._notify_line("model selection requires launching with --model vibeproxy")
             return
+        # Best-effort: a down/empty proxy must NOT empty the picker — the static
+        # catalog still renders every supported model as login_needed/stale_config
+        # so the user can see what's available and how to reach it. Only the
+        # reconciled list being empty (catalog itself empty) is a dead end.
         try:
-            models = await self._fetch_models()
-        except Exception as e:
-            self._notify_line(f"could not fetch models: {e}")
+            proxy_ids = await self._fetch_models()            # live proxy id list
+        except Exception:
+            proxy_ids = []                                    # proxy unreachable → catalog only
+        from harness import model_catalog, model_keys, model_availability
+        from harness.tui.model_picker import build_picker_rows
+        from harness.proxy_service import management, config_gen
+        try:
+            pw = config_gen.ensure_management_password()
+            auth = management._get("get-auth-status", pw).json()
+        except Exception:
+            auth = {}
+        keys = model_keys.keys_present(auth_status=auth, environ=os.environ)
+        statuses = model_availability.reconcile(model_catalog.providers(), proxy_ids, keys)
+        options = build_picker_rows(statuses)
+        if not options:
+            self._notify_line("no models available (catalog empty)")
             return
-        if not models:
-            self._notify_line("no models returned by the provider")
-            return
-        options = [SelectOption(id=m, label=self._pretty_model(m)) for m in models]
         current = self._worker_model_id
 
         def _picked(choice) -> None:
-            if choice:
+            if choice:                    # empty id = header/disabled row; ignore
                 self.run_worker(self._apply_model(choice), thread=False)
 
         self.push_screen(
@@ -1026,18 +1039,6 @@ class HarnessTui(App):
 
         import asyncio as _asyncio
         return await _asyncio.get_running_loop().run_in_executor(None, _get)
-
-    @staticmethod
-    def _pretty_model(model_id: str) -> str:
-        # For a NeuralWatt alias (glm/qwen/glm-fast), show the full upstream model
-        # name next to it so it's clear exactly which model the alias points at —
-        # the proxy's /v1/models only exposes the short alias.
-        try:
-            from harness.proxy_service import config_gen
-            full = config_gen.alias_to_upstream().get(model_id)
-        except Exception:
-            full = None
-        return f"{model_id} — {full}" if full and full != model_id else model_id
 
     async def _apply_model(self, model_id: str) -> None:
         # hot-swap on the agent for subsequent turns (no restart)

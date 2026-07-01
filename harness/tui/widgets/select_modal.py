@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from rich.markup import escape as _escape_markup
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -27,6 +28,8 @@ from textual.widgets import Input, Label, ListItem, ListView, Static
 class SelectOption:
     id: str
     label: str
+    group: str | None = None      # provider header this row belongs under
+    disabled: bool = False        # non-selectable (header, or login_needed/stale_config)
 
 
 class SelectModal(ModalScreen):
@@ -78,17 +81,24 @@ class SelectModal(ModalScreen):
 
     def _row_markup(self, opt: SelectOption) -> str:
         marker = "●" if opt.id == self._current else " "
+        if opt.disabled:
+            return f"[$muted]{marker} {_escape_markup(opt.label)}[/]"
         return f"{marker} {opt.label}"
 
     def _populate(self, options: list[SelectOption]) -> None:
         lv = self.query_one("#select-list", ListView)
         lv.clear()
         for opt in options:
-            item = ListItem(Label(self._row_markup(opt), markup=False))
+            item = ListItem(Label(self._row_markup(opt), markup=opt.disabled))
             item.data = opt.id            # carry the id for selection
+            if opt.disabled:
+                item.disabled = True      # ListView skips disabled rows on highlight/enter
             lv.append(item)
-        # highlight the current value if present, else the first row
-        idx = next((i for i, o in enumerate(options) if o.id == self._current), 0)
+        # highlight the current value if present, else the first selectable row
+        idx = next((i for i, o in enumerate(options)
+                    if o.id == self._current and not o.disabled), None)
+        if idx is None:
+            idx = next((i for i, o in enumerate(options) if not o.disabled), 0)
         if options:
             lv.index = idx
 
