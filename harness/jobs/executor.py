@@ -130,12 +130,11 @@ def _default_deps() -> Deps:
     import yaml
     import os
 
-    # run_traced.py:43 — _load_agent_config()
-    _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-    _mini_yaml = _REPO_ROOT / "upstream" / "src" / "minisweagent" / "config" / "mini.yaml"
-
+    # run_traced.py:43 — _load_agent_config(). Resolve mini.yaml via find_spec
+    # (install-layout agnostic) rather than a hardcoded upstream/ disk path,
+    # which does not exist in a wheel install (#104).
     def _load_agent_cfg() -> dict:
-        cfg = yaml.safe_load(_mini_yaml.read_text())
+        cfg = yaml.safe_load(_paths.mini_yaml_path().read_text())
         return cfg["agent"]
 
     def compose(ws: Path) -> tuple[str, str, Path]:
