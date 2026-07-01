@@ -145,6 +145,31 @@ class HarnessAgent(acp.Agent):
                                      self._persona_key())
                     ok = False
             return {"ok": ok, "model": self._worker_model_id}
+        if method == "harness/set_goal":
+            # Arm the /goal stop-gate on the active session's state (read by the
+            # engine gate each turn). Resolve the session via the seat, exactly as
+            # set_model does — there is no session_id param.
+            from harness.goal_gate import GoalContext
+            text = (params or {}).get("text")
+            if not text:
+                return {"ok": False, "error": "goal text required"}
+            reviewer = (params or {}).get("reviewer_model") or self._worker_model_id
+            seat = self._persona_sessions.seat_of(self._active_persona)
+            if seat is not None:
+                try:
+                    self._store.get(seat.session_id).goal = GoalContext(
+                        text=text, reviewer_model=reviewer)
+                except KeyError:
+                    return {"ok": False, "error": "no active session"}
+            return {"ok": True}
+        if method == "harness/clear_goal":
+            seat = self._persona_sessions.seat_of(self._active_persona)
+            if seat is not None:
+                try:
+                    self._store.get(seat.session_id).goal = None
+                except KeyError:
+                    pass
+            return {"ok": True}
         if method == "harness/set_yolo":
             # Live auto-allow toggle (+ optional persisted pin). The ACP process
             # owns the permission gate, so it owns both the flip and the write.
