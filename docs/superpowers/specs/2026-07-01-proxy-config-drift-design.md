@@ -47,9 +47,13 @@ def config_drift(*, env=None) -> str:
 - Must accept the same `env` parameter `generate()` accepts (default
   `os.environ`), so callers can pass whichever resolved env is correct for
   their context (see the env-source-asymmetry note below).
-- Pure function: no I/O side effects beyond the one read of `config_path()`;
-  never writes, never raises on a missing file (that's the `"missing"` case,
-  not an error).
+- Effectively pure: never writes `config.yaml`, never raises on a missing
+  file (that's the `"missing"` case, not an error). Note `generate()` calls
+  `paths.data_dir()`, which does `mkdir(parents=True, exist_ok=True)` — so
+  calling `config_drift()` (which calls `generate()` to diff) can create the
+  data dir as a side effect even when only checking status. Harmless
+  (idempotent, same dir `install()` would create anyway) but worth knowing —
+  this function is not 100%  read-only.
 
 **Known caveat to verify during implementation:** `config_gen.py`'s existing
 comment notes some secrets are bcrypt-hashed by CLIProxyAPI on boot. If the
@@ -80,6 +84,14 @@ wrote?). If it does rewrite, `config_drift()` must compare only the
 - **Only handles "missing".** Never fires when `config_drift() == "drifted"`
   — that case is warn-only (see below), by design, because a proxy process
   already exists that other sessions may be using.
+- **Multi-session race is acceptable, not new risk.** If two sessions launch
+  close together and both observe `"missing"`, both spawn `dn proxy install`
+  concurrently. `install()`'s own steps are already idempotent-safe for this
+  (`download.download_and_install` checks an existing stamp before
+  re-downloading; OS-service registration checks `.exists()` before writing) —
+  this is a pre-existing property of `install()`, not a new hazard introduced
+  here. Worth one test asserting two concurrent `config_drift()=="missing"`
+  hook fires don't crash, but not a blocking concern.
 
 ### 3. Warn-only on drift — two surfaces, no auto-restart ever
 
