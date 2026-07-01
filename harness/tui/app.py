@@ -965,14 +965,14 @@ class HarnessTui(App):
         if self.model != "vibeproxy":
             self._notify_line("model selection requires launching with --model vibeproxy")
             return
+        # Best-effort: a down/empty proxy must NOT empty the picker — the static
+        # catalog still renders every supported model as login_needed/stale_config
+        # so the user can see what's available and how to reach it. Only the
+        # reconciled list being empty (catalog itself empty) is a dead end.
         try:
-            proxy_ids = await self._fetch_models()            # existing live proxy id list
-        except Exception as e:
-            self._notify_line(f"could not fetch models: {e}")
-            return
-        if not proxy_ids:
-            self._notify_line("no models returned by the provider")
-            return
+            proxy_ids = await self._fetch_models()            # live proxy id list
+        except Exception:
+            proxy_ids = []                                    # proxy unreachable → catalog only
         from harness import model_catalog, model_keys, model_availability
         from harness.tui.model_picker import build_picker_rows
         from harness.proxy_service import management, config_gen
@@ -984,6 +984,9 @@ class HarnessTui(App):
         keys = model_keys.keys_present(auth_status=auth, environ=os.environ)
         statuses = model_availability.reconcile(model_catalog.providers(), proxy_ids, keys)
         options = build_picker_rows(statuses)
+        if not options:
+            self._notify_line("no models available (catalog empty)")
+            return
         current = self._worker_model_id
 
         def _picked(choice) -> None:

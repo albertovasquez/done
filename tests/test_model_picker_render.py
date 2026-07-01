@@ -1,5 +1,6 @@
 from harness.tui.model_picker import build_picker_rows
-from harness.model_availability import ModelStatus
+from harness.model_availability import ModelStatus, reconcile
+from harness.model_catalog import Provider, Model
 
 
 def test_rows_grouped_by_provider_with_status_marks():
@@ -19,3 +20,16 @@ def test_rows_grouped_by_provider_with_status_marks():
     # login_needed / stale_config rows are not directly bindable (disabled)
     disabled = [r for r in rows if getattr(r, "disabled", False)]
     assert any("GLM 5.2" in r.label for r in disabled)
+
+
+def test_empty_proxy_still_yields_catalog_rows():
+    # Regression guard: when the proxy serves NOTHING (down/empty), the picker
+    # must NOT be empty — the catalog still renders every model as login_needed
+    # (or stale_config), so action_select_model must not early-return on empty
+    # proxy_ids. This is the offline-resilience the feature exists to provide.
+    catalog = [Provider("neuralwatt", "NeuralWatt", ["NEURALWATT_API_KEY"],
+                        [Model("glm-5.2", "GLM 5.2")])]
+    statuses = reconcile(catalog, proxy_ids=[], keys_present={"neuralwatt": False})
+    rows = build_picker_rows(statuses)
+    assert rows, "empty proxy must still produce catalog rows"
+    assert any("GLM 5.2" in r.label and "login" in r.label.lower() for r in rows)
