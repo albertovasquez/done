@@ -1,6 +1,7 @@
 import pytest
 from harness.instance_templates import (
-    ANSWER_ONLY_INSTANCE, OBSERVE_FIRST_INSTANCE, _instance_template_for,
+    ANSWER_ONLY_INSTANCE, OBSERVE_FIRST_INSTANCE, WORK_ORDER_INSTANCE,
+    _instance_template_for,
 )
 
 DEFAULT = "Please solve this issue: {{task}}\nEdit the source code to resolve it."
@@ -9,11 +10,12 @@ DEFAULT = "Please solve this issue: {{task}}\nEdit the source code to resolve it
 @pytest.mark.parametrize(("task_type", "expected"), [
     ("code_explain", ANSWER_ONLY_INSTANCE),
     ("ops_task", OBSERVE_FIRST_INSTANCE),
-    ("code_fix", DEFAULT),
-    ("code_feature", DEFAULT),
-    ("code_refactor", DEFAULT),
-    ("chat_question", DEFAULT),
-    ("ambiguous", DEFAULT),
+    ("code_fix", WORK_ORDER_INSTANCE),
+    ("code_feature", WORK_ORDER_INSTANCE),
+    ("code_refactor", WORK_ORDER_INSTANCE),
+    ("chat_question", WORK_ORDER_INSTANCE),
+    ("ambiguous", WORK_ORDER_INSTANCE),
+    ("some_unknown_type", WORK_ORDER_INSTANCE),   # unmatched no longer returns raw default
 ])
 def test_template_selection(task_type, expected):
     assert _instance_template_for(task_type, DEFAULT) == expected
@@ -33,3 +35,13 @@ def test_observe_first_is_read_only_imperative_not_work_order():
     assert "test suite" in low
     # must NOT carry the work-order framing
     assert "solve this issue" not in low
+
+
+def test_work_order_keeps_contract_and_is_tool_native():
+    low = WORK_ORDER_INSTANCE.lower()
+    assert "{{task}}" in WORK_ORDER_INSTANCE
+    assert "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT" in WORK_ORDER_INSTANCE
+    # points at the real tools, not the shell-edit tutorial
+    assert "read" in low and "write" in low and "edit" in low
+    # must NOT teach cat/sed file editing
+    assert "sed -i" not in low and "cat <<" not in WORK_ORDER_INSTANCE

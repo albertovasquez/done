@@ -36,11 +36,32 @@ OBSERVE_FIRST_INSTANCE = (
 )
 
 
+# code_fix / code_feature / code_refactor / anything act-ish: a Done-native work
+# order that replaces the engine's cat/sed + bash-only mini.yaml default. Keeps the
+# step-wise loop and the terminal submit contract; points at the real file tools.
+WORK_ORDER_INSTANCE = (
+    "The user asked: {{task}}\n\n"
+    "Treat this as a work order. Investigate first — read the relevant files and "
+    "run read-only commands to understand the code — then make the change.\n"
+    "- Use the Read, Write, and Edit tools to inspect and change files. Do not "
+    "edit files with cat/sed heredocs.\n"
+    "- Use bash for commands: builds, tests, git, and search — not for editing "
+    "files.\n"
+    "- Work step by step so you can verify as you go: make the change, then run "
+    "the build/tests to confirm it works, then check edge cases.\n"
+    "When the task is complete and verified, finish by issuing exactly: "
+    "`echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` — do not combine it with any "
+    "other command."
+)
+
+
 def _instance_template_for(task_type: str, default: str) -> str:
     """Pick the engine instance_template for this turn. code_explain → answer-only;
-    ops_task → observe-first; every other task_type keeps the engine default."""
+    ops_task → observe-first; every other task_type → a Done-native work order.
+    The `default` param (the raw mini.yaml text) is intentionally no longer
+    returned — nothing should render the vendored cat/sed default to the model."""
     if task_type == "code_explain":
         return ANSWER_ONLY_INSTANCE
     if task_type == "ops_task":
         return OBSERVE_FIRST_INSTANCE
-    return default
+    return WORK_ORDER_INSTANCE

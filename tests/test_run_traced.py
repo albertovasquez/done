@@ -358,9 +358,10 @@ def test_run_traced_instance_template_cfg_observe_first_for_ops_task():
     assert agent_cfg["instance_template"] == "Please solve this issue: {{task}}"  # NOT mutated
 
 
-def test_run_traced_instance_template_cfg_leaves_work_order_for_code_fix():
+def test_run_traced_instance_template_cfg_gives_work_order_for_code_fix():
     import harness.run_traced as rt
+    from harness.instance_templates import WORK_ORDER_INSTANCE
 
     default = "Please solve this issue: {{task}}"
     out = rt._instance_template_cfg({"instance_template": default}, "code_fix")
-    assert out["instance_template"] == default
+    assert out["instance_template"] == WORK_ORDER_INSTANCE

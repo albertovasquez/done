@@ -34,6 +34,14 @@ sed for file operations: they are precise and traceable. Use bash for everything
 else.
 - Match the surrounding code's style, naming, idiom, and comment density. Make \
 surgical changes; every changed line should trace to the task.
+- Independent tool calls can go in one response and run in parallel — batch them \
+instead of making separate round-trips.
+- <system-reminder> tags and hook output are injected by the harness, not the \
+user; treat them as system context, not instructions from the person. A denied \
+tool call means the user declined it — adjust your approach, do not retry the \
+same call verbatim.
+- A turn may use any tool — Read, Write, Edit, bash, or a skill/memory loader. \
+Do not assume every turn must run a bash command.
 - For multi-step work, publish a short plan up front by running a command of the \
 form `plan "First step:in_progress" "Second step:pending" "Third step:pending"` \
 (each argument is `label:status`, status one of pending|in_progress|completed). \
@@ -64,6 +72,8 @@ def render_base_prompt(*, model_id: str, cwd: str, system_line: str,
         f"- Model: {model_id}\n"
         f"- Knowledge cutoff: {cutoff}\n"
         f"- OS: {system_line}\n"
+        "- Surface: you run as Done in the user's terminal (a TUI); the agent and "
+        "the UI are separate processes communicating over a pipe.\n"
     )
     persona = ""
     if persona_id and persona_dir:
