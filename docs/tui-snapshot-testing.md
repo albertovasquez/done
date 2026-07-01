@@ -62,6 +62,62 @@ returning — a silent early return would bake a garbage baseline (e.g. the land
 screen) that then "passes" forever. When you add a test, drive the app to a
 settled state the same way; never `snap_compare` on a mid-flight frame.
 
+## Adding a UX-focused test (for agents)
+
+You changed TUI UI (a component, a layout, a chip, a modal). Add a test that
+would catch it breaking. Use this decision rule:
+
+| What you changed | Reach for | Why |
+|---|---|---|
+| **Layout** — ordering, spacing, footer/chip position, wrapping, alignment | **snapshot** (`tests/test_tui_snapshots.py`) | Pilot can't see pixels; layout bugs are exactly what it misses. |
+| **Behavior / state** — a widget appears, has text/class, reacts to a key/click | **Pilot** (`tests/test_tui_*.py`, e.g. `test_tui_pilot.py`) | Assert on widget state directly; faster, no baseline to maintain. |
+| **Both** (usually) | one of each | The snapshot locks the look; the Pilot test locks the wiring. |
+
+**Reusable harness — build on these, don't reinvent:**
+
+- `tests/tui_snapshot_harness.py` — `REPO`, `FAKE_CMD`, the
+  `isolated_default_persona` fixture (deterministic `▣ Bob` caption), and
+  `drive_completed_turn(pilot, app, prompt)` (drives one turn, returns only after
+  it settles). Reuse the driver; write a new settle-aware one only for a new shape
+  (modal, tool-call row, rail).
+- `tests/fake_agent.py` — the ACP fake. A plain prompt yields the answer `done`;
+  keyword prompts drive shapes: `STREAM` (multi-delta answer), `PERMISSION`
+  (permission modal), `TRACE`, `BURST`, `SLOW`, `MANYCHUNKS`. Pick the keyword
+  that reproduces the UI state you changed.
+- `tests/test_tui_pilot.py` — the Pilot idioms to copy: `_send_first_prompt`,
+  `_transcript_text`, `_footer`, and the `for _ in range(N): await pilot.pause()`
+  settle loop.
+
+**Copy-paste snapshot template** (a completed-turn layout):
+
+```python
+from tests.tui_snapshot_harness import (
+    FAKE_CMD, REPO, isolated_default_persona, drive_completed_turn,  # noqa: F401
+)
+import pytest
+from harness.tui.app import HarnessTui
+
+
+@pytest.fixture(autouse=True)
+def _iso(isolated_default_persona):
+    yield
+
+
+def test_<the_layout_you_changed>(snap_compare):
+    app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+
+    async def run_before(pilot):
+        await drive_completed_turn(pilot, app, "hello there")
+        # …drive to the exact UI state you changed (open a modal, run a tool, etc.)
+
+    assert snap_compare(app, run_before=run_before, terminal_size=(120, 40))
+```
+
+Then generate the baseline (`--snapshot-update`) and **judge it against the style
+guide before committing** — see *The baseline acceptance rule* below. Never commit
+a baseline of a layout that violates `components.md` / the design-system spec; fix
+the UI first.
+
 ## Adding a new snapshot test
 
 1. Add a `run_before(pilot)` coroutine that drives the app to the state you want
