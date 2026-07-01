@@ -749,6 +749,8 @@ class HarnessAgent(acp.Agent):
                                      registry=getattr(model_obj, "registry", None),
                                      # ESC checkpoint: the loop ends between steps when set.
                                      cancel_flag=state.cancel_flag,
+                                     # /goal stop-gate: None when unarmed → no-op.
+                                     goal_ctx=state.goal,
                                      **cfg)
                 agent_ref["agent"] = agent
                 model = agent.model
