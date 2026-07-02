@@ -39,6 +39,10 @@ def reconcile(transcript: list[dict], view: CompactView | None, *,
     compacted head instead of re-summarizing (one deliberate cache miss per
     episode). Under budget, compress() returns the same list untouched."""
     history = effective_history(transcript, view)
+    # Snapshot upto BEFORE compress() (which can block for seconds on a live
+    # summarize LLM call) — reading len(transcript) after would silently mask
+    # any turn appended concurrently during that window.
+    upto = len(transcript)
     result = _compaction.compress(
         history,
         summarize=summarize,
@@ -49,5 +53,5 @@ def reconcile(transcript: list[dict], view: CompactView | None, *,
     )
     if not result.compressed:
         return history, view, result
-    new_view = CompactView(upto=len(transcript), messages=list(result.messages))
+    new_view = CompactView(upto=upto, messages=list(result.messages))
     return list(result.messages), new_view, result

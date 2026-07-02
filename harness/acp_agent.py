@@ -583,13 +583,22 @@ class HarnessAgent(acp.Agent):
         _fixed_overhead = _compaction.estimate_tokens(
             base_block + (state.persona_block or "") + (state.memory_block or "")
             + env_block + text)
-        history, _new_view, _hist_result = await loop.run_in_executor(
-            None, lambda: _history_view.reconcile(
-                transcript, state.compact_view,
-                summarize=_summarize_history,
-                fixed_overhead_tokens=_fixed_overhead,
-                ctx_window=_compaction.resolve_ctx_window(model_id or ""),
-            ))
+        # reconcile can summarize via a blocking LLM call (_summarize_history) —
+        # the only other blocking-LLM call in prompt() besides classify, so it
+        # gets the same run_interruptible treatment: ESC aborts a stalled/slow
+        # summarize instead of blocking until it returns (the #254 invariant).
+        try:
+            history, _new_view, _hist_result = await loop.run_in_executor(
+                None, lambda: run_interruptible(
+                    lambda: _history_view.reconcile(
+                        transcript, state.compact_view,
+                        summarize=_summarize_history,
+                        fixed_overhead_tokens=_fixed_overhead,
+                        ctx_window=_compaction.resolve_ctx_window(model_id or ""),
+                    ),
+                    state.cancel_flag))
+        except InterruptAgentFlow:
+            return _cancelled()
         if _hist_result.compressed:
             await self._trace(session_id, "cache.boundary", sid=session_id,
                               changed="history", method=_hist_result.method)

@@ -5,10 +5,12 @@ driver as test_acp_session_context.py. Mock mode: the history summarizer
 degrades to method="truncated" deterministically (no LLM available)."""
 
 import asyncio
+from unittest.mock import patch
 
 import acp
 
 from harness.acp_agent import build_harness_agent
+from harness.chat_handler import ChatHandler
 from harness.router import Classification
 
 
@@ -107,17 +109,50 @@ def test_history_episode_emits_boundary_once():
     # Seed the store past budget: 40 * 500 tokens (~20k) > mock budget (16k).
     agent._store.extend(sid, [{"role": "user", "content": "y" * 2000, "origin": "chat"}] * 40)
 
-    _prompt(agent, sid, "hello")
-    history_boundaries = _boundaries(agent, "history")
-    assert len(history_boundaries) == 1
-    data = history_boundaries[0]["data"]
-    assert data["changed"] == "history"
-    assert data["method"] == "truncated"
-    assert agent._store.get(sid).compact_view is not None
+    # Capture the `history` kwarg every consumer receives, without altering
+    # behavior — wrap the real bound method so mock mode still yields its
+    # normal string; we only record what was passed in.
+    seen_history = []
+    real_answer_stream = ChatHandler.answer_stream
 
-    _prompt(agent, sid, "again")
-    # episodic, not per-turn: no additional history boundary on the second turn
-    assert len(_boundaries(agent, "history")) == 1
+    def _capturing_answer_stream(self, prompt, history=None, cancel_flag=None):
+        seen_history.append(list(history) if history else [])
+        yield from real_answer_stream(self, prompt, history=history, cancel_flag=cancel_flag)
+
+    with patch.object(ChatHandler, "answer_stream", _capturing_answer_stream):
+        _prompt(agent, sid, "hello")
+        history_boundaries = _boundaries(agent, "history")
+        assert len(history_boundaries) == 1
+        data = history_boundaries[0]["data"]
+        assert data["changed"] == "history"
+        assert data["method"] == "truncated"
+        assert agent._store.get(sid).compact_view is not None
+
+        raw_len_before_second_prompt = len(agent._store.get(sid).transcript)
+
+        _prompt(agent, sid, "again")
+        # episodic, not per-turn: no additional history boundary on the second turn
+        assert len(_boundaries(agent, "history")) == 1
+
+    # Consumer switch (chat path): on the second prompt the chat handler must
+    # receive the COMPACTED view (compact_view.messages + raw tail), not the
+    # full raw transcript. Compute the expected length from live state, not a
+    # magic number — reverting `history=history` -> `history=transcript` on
+    # the chat call makes this assertion fail (see RED/GREEN check in the
+    # task report).
+    compact_view = agent._store.get(sid).compact_view
+    assert compact_view is not None
+    raw_tail_count = raw_len_before_second_prompt - compact_view.upto
+    expected_len = len(compact_view.messages) + raw_tail_count
+    assert len(seen_history) == 2
+    second_prompt_history_len = len(seen_history[1])
+    assert second_prompt_history_len == expected_len
+    assert second_prompt_history_len < raw_len_before_second_prompt
+
+    # Router-stays-raw invariant: the router must keep seeing the RAW
+    # transcript (already tail-capped upstream), never the compacted view.
+    assert len(router.history_seen) == 2
+    assert len(router.history_seen[1]) == raw_len_before_second_prompt
 
 
 def test_small_session_never_emits_history_boundary():
