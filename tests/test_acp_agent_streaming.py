@@ -211,7 +211,7 @@ def test_chat_path_coalesces_and_delivers_full_answer(tmp_path, monkeypatch):
 
     class _FakeHandler:
         def __init__(self, *a, **k): pass
-        def answer_stream(self, text, history=None):
+        def answer_stream(self, text, history=None, cancel_flag=None):
             yield from pieces
     monkeypatch.setattr(mod, "ChatHandler", _FakeHandler)
 
