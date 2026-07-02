@@ -552,6 +552,33 @@ class HarnessAgent(acp.Agent):
                 skill_roots=_skill_roots,
                 memory_root=(ws.resolve() if ws else None))]
 
+        # Chat turns that want a tool escalate to the tool-running agent path.
+        # Interactive only: headless/cron never escalates, so the authorization
+        # surface for unattended runs is unchanged (a chat_question can never run a
+        # command there). Deterministic tools questions answer from data in the
+        # chat block below, so they are never probed. wants_tool is a throwaway
+        # boolean classifier — on True we reassign task_type so control falls
+        # through to the agent path (single record site, gate + engine reused).
+        if (cls.task_type == "chat_question" and self._has_elicitation()
+                and not is_tools_question(text)):
+            if state.cancel_flag.is_set():
+                return _cancelled()
+            try:
+                _probe = ChatHandler(
+                    model_id, base_block=base_block,
+                    persona_block=(state.persona_block or "") + (state.memory_block or ""),
+                    tool_schemas=_chat_tool_schemas)
+                wants = await loop.run_in_executor(
+                    None, lambda: _probe.wants_tool(
+                        text, history=transcript, cancel_flag=state.cancel_flag))
+            except Exception:
+                # Fail-open: any error deciding escalation degrades to the prose
+                # chat path (today's behavior), never crashes the turn.
+                logger.exception("chat tool-probe failed; falling back to prose chat")
+                wants = False
+            if wants:
+                cls.task_type = "code_feature"   # route to the agent path below
+
         if cls.task_type == "chat_question":
             # hand the (project-aware) catalog so "what skills do we have?" is
             # answered from data, not the model. Surface DROPPED (malformed) and
