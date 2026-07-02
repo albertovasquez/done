@@ -51,7 +51,15 @@ def _machine_global_env() -> dict:
     since the proxy is machine-global). config_drift() must compare against
     THIS, not raw os.environ, so a project-local NEURALWATT_API_KEY (which the
     TUI's own env loading layers in) can never produce an unresolvable
-    "drifted" warning that `dn proxy upgrade` could never clear."""
+    "drifted" warning that `dn proxy upgrade` could never clear.
+
+    Only safe for callers whose os.environ never merges a project-local .env
+    (e.g. the `dn proxy` CLI, which deliberately loads machine-global env
+    only). The TUI's own drift check does NOT use this default — its
+    os.environ is polluted by `paths.load_env(cwd)` before it ever runs, so it
+    builds its own env explicitly from a pre-load_env shell snapshot instead
+    (see harness/tui/app.py::HarnessTui._check_proxy_config_drift). Do not
+    reuse this function's default from a process that loads a project .env."""
     from dotenv import dotenv_values
     from harness import paths as _harness_paths
 
