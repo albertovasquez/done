@@ -543,6 +543,22 @@ class HarnessAgent(acp.Agent):
             model_id=(model_id or "mock"),
             cwd=state.cwd, system_line=platform.platform())
 
+        # cache.boundary: name which prompt block changed since the last turn.
+        # Declared boundaries (persona/model swap, skills/AGENTS.md edits) are
+        # expected; anything else appearing here is a silent cache invalidator.
+        from harness import prompt_hash as _prompt_hash
+        _hashes = _prompt_hash.block_hashes({
+            "base": base_block,
+            "persona": state.persona_block or "",
+            "memory": state.memory_block or "",
+            "env": env_block,
+        })
+        _changed = _prompt_hash.changed_blocks(state.prompt_hashes, _hashes)
+        if _changed:
+            await self._trace(session_id, "cache.boundary",
+                              sid=session_id, changed=",".join(_changed))
+        state.prompt_hashes = _hashes
+
         # Chat turns that want a tool escalate to the tool-running agent path.
         # Gated tightly so this is ZERO-COST on every path that can't escalate —
         # mock (no model_id), headless/cron (no elicitation, so the authorization
