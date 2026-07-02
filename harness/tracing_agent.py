@@ -64,6 +64,17 @@ def _usage_from_extra(extra: dict) -> dict:
         out["prompt"] = prompt
     if completion is not None:
         out["completion"] = completion
+    # Cache-read tokens: OpenAI shape (prompt_tokens_details.cached_tokens)
+    # or Anthropic top-level (cache_read_input_tokens). #139: this is the
+    # signal that proves prefix caching is working in production.
+    details = usage.get("prompt_tokens_details")
+    cached = None
+    if isinstance(details, dict) and isinstance(details.get("cached_tokens"), int):
+        cached = details["cached_tokens"]
+    elif isinstance(usage.get("cache_read_input_tokens"), int):
+        cached = usage["cache_read_input_tokens"]
+    if cached is not None:
+        out["cached"] = cached
     return out
 
 

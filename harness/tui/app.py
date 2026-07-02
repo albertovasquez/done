@@ -178,6 +178,7 @@ class HarnessTui(App):
         # The adapter resolves #transcript lazily (widgets aren't mounted yet here).
         self._painter = StreamPainter(_TranscriptViewAdapter(self))
         self._tokens = 0                      # last-known token count from usage updates
+        self._cache_pct: int | None = None    # last llm.return cache-read % (None = no signal)
         self._compacted: dict | None = None   # context.compacted event for the current turn, if any
         self._persona_seen = False            # True after the first real PersonaResolved lands
         self._decision_open = False            # True while a DecisionModal is on the screen stack (guards double-push)
@@ -630,7 +631,10 @@ class HarnessTui(App):
         # _tokens is the latest llm.return total (prompt+completion for that call),
         # which tracks current context footprint until the next model call (or compaction).
         window = resolve_ctx_window(_model_label(self.model, self._worker_model_id))
-        return ctx_bar(self._tokens, window)
+        tag = ctx_bar(self._tokens, window)
+        if self._cache_pct is not None:
+            tag += f" [$muted]· cache {self._cache_pct}%[/]"
+        return tag
 
     def _refresh_status(self) -> None:
         try:
@@ -1645,6 +1649,10 @@ class HarnessTui(App):
             field_meta.get("harness"), dict) else None
         if isinstance(usage, dict) and isinstance(usage.get("total"), int):
             self._tokens = usage["total"]
+            cached, prompt = usage.get("cached"), usage.get("prompt")
+            self._cache_pct = (round(100 * cached / prompt)
+                               if isinstance(cached, int) and isinstance(prompt, int)
+                               and cached > 0 and prompt > 0 else None)
             self._apply(TokensUpdated(self._tokens))
             self._refresh_status()
 
