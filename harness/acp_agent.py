@@ -559,6 +559,42 @@ class HarnessAgent(acp.Agent):
                               sid=session_id, changed=",".join(_changed))
         state.prompt_hashes = _hashes
 
+        # #105: episodic history view — compaction episodes persist on the
+        # session so between episodes the effective history is byte-stable
+        # (cache-warm). The raw transcript stays append-only truth; the router
+        # keeps consuming it directly (already tail-capped to 8 turns).
+        from harness import compaction as _compaction
+        from harness import history_view as _history_view
+
+        def _summarize_history(middle: list[dict]) -> str:
+            if model_id is None:
+                raise RuntimeError("mock mode: no summarizer model")  # -> truncated
+            import litellm  # lazy: keep the ~1s import off startup
+            from harness import vibeproxy
+            resp = litellm.completion(
+                model=vibeproxy.model_id(model_id),
+                **vibeproxy.completion_kwargs(),
+                messages=[{"role": "system", "content": _compaction.COMPRESS_SYSTEM},
+                          {"role": "user", "content": _compaction.render(middle)}],
+                max_tokens=2000,
+            )
+            return resp.choices[0].message.content or ""
+
+        _fixed_overhead = _compaction.estimate_tokens(
+            base_block + (state.persona_block or "") + (state.memory_block or "")
+            + env_block + text)
+        history, _new_view, _hist_result = await loop.run_in_executor(
+            None, lambda: _history_view.reconcile(
+                transcript, state.compact_view,
+                summarize=_summarize_history,
+                fixed_overhead_tokens=_fixed_overhead,
+                ctx_window=_compaction.resolve_ctx_window(model_id or ""),
+            ))
+        if _hist_result.compressed:
+            await self._trace(session_id, "cache.boundary", sid=session_id,
+                              changed="history", method=_hist_result.method)
+            state.compact_view = _new_view
+
         # Chat turns that want a tool escalate to the tool-running agent path.
         # Gated tightly so this is ZERO-COST on every path that can't escalate —
         # mock (no model_id), headless/cron (no elicitation, so the authorization
@@ -587,7 +623,7 @@ class HarnessAgent(acp.Agent):
                     tool_schemas=_chat_tool_schemas)
                 wants = await loop.run_in_executor(
                     None, lambda: _probe.wants_tool(
-                        text, history=transcript, cancel_flag=state.cancel_flag))
+                        text, history=history, cancel_flag=state.cancel_flag))
             except Exception:
                 # Fail-open: any error deciding escalation degrades to the prose
                 # chat path (today's behavior), never crashes the turn.
@@ -623,7 +659,7 @@ class HarnessAgent(acp.Agent):
                 # is buffered and drained by the timer + the final flush below.
                 # cancel_flag: ESC aborts a stalled/streaming chat answer (raises
                 # UserInterruption from answer_stream, caught below).
-                for piece in handler.answer_stream(text, history=transcript,
+                for piece in handler.answer_stream(text, history=history,
                                                    cancel_flag=state.cancel_flag):
                     pieces.append(piece)
                     with chat_lock:
@@ -674,7 +710,7 @@ class HarnessAgent(acp.Agent):
                       {"skill_load": {"injected": ctx.skills.injected,
                                       "skipped": ctx.skills.skipped}}))
         engine = await self._run_agent_turn(loop, session_id, state, text, ctx.skill_block,
-                                            transcript, ctx.persona_block, ctx.memory_block,
+                                            history, ctx.persona_block, ctx.memory_block,
                                             base_block=base_block, env_block=env_block,
                                             model_id=model_id,
                                             task_type=cls.task_type)
