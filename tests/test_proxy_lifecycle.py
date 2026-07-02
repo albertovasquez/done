@@ -237,6 +237,27 @@ def test_refresh_config_write_failure_aborts_before_restart(monkeypatch, tmp_pat
     assert "config write failed" in out
 
 
+def test_refresh_config_env_passthrough(monkeypatch, tmp_path):
+    """C1: refresh_config must forward its env kwarg to config_gen.generate()
+    verbatim — the TUI's caller passes the drift-check's machine-global env
+    (never os.environ) so a project-local key never gets baked into the
+    machine-global config.yaml."""
+    from harness.proxy_service import lifecycle, config_gen, paths
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path)
+    monkeypatch.setattr(lifecycle, "stop", lambda: "stopped")
+    monkeypatch.setattr(lifecycle, "start", lambda: "started")
+    seen = []
+
+    def fake_generate(env=None):
+        seen.append(env)
+        return 'host: "x"\n'
+
+    monkeypatch.setattr(config_gen, "generate", fake_generate)
+    want = {"NEURALWATT_API_KEY": "sk-tui"}
+    lifecycle.refresh_config(env=want)
+    assert seen == [want]
+
+
 def test_cli_dispatches_refresh(monkeypatch):
     from harness.proxy_service import cli, lifecycle
     monkeypatch.setattr(lifecycle, "refresh_config", lambda: "CLIProxyAPI refresh: complete")

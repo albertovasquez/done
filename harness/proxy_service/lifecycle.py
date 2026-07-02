@@ -164,18 +164,23 @@ def upgrade() -> str:
         [f"CLIProxyAPI upgrade: complete ({stop_result}; {start_result})", *extra])
 
 
-def refresh_config() -> str:
+def refresh_config(*, env: dict | None = None) -> str:
     """Regenerate config.yaml from current machine-global env and restart the
     service — `dn proxy upgrade` minus the binary re-download. Only ever called
     from user-consented paths (the TUI drift prompt, the explicit
     `dn proxy refresh` verb); never run unattended — restarting the
     machine-global proxy under other sessions/cron is the #292 hard constraint.
+
+    env — passed straight through to config_gen.generate(). None (the CLI's
+    default) keeps generate()'s own machine-global default. Callers whose
+    os.environ is polluted by a project-local .env (the TUI) MUST pass an
+    explicit machine-global env — see HarnessTui._machine_env_snapshot.
     """
     try:
         config_gen.ensure_management_password()
         cfg_path = paths.config_path()
         old_text = cfg_path.read_text() if cfg_path.exists() else ""
-        new_text = config_gen.generate()
+        new_text = config_gen.generate(env=env)
         cfg_path.write_text(new_text)
     except Exception as exc:
         return f"CLIProxyAPI refresh: config write failed — {exc}"
