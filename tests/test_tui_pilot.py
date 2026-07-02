@@ -535,6 +535,22 @@ def test_cancelled_turn_stream_closed_immediately_on_esc():
             await task
             await pilot.pause()
 
+            # Pin the fix's actual contract: the painter must already be closed
+            # here, BEFORE the next turn's _add_user_message runs. Without the
+            # fix, action_cancel never touches the painter, so it stays open
+            # across the footer mount above (_write_meta, called from
+            # _send_prompt's success path) until _add_user_message eventually
+            # closes it below — this assertion is the only thing in this test
+            # that actually fails if the fix is reverted; the straggler-routing
+            # assertion further down is already satisfied by _add_user_message
+            # alone (verified: removing the action_cancel fix does not fail
+            # this test unless this assertion is here).
+            assert app._painter.closed, (
+                "cancelled turn's stream must be closed immediately by "
+                "action_cancel, not left open until the next turn's "
+                "_add_user_message runs"
+            )
+
             # turn 3 begins immediately — mirrors the live repro (screenshot).
             app._add_user_message("third")
 
