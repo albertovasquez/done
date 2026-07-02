@@ -20,6 +20,12 @@ from harness.tools.worker_collector import WorkerCollector
 MAX_TASKS_PER_CALL = 16
 DEFAULT_WORKER_TOOLSET = {"read", "bash"}
 DEFAULT_STEP_LIMIT = 15
+# Defensive per-worker body cap: a worker's returned text lands in the PARENT's
+# context verbatim, bounded only by the worker's own summary contract. Cap each
+# body (~2k tokens at ~4 chars/tok) so one runaway worker can't dump an unbounded
+# blob into the orchestrator. Normal structured summaries are far shorter, so this
+# never fires for well-behaved workers — it only clips a pathological outlier.
+MAX_BODY_CHARS = 8000
 
 SUBAGENT_TOOL = {
     "type": "function",
@@ -116,13 +122,22 @@ def _run_one_worker(task: dict, env, *, agent_id: str, on_event=None):
     return (True, summary or "(no summary returned)")
 
 
+def _cap_body(text: str) -> str:
+    """Bound one worker body to MAX_BODY_CHARS, signalling any truncation so the
+    orchestrator never mistakes a clipped digest for a complete one."""
+    if len(text) <= MAX_BODY_CHARS:
+        return text
+    dropped = len(text) - MAX_BODY_CHARS
+    return f"{text[:MAX_BODY_CHARS]}\n… [truncated {dropped} chars]"
+
+
 def _format_digest(results: list[tuple[bool, str]], goals: list[str]) -> str:
     n = len(results)
     blocks = []
     for i, ((ok, text), goal) in enumerate(zip(results, goals), start=1):
         mark = "✓" if ok else "✗"
         head = f"[subagent {i}/{n} {mark}] goal: {goal!r}"
-        body = text if ok else f"failed: {text}"
+        body = _cap_body(text if ok else f"failed: {text}")
         blocks.append(f"{head}\n{body}")
     return "\n\n".join(blocks)
 
