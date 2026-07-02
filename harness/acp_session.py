@@ -31,6 +31,7 @@ class SessionState:
     memory_load: "MemoryLoad | None" = None
     memory_load_emitted: bool = False
     prompt_hashes: dict | None = None   # last turn's block hashes (cache.boundary, #139)
+    compact_view: "object | None" = None  # episodic compacted history (history_view.CompactView, #105)
 
 
 class SessionStore:
