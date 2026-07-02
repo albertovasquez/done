@@ -228,20 +228,47 @@ def compose_context(persona_block: str, memory_block: str, skill_roots: list[Pat
                        skill_block=skill_load.block, skills_menu=menu, skills=skill_load)
 
 
+def _default_is_blank(dest: Path) -> bool:
+    """True if the default workspace has NO meaningful persona content across the
+    trio (a fresh/absent dir, or one holding only the inert comment-only templates).
+    This is what makes backfill safe: it keys on _meaningful() content, not on mere
+    directory existence, so a real or customized persona is never judged "blank".
+    Any unreadable file is treated as meaningful (present-and-uncertain -> hands off)."""
+    for name in PERSONA_FILES:
+        try:
+            raw = (dest / name).read_text(encoding="utf-8")
+        except FileNotFoundError:
+            continue                            # missing file contributes nothing
+        except OSError:
+            return False                        # present but unreadable -> do not touch
+        if _meaningful(raw):
+            return False
+    return True
+
+
 def seed_default_workspace() -> None:
-    """Seed ~/.config/harness/agents/default/ on first run with the shipped
-    default agent ("Bob"): its SOUL.md, IDENTITY.md, and persona.toml `name`,
-    plus the inert USER.md template (left blank for the user to fill in).
-    No-op if the dir already exists (never clobber / never backfill).
+    """Seed ~/.config/harness/agents/default/ with the shipped default agent
+    ("Bob"): its SOUL.md, IDENTITY.md, and persona.toml `name`, plus the inert
+    USER.md template (left blank for the user to fill in).
+
+    Backfills Bob when the default workspace is genuinely BLANK — a fresh/absent
+    dir OR one holding only the inert comment-only templates (#192: dirs created
+    before the Bob soul shipped never got him). A workspace with ANY meaningful
+    content is left 100% untouched — never a mixed "your soul + Name: Bob".
     Best-effort: never raises into the startup path."""
     dest = paths.default_workspace_dir()
-    if dest.exists():
-        return                                  # user has a workspace; do not clobber/backfill
+    if not _default_is_blank(dest):
+        return                                  # real/customized persona present; hands off
     try:
         _copy_persona_templates(dest)           # lays down the inert trio (USER.md stays inert)
         (dest / "SOUL.md").write_text(DEFAULT_PERSONA_SOUL, encoding="utf-8")
         (dest / "IDENTITY.md").write_text(DEFAULT_PERSONA_IDENTITY, encoding="utf-8")
-        _write_persona_name(dest, DEFAULT_PERSONA_NAME)   # display name shown in the UI
+        # persona.toml carries structured skills/flows keys (persona_config), and we
+        # have no TOML writer to merge a key. A blank default won't hold a meaningful
+        # persona.toml, so write `name` ONLY when the file is absent; if one already
+        # exists, leave it byte-for-byte (never clobber skills/flows).
+        if not (dest / persona_config.PERSONA_TOML).exists():
+            _write_persona_name(dest, DEFAULT_PERSONA_NAME)   # display name shown in the UI
     except OSError as e:
         # Read-only home etc. — never break startup, but a silent failure here
         # means the default persona templates never appear ("why is my persona

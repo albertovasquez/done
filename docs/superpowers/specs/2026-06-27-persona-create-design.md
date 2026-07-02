@@ -46,11 +46,18 @@ Persona creation is a thin path that reuses existing machinery. Three layers:
   `Path`. Raises `InvalidPersonaId` (bad charset or "default"), `PersonaExists` (target
   already present), or lets `OSError` propagate (read-only home, etc. — explicit creation
   REPORTS).
-- **`seed_default_workspace()`** — refactored: **no-op if the default dir exists**
-  (returns immediately — does NOT backfill an existing dir; Codex 1B), else
-  `_copy_persona_templates(default_workspace_dir())` wrapped in its existing
-  try/except-OSError-pass (never raises — startup contract). It does NOT call
-  `create_persona` (which would reject "default").
+- **`seed_default_workspace()`** — backfills Bob when the default workspace is
+  **genuinely blank** — a fresh/absent dir OR one holding only the inert
+  comment-only templates (keyed on `_meaningful()` content, not mere directory
+  existence). A workspace with ANY meaningful content is left 100% untouched —
+  never a mixed "your soul + Name: Bob". (Revised for #192: keying on
+  `dir.exists()` orphaned every pre-Bob default dir with a blank persona; Codex
+  1B's original "no-op if the dir exists" was too coarse.) `persona.toml` gets
+  `name = "Bob"` written **only when the file is absent** — an existing
+  `persona.toml` (with `skills`/`flows`) is left byte-for-byte, since there is no
+  TOML writer to merge a key. Wrapped in try/except-OSError-pass (never raises —
+  startup contract). It does NOT call `create_persona` (which would reject
+  "default").
 
 **ACP ext-method — `harness/acp_agent.py`:**
 - **`_activate_seat(id) -> dict`** (NEW private method, extracted from the current
