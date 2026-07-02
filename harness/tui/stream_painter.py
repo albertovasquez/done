@@ -60,6 +60,11 @@ class StreamPainter:
         self._stream_timer: Any = None               # repeating flush handle while open
         self._stream_closed = True                   # True => next delta starts a fresh widget
         self._boundary_after = False                 # True => an in-turn boundary closed the block
+        # KNOWN GAP (#291): this flag has no per-turn identity. A stale turn's
+        # late delta can consume a boundary meant for a LATER turn's first
+        # delta (e.g. a cancelled turn's straggler arriving after the next
+        # turn's task_classified chip), misrouting that later turn's real
+        # answer. See test_cancelled_turn_stream_closed_immediately_on_esc.
 
     # ---- read accessors (the App's compat shims forward to these) ----
 
