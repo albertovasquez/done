@@ -171,6 +171,17 @@ it.** PR 3 adds: emit the compaction as a `cache.boundary` event (reason:
 across turns *between* compactions (protect ordering + `_sanitize_tool_pairs`
 must not reorder the head).
 
+**Corrected premise (2026-07-02, during PR 3):** the engine-side compaction is
+episodic per *call* but not per *session* — `prior` is re-derived from the full
+stored transcript every turn and results were never persisted, so once over
+budget it re-summarized every turn (per-turn head churn, permanently
+cache-cold). PR 3 therefore drives episodic compaction at the ACP chokepoint
+and persists each episode as `SessionState.compact_view`
+(`harness/history_view.py`); consumers (chat, tool-probe, agent prior) send
+`view.messages + transcript[view.upto:]`. The engine-side per-turn compaction
+is retained unchanged as a within-turn safety net — with the view in place it
+no-ops in steady state. The raw store transcript remains append-only truth.
+
 ### 3b. Chat history gets the same episodic budget
 
 Chat is the unbounded path today: `answer_stream` prepends the full transcript
