@@ -542,28 +542,27 @@ class HarnessAgent(acp.Agent):
             skills_menu=_skills_menu,
             agents_block=_agents_block)
 
-        # Tool schemas for the chat path — the SAME registry the agent path uses
-        # (build_registry with this session's skill roots + persona memory). Shared
-        # by the chat-question escalation probe (below) and the ChatHandler it
-        # constructs, so both see identical tools and neither builds it twice.
-        from harness.tools.registry import build_registry as _build_registry
-        _chat_tool_schemas = [
-            t.schema for t in _build_registry(
-                skill_roots=_skill_roots,
-                memory_root=(ws.resolve() if ws else None))]
-
         # Chat turns that want a tool escalate to the tool-running agent path.
-        # Interactive only: headless/cron never escalates, so the authorization
-        # surface for unattended runs is unchanged (a chat_question can never run a
-        # command there). Deterministic tools questions answer from data in the
-        # chat block below, so they are never probed. wants_tool is a throwaway
+        # Gated tightly so this is ZERO-COST on every path that can't escalate —
+        # mock (no model_id), headless/cron (no elicitation, so the authorization
+        # surface for unattended runs is unchanged), and deterministic tools
+        # questions (answered from data in the chat block below). Only when ALL
+        # gates pass do we build the registry + probe. wants_tool is a throwaway
         # boolean classifier — on True we reassign task_type so control falls
         # through to the agent path (single record site, gate + engine reused).
-        if (cls.task_type == "chat_question" and self._has_elicitation()
-                and not is_tools_question(text)):
+        if (cls.task_type == "chat_question" and model_id is not None
+                and self._has_elicitation() and not is_tools_question(text)):
             if state.cancel_flag.is_set():
                 return _cancelled()
             try:
+                # Build the registry lazily — the SAME one the agent path uses
+                # (this session's skill roots + persona memory) — only here, never
+                # on the common prose path.
+                from harness.tools.registry import build_registry as _build_registry
+                _chat_tool_schemas = [
+                    t.schema for t in _build_registry(
+                        skill_roots=_skill_roots,
+                        memory_root=(ws.resolve() if ws else None))]
                 _probe = ChatHandler(
                     model_id, base_block=base_block,
                     persona_block=(state.persona_block or "") + (state.memory_block or ""),
@@ -588,8 +587,7 @@ class HarnessAgent(acp.Agent):
                                   persona_block=(state.persona_block or "") + (state.memory_block or ""),
                                   base_block=base_block,
                                   skipped=_catalog_load.skipped,
-                                  shadowed=_catalog_load.shadowed,
-                                  tool_schemas=_chat_tool_schemas)
+                                  shadowed=_catalog_load.shadowed)
             pieces: list[str] = []
             chat_prose = {"buf": ""}
             chat_lock = threading.Lock()
