@@ -167,6 +167,12 @@ DecisionModal #decision-title { padding-bottom: 1; text-style: bold; color: $acc
 DecisionModal #decision-options { height: auto; background: $surface; }
 DecisionModal #decision-footer { padding-top: 1; color: $muted; }
 
+/* ---- ConfirmModal (generic yes/no; e.g. destructive cron-job delete, #178) ---- */
+ConfirmModal { align: center middle; }
+ConfirmModal #confirm-box { width: 60; height: auto; max-height: 80%;
+    border: round $accent; background: $surface; padding: 1 2; }
+ConfirmModal #confirm-title { padding-bottom: 1; text-style: bold; color: $accent; }
+
 /* ---- prominent agents drawer (persona switcher) ---- */
 #agent-drawer {
     dock: right; width: 34; border-left: solid $surface; background: $background;
