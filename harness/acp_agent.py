@@ -20,7 +20,6 @@ from acp.schema import (
     ToolCallUpdate,
 )
 
-from harness import base_prompt
 from harness import config
 from harness import memory as memory_mod
 from harness import persona
@@ -511,48 +510,32 @@ class HarnessAgent(acp.Agent):
         # active session's persona seat — consistent with how the model is bound for
         # this turn (C2c). Falls back to "mock" when there is no model.
         ws = state.workspace_dir
-        # Lazy skill discovery: a flow-scoped MENU (names+descriptions) in the
-        # prompt; the agent pulls bodies on demand via load_skill. Resolve roots
-        # PER TURN from the session cwd so this session's project .agents/.claude
-        # skills are included (the router's startup catalog is global-only).
-        from harness import flows as _flows
-        from harness import persona_config as _persona_config
-        from harness import paths as _paths
-        _skill_roots = _paths.skills_dirs(project_cwd=state.cwd)
-        _catalog_load = skills.load_catalog_with_skips(_skill_roots, project_cwd=state.cwd)
-        _enabled_flows = _persona_config.read_flows(ws)
-        _menu_metas = (_flows.scope_catalog(_catalog_load.skills, _enabled_flows)
-                       if _enabled_flows else _catalog_load.skills)
-        _skills_menu = skills.compose_menu(_menu_metas)
-        # Three-tier AGENTS.md (persona > project > global), folded into base_block
-        # so BOTH the chat branch and the agent branch below inherit it (both consume
-        # base_block). No-op when no AGENTS.md files exist.
-        from harness import agents as _agents
-        _agents_block = _agents.resolve_agents(
-            persona_dir=ws,
-            project_cwd=Path(state.cwd) if state.cwd else None,
-            global_dir=_paths.config_dir()).block
-        # Absolute path so the agent's Edit tool (which requires absolute paths) can
-        # act on it; .resolve() also guards a relative XDG_CONFIG_HOME (Codex).
-        base_block = base_prompt.render_base_prompt(
-            persona_id=(ws.name if ws else None),
-            persona_dir=(str(ws.resolve()) if ws else None),
-            skills_menu=_skills_menu,
-            agents_block=_agents_block)
-        env_block = base_prompt.render_env_block(
-            model_id=(model_id or "mock"),
-            cwd=state.cwd, system_line=platform.platform())
+        # One composition seam (#245): skill roots (PER TURN from the session cwd
+        # so this session's project .agents/.claude skills are included — the
+        # router's startup catalog is global-only) → catalog → flow scoping →
+        # menu → AGENTS.md tiers → base_block + env_block (env rendered
+        # separately, appended at the system-prompt TAIL — #139). persona/memory
+        # ride in from the per-SESSION cache above — compose_turn never resolves
+        # them (fresh resolution here would break mid-session byte-stability).
+        # advertise_persona_files: the interactive shape names the persona dir so
+        # the agent's Edit tool (absolute paths) can act on it.
+        from harness import prompt as _prompt
+        composed = _prompt.compose_turn(
+            workspace_dir=ws, cwd=state.cwd,
+            model_id=model_id, system_line=platform.platform(),
+            persona_block=state.persona_block or "",
+            memory_block=state.memory_block or "",
+            advertise_persona_files=True)
+        _skill_roots = composed.skill_roots
+        _catalog_load = composed.catalog
+        base_block = composed.base_block
+        env_block = composed.env_block
 
         # cache.boundary: name which prompt block changed since the last turn.
         # Declared boundaries (persona/model swap, skills/AGENTS.md edits) are
         # expected; anything else appearing here is a silent cache invalidator.
         from harness import prompt_hash as _prompt_hash
-        _hashes = _prompt_hash.block_hashes({
-            "base": base_block,
-            "persona": state.persona_block or "",
-            "memory": state.memory_block or "",
-            "env": env_block,
-        })
+        _hashes = _prompt_hash.block_hashes(composed.hash_inputs)
         _changed = _prompt_hash.changed_blocks(state.prompt_hashes, _hashes)
         if _changed:
             await self._trace(session_id, "cache.boundary",
