@@ -31,7 +31,7 @@ from harness.acp_env import AcpEnvironment
 from harness.acp_session import SessionStore
 from harness.output_filters.dispatch import filter_output
 from harness.router import Router, Classification
-from harness.chat_handler import ChatHandler
+from harness.chat_handler import ChatHandler, is_tools_question
 from harness.permcheck import PermissionRequest, decide_permission
 from harness.transcript import flatten_agent_messages
 from harness.instance_templates import done_agent_cfg
@@ -362,6 +362,16 @@ class HarnessAgent(acp.Agent):
         except KeyError:
             pass
 
+    def _has_elicitation(self) -> bool:
+        """True when the connected client can show a permission modal. False for
+        headless/cron/CLI (no elicitation) — the signal the permission gate uses
+        to fail closed, reused to decide whether a chat_question may escalate to
+        the tool-running agent path."""
+        return not (
+            self._client_caps is None
+            or getattr(self._client_caps, "elicitation", None) is None
+        )
+
     async def prompt(self, prompt, session_id, message_id=None, **kw):
         loop = asyncio.get_running_loop()
         try:
@@ -532,6 +542,16 @@ class HarnessAgent(acp.Agent):
             skills_menu=_skills_menu,
             agents_block=_agents_block)
 
+        # Tool schemas for the chat path — the SAME registry the agent path uses
+        # (build_registry with this session's skill roots + persona memory). Shared
+        # by the chat-question escalation probe (below) and the ChatHandler it
+        # constructs, so both see identical tools and neither builds it twice.
+        from harness.tools.registry import build_registry as _build_registry
+        _chat_tool_schemas = [
+            t.schema for t in _build_registry(
+                skill_roots=_skill_roots,
+                memory_root=(ws.resolve() if ws else None))]
+
         if cls.task_type == "chat_question":
             # hand the (project-aware) catalog so "what skills do we have?" is
             # answered from data, not the model. Surface DROPPED (malformed) and
@@ -541,7 +561,8 @@ class HarnessAgent(acp.Agent):
                                   persona_block=(state.persona_block or "") + (state.memory_block or ""),
                                   base_block=base_block,
                                   skipped=_catalog_load.skipped,
-                                  shadowed=_catalog_load.shadowed)
+                                  shadowed=_catalog_load.shadowed,
+                                  tool_schemas=_chat_tool_schemas)
             pieces: list[str] = []
             chat_prose = {"buf": ""}
             chat_lock = threading.Lock()
@@ -744,10 +765,7 @@ class HarnessAgent(acp.Agent):
 
         def check_permission(req: PermissionRequest) -> bool:
             yolo = self._auto_allow()
-            has_elicitation = not (
-                self._client_caps is None
-                or getattr(self._client_caps, "elicitation", None) is None
-            )
+            has_elicitation = self._has_elicitation()
             verdict = decide_permission(req, yolo=yolo, has_elicitation=has_elicitation)
             if verdict == "allow":
                 return True

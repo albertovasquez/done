@@ -169,6 +169,26 @@ def _prompt_with_timeout(agent, sid, text, timeout=10.0):
     return asyncio.run(go())
 
 
+def test_has_elicitation_reflects_client_caps():
+    """_has_elicitation is True only when the client advertises elicitation."""
+    from pathlib import Path
+    agent = build_harness_agent(
+        model_factory=lambda *a, **k: None, agent_cfg=_agent_cfg(),
+        skills_dir=Path("skills"), router=_ChatRouter(),
+        worker_model_id=None)
+
+    class _Caps:
+        def __init__(self, elicit):
+            self.elicitation = elicit
+
+    agent._client_caps = None
+    assert agent._has_elicitation() is False
+    agent._client_caps = _Caps(None)
+    assert agent._has_elicitation() is False
+    agent._client_caps = _Caps(object())
+    assert agent._has_elicitation() is True
+
+
 def test_chat_path_prompt_returns(tmp_path):
     """A chat_question turn must RETURN a PromptResponse — if prompt() never
     resolves, the TUI's await blocks forever and 'Responding…' sticks with a
