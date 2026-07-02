@@ -8,7 +8,8 @@ place.
 
 NOTE: this module must NOT import litellm — several callers import it lazily on
 purpose (litellm costs ~1s at import and they sit on the startup path). This
-module only reads env and shapes strings/dicts; callers own the litellm call.
+module only reads env plus the provisioned client-key file and shapes
+strings/dicts; callers own the litellm call.
 """
 
 from __future__ import annotations
@@ -44,8 +45,23 @@ def base_url() -> str:
 
 
 def api_key() -> str:
-    return (os.getenv("PROXY_API_KEY") or os.getenv("VIBEPROXY_API_KEY")
-            or _DEFAULT_API_KEY)
+    v = os.getenv("PROXY_API_KEY") or os.getenv("VIBEPROXY_API_KEY")
+    if v:
+        return v
+    # Fall back to the key install()/upgrade() provisioned into the proxy's
+    # config.yaml. Sending it matters even though the bind is localhost:
+    # CLIProxyAPI derives the codex upstream's prompt_cache_key from the
+    # inbound key — without it, no prompt-cache hits (#139).
+    try:
+        from harness.proxy_service import paths as _proxy_paths
+        p = _proxy_paths.client_key_path()
+        if p.exists():
+            k = p.read_text().strip()
+            if k:
+                return k
+    except OSError:
+        pass
+    return _DEFAULT_API_KEY
 
 
 def default_model() -> str:

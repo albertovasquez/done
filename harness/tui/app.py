@@ -1143,9 +1143,13 @@ class HarnessTui(App):
         import json, urllib.request
         from harness import vibeproxy
         url = vibeproxy.base_url().rstrip("/") + "/models"
+        # /v1/models sits behind the proxy's AuthMiddleware once api-keys is
+        # provisioned — same key litellm callers send via completion_kwargs().
+        req = urllib.request.Request(
+            url, headers={"Authorization": f"Bearer {vibeproxy.api_key()}"})
 
         def _get() -> list[str]:
-            with urllib.request.urlopen(url, timeout=5) as r:
+            with urllib.request.urlopen(req, timeout=5) as r:
                 data = json.load(r)
             return sorted(m.get("id") for m in data.get("data", []) if m.get("id"))
 
