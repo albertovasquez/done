@@ -14,12 +14,15 @@ it works in mock mode too).
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import threading
 from typing import Iterator
 
 from harness.interruptible import run_interruptible
+
+logger = logging.getLogger(__name__)
 
 # `litellm` is imported lazily inside answer_stream() — at module scope it costs
 # ~1s and this module is on the agent-startup path. Mock mode returns first.
@@ -213,6 +216,10 @@ class ChatHandler:
             msg = resp.choices[0].message
             return bool(getattr(msg, "tool_calls", None))
         except Exception:
+            # Fail-open, but log: a PERSISTENT probe failure (bad schema, proxy
+            # misconfig) would otherwise silently degrade every interactive chat
+            # turn to prose with no signal. logger is module-scoped below.
+            logger.debug("wants_tool probe failed; treating as no-tool", exc_info=True)
             return False
 
     def answer_stream(self, prompt: str,
