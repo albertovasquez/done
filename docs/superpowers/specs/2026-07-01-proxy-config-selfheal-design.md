@@ -1,8 +1,16 @@
 # Proxy config self-heal (delta on #292) + session-start model availability warning
 
 **Date:** 2026-07-01 (revised 2026-07-02 after PR #292 merged)
-**Status:** Revised — pending user re-approval (ground shifted under the original
-approved design; see "What #292 already covers")
+**Status:** Implemented (this branch)
+
+**Implementation note:** during final verification, the actual cause of the
+user's recurring config loss was found and fixed on this branch:
+`tests/test_proxy_lifecycle.py::test_install_downloads_then_registers_and_starts`
+ran the real `install()` without isolating `paths.data_dir`, overwriting the
+real `~/.local/share/harness/proxy/config.yaml` (keyless, since `generate()`
+then read raw `os.environ`) on every test-suite run. Fixed by hermetic
+isolation + a suite-wide conftest default (`config_drift` → "ok" unless a test
+overrides), plus a mock-mode skip in the TUI drift check.
 
 ## Problem
 
