@@ -153,3 +153,30 @@ def test_login_requires_installed_binary(monkeypatch, tmp_path):
     out = lifecycle.login("claude")
     assert "stop" not in seq                       # didn't touch the service
     assert "dn proxy install" in out
+
+
+def test_status_warns_when_config_drifted(monkeypatch):
+    monkeypatch.setattr(lifecycle.config_gen, "ensure_management_password", lambda: "pw")
+    monkeypatch.setattr(lifecycle.management, "is_ready", lambda pw: False)
+    monkeypatch.setattr(lifecycle.config_gen, "config_drift", lambda: "drifted")
+    out = lifecycle.status()
+    assert "proxy config stale" in out.lower()
+    assert "dn proxy upgrade" in out
+
+
+def test_status_no_warning_when_config_ok(monkeypatch):
+    monkeypatch.setattr(lifecycle.config_gen, "ensure_management_password", lambda: "pw")
+    monkeypatch.setattr(lifecycle.management, "is_ready", lambda pw: False)
+    monkeypatch.setattr(lifecycle.config_gen, "config_drift", lambda: "ok")
+    out = lifecycle.status()
+    assert "stale" not in out.lower()
+
+
+def test_status_no_warning_when_config_missing(monkeypatch):
+    # "missing" means never-installed — Task 2's auto_install handles this on
+    # session_start. status() should not also nag about it as "stale".
+    monkeypatch.setattr(lifecycle.config_gen, "ensure_management_password", lambda: "pw")
+    monkeypatch.setattr(lifecycle.management, "is_ready", lambda pw: False)
+    monkeypatch.setattr(lifecycle.config_gen, "config_drift", lambda: "missing")
+    out = lifecycle.status()
+    assert "stale" not in out.lower()

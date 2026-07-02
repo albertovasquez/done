@@ -399,3 +399,51 @@ def test_tool_call_row_collapsed_line_unchanged():
     tool = ToolView(title="$ pytest", status=ToolStatus.ACTIVE, subtype="test", id="t1")
     row = ToolCallRow(tool)
     assert "⚑" in row.line_for(tool) and "pytest" in row.line_for(tool)
+
+
+def test_check_proxy_config_drift_logs_when_drifted(monkeypatch):
+    from harness.tui import app as app_mod
+
+    monkeypatch.setattr(
+        "harness.proxy_service.config_gen.config_drift", lambda: "drifted"
+    )
+    logged = []
+
+    class Stub:
+        def log(self, msg):
+            logged.append(msg)
+
+    app_mod.HarnessTui._check_proxy_config_drift(Stub())
+    assert any("proxy config stale" in m.lower() for m in logged)
+
+
+def test_check_proxy_config_drift_silent_when_ok(monkeypatch):
+    from harness.tui import app as app_mod
+
+    monkeypatch.setattr(
+        "harness.proxy_service.config_gen.config_drift", lambda: "ok"
+    )
+    logged = []
+
+    class Stub:
+        def log(self, msg):
+            logged.append(msg)
+
+    app_mod.HarnessTui._check_proxy_config_drift(Stub())
+    assert logged == []
+
+
+def test_check_proxy_config_drift_never_raises(monkeypatch):
+    from harness.tui import app as app_mod
+
+    def boom():
+        raise RuntimeError("drift check exploded")
+
+    monkeypatch.setattr("harness.proxy_service.config_gen.config_drift", boom)
+    logged = []
+
+    class Stub:
+        def log(self, msg):
+            logged.append(msg)
+
+    app_mod.HarnessTui._check_proxy_config_drift(Stub())  # must not raise

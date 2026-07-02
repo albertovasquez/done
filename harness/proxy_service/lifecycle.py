@@ -26,16 +26,23 @@ from harness.proxy_service import binary, config_gen, download, management, path
 def status() -> str:
     """Return a human-readable status string.
 
-    Composes management.is_ready (connection check) with provider auth status.
+    Composes management.is_ready (connection check) with provider auth status,
+    plus a config-drift warning (never an auto-restart — see auto_install.py
+    for the only safe automatic path, which handles "missing" only).
     Never crashes when the proxy is not running — is_ready returns False on any
     connection error, so we just report "not running" gracefully.
     """
     pw = config_gen.ensure_management_password()
+    drift = config_gen.config_drift()
+    drift_line = (
+        "  proxy config stale — run `dn proxy upgrade` to pick up changes.\n"
+        if drift == "drifted" else ""
+    )
     if not management.is_ready(pw):
-        return "CLIProxyAPI: not running (or not reachable on localhost:8317)"
+        return drift_line + "CLIProxyAPI: not running (or not reachable on localhost:8317)"
 
     # Proxy is up — report per-provider auth status.
-    lines = ["CLIProxyAPI: running"]
+    lines = [drift_line + "CLIProxyAPI: running"]
     for provider in management._AUTH_URL_PATHS:
         try:
             r = management._get("get-auth-status", pw)

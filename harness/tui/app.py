@@ -426,8 +426,23 @@ class HarnessTui(App):
             if self._tracer is not None:
                 self._tracer.emit("dn", "cron.autostart.failed", error=str(e))
 
+        self._check_proxy_config_drift()
+
         _hooks.dispatch("session_start", tracer=self._tracer,
                         cwd=self.cwd, persona_id=self._current_persona())
+
+    def _check_proxy_config_drift(self) -> None:
+        """Warn (never auto-restart) when config.yaml has drifted from current
+        env — e.g. NEURALWATT_API_KEY changed since the last `dn proxy
+        install`/`upgrade`. "missing" is handled separately by the
+        auto_install session_start hook (harness/proxy_service/auto_install.py);
+        this only covers "drifted". Never raises past this method."""
+        try:
+            from harness.proxy_service import config_gen as _proxy_config_gen
+            if _proxy_config_gen.config_drift() == "drifted":
+                self.log("proxy config stale — run `dn proxy upgrade` to pick up NEURALWATT_API_KEY changes")
+        except Exception as e:
+            self.log(f"proxy config drift check skipped: {e!r}")
 
     def _decide_cron_autostart(self, *, show_prompt) -> str:
         """Decide how to ensure cron runs. Returns the branch taken (testable).
