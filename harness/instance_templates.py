@@ -71,27 +71,52 @@ WORK_ORDER_INSTANCE = (
 )
 
 
-def _instance_template_for(task_type: str, default: str) -> str:
+# Skills whose whole purpose is to CREATE a durable resource via a model-invocable
+# tool (create_job → a cron; create_persona → an agent). When the router attaches
+# one of these, the user's intent is unambiguously to ACT — so an ops_task label
+# (the router keys on the "cron"/"agent" noun and can misfile a create request as
+# observe; see #307) must NOT drag the turn into the observe-only floor, or the
+# agent is handed the tool and told not to use it. Kept as an explicit name set,
+# not a capability taxonomy: these are the only two such skills today (#307 guard).
+ACTION_SKILLS = frozenset({"create-job", "create-persona"})
+
+
+def _has_action_skill(skills: "tuple[str, ...] | list[str]") -> bool:
+    return any(s in ACTION_SKILLS for s in skills)
+
+
+def _instance_template_for(task_type: str, default: str,
+                           skills: "tuple[str, ...] | list[str]" = ()) -> str:
     """Pick the engine instance_template for this turn. code_explain → answer-only;
     ops_task → observe-first; every other task_type → a Done-native work order.
     The `default` param (the raw mini.yaml text) is intentionally no longer
-    returned — nothing should render the vendored cat/sed default to the model."""
+    returned — nothing should render the vendored cat/sed default to the model.
+
+    Guard (#307): if an ACTION skill (create-job/create-persona) is attached, an
+    ops_task label yields the work order, not the observe floor — a create request
+    that the router misfiled as observe must still be allowed to act. A genuine
+    observe request ("is the cron firing") attaches no action skill and is
+    unaffected, so it still gets OBSERVE_FIRST_INSTANCE."""
     if task_type == "code_explain":
         return ANSWER_ONLY_INSTANCE
-    if task_type == "ops_task":
+    if task_type == "ops_task" and not _has_action_skill(skills):
         return OBSERVE_FIRST_INSTANCE
     return WORK_ORDER_INSTANCE
 
 
-def done_agent_cfg(cfg: dict, task_type: str) -> dict:
+def done_agent_cfg(cfg: dict, task_type: str,
+                   skills: "tuple[str, ...] | list[str]" = ()) -> dict:
     """Return a COPY of the engine cfg with BOTH templates made Done-native: the
     vendored mini.yaml system_template (upstream's 'helpful assistant that can
     interact with a computer') is replaced with DONE_SYSTEM_TEMPLATE, and the
-    instance_template is chosen per task_type. This is the single chokepoint the
-    CLI, ACP, and headless paths call so upstream's SWE-bench framing never reaches
-    the model from either the system OR the user turn. Never mutates `cfg`."""
+    instance_template is chosen per task_type (and the attached `skills`, so an
+    action skill overrides the observe floor — see _instance_template_for). This is
+    the single chokepoint the CLI, ACP, and headless paths call so upstream's
+    SWE-bench framing never reaches the model from either the system OR the user
+    turn. Never mutates `cfg`."""
     return {
         **cfg,
         "system_template": DONE_SYSTEM_TEMPLATE,
-        "instance_template": _instance_template_for(task_type, cfg.get("instance_template", "")),
+        "instance_template": _instance_template_for(
+            task_type, cfg.get("instance_template", ""), skills),
     }

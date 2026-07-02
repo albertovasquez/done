@@ -40,13 +40,15 @@ from harness.instance_templates import done_agent_cfg  # noqa: E402
 DEFAULT_TASK = "Fix the failing test in examples/sample-repo so that add(2, 3) == 5."
 
 
-def _instance_template_cfg(agent_cfg: dict, task_type: str) -> dict:
+def _instance_template_cfg(agent_cfg: dict, task_type: str, skills=()) -> dict:
     """Return a COPY of agent_cfg with BOTH templates made Done-native (system +
     per-task instance) via done_agent_cfg. Mirrors the ACP path so the dev CLI
     doesn't fall through to the raw mini.yaml work-order on read-only ops_task
-    requests (#177) nor to upstream's 'helpful assistant' system prompt. Never
-    mutates the caller's dict — agent_cfg is built once at module scope and reused."""
-    return done_agent_cfg(agent_cfg, task_type)
+    requests (#177) nor to upstream's 'helpful assistant' system prompt. `skills`
+    is forwarded so an attached action skill overrides the ops_task observe floor
+    (#307), same as the ACP path. Never mutates the caller's dict — agent_cfg is
+    built once at module scope and reused."""
+    return done_agent_cfg(agent_cfg, task_type, skills)
 
 
 def _load_agent_config() -> dict:
@@ -130,7 +132,7 @@ def route_and_dispatch(prompt, *, router, emitter, make_chat_handler, run_agent,
     if cls.skills:
         echo(f"skills: injected {load.injected}, skipped {load.skipped}")
     try:
-        run_agent(prompt, skill_block=load.block, task_type=cls.task_type)
+        run_agent(prompt, skill_block=load.block, task_type=cls.task_type, skills=load.injected)
     except Exception as e:  # noqa: BLE001 — record the crash in the trace, then re-raise
         emitter.emit("run.failed", error=str(e))
         raise
@@ -212,9 +214,9 @@ def main(argv: list[str] | None = None) -> int:
         cwd=args.cwd,
         system_line=platform.platform())
 
-    def run_agent(prompt, skill_block="", task_type=""):
+    def run_agent(prompt, skill_block="", task_type="", skills=()):
         runner = MiniSweAgentRunner(model, env,
-                                    agent_cfg=_instance_template_cfg(agent_cfg, task_type))
+                                    agent_cfg=_instance_template_cfg(agent_cfg, task_type, skills))
         try:
             for event in runner.run(prompt, skill_block=skill_block,
                                     persona_block=persona_block,

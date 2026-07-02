@@ -677,7 +677,8 @@ class HarnessAgent(acp.Agent):
                                             transcript, ctx.persona_block, ctx.memory_block,
                                             base_block=base_block, env_block=env_block,
                                             model_id=model_id,
-                                            task_type=cls.task_type)
+                                            task_type=cls.task_type,
+                                            skills=ctx.skills.injected)
         stop_reason = engine["stop_reason"]
         if stop_reason == "refusal":
             # streamed-on-screen == stored: never fold prior-turn prose in.
@@ -697,7 +698,7 @@ class HarnessAgent(acp.Agent):
     async def _run_agent_turn(self, loop, session_id, state, text, skill_block, prior,
                               persona_block="", memory_block="", base_block="", env_block="",
                               model_id=None,
-                              task_type="") -> dict:
+                              task_type="", skills=()) -> dict:
         # Tool-call ids are TURN-LOCAL: the counter resets each turn and the
         # "current id" lives here (not on SessionState), so the start/done/permission
         # handshake within this turn pairs correctly and ids restart at tc1 per turn.
@@ -918,7 +919,7 @@ class HarnessAgent(acp.Agent):
             # instance_template (answer-only for explain, observe-first for ops,
             # etc.) so neither the system nor the user turn carries the engine's
             # "solve this issue / edit the source" SWE-bench framing.
-            cfg = done_agent_cfg(self._agent_cfg, task_type)
+            cfg = done_agent_cfg(self._agent_cfg, task_type, skills)
             agent = None  # bound before construction so the except can reference it
             try:
                 # pass the CURRENT worker model so /models hot-swaps the agent path
