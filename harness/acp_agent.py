@@ -23,7 +23,6 @@ from acp.schema import (
 from harness import config
 from harness import memory as memory_mod
 from harness import persona
-from harness import skills
 from harness.acp_emit import (tool_call_start, tool_call_done, message_chunk,
                               with_meta, plan_update, trace_event)
 from harness.acp_env import AcpEnvironment
