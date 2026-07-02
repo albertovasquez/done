@@ -583,6 +583,7 @@ class HarnessAgent(acp.Agent):
                 _probe = ChatHandler(
                     model_id, base_block=base_block,
                     persona_block=(state.persona_block or "") + (state.memory_block or ""),
+                    env_block=env_block,
                     tool_schemas=_chat_tool_schemas)
                 wants = await loop.run_in_executor(
                     None, lambda: _probe.wants_tool(

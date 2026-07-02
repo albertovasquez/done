@@ -203,7 +203,7 @@ class ChatHandler:
         try:
             import litellm  # lazy: keep the ~1s import off startup
             from harness import vibeproxy
-            system_content = self._base_block + self._persona_block
+            system_content = self._base_block + self._persona_block + self._env_block
             resp = run_interruptible(
                 lambda: litellm.completion(
                     model=vibeproxy.model_id(self._model_id),
