@@ -469,6 +469,94 @@ def test_new_turn_prose_opens_fresh_block_after_classify_chip():
     asyncio.run(go())
 
 
+def test_cancelled_turn_stream_closed_immediately_on_esc():
+    """Regression: action_cancel must close the stream painter the moment
+    cancel is posted, not leave it open until prompt() unwinds. Before the
+    fix, a trailing delta for the cancelled turn that arrives after the next
+    turn has already begun (_add_user_message already ran) has no reliable
+    boundary signal — it can misroute into the wrong widget, the same defect
+    class as PR #81/#138 via the one path neither covered: cancellation."""
+    from harness.acp_emit import with_meta, message_chunk
+
+    def _classify_chip(task_type="chat_question"):
+        meta = {"task_type": task_type, "skills": [], "confidence": 0.99}
+        return with_meta(message_chunk(""), {"task_classified": meta})
+
+    class ControlledConn:
+        def __init__(self):
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+            self.cancelled = False
+
+        async def prompt(self, **kwargs):
+            self.started.set()
+            await self.release.wait()
+            return NS(stop_reason="cancelled" if self.cancelled else "end_turn")
+
+        async def cancel(self, **kwargs):
+            self.cancelled = True
+
+    async def go():
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await app._enter_conversation()
+            conn = ControlledConn()
+            app._conn = conn
+            app._session_id = "fake-session"
+
+            # turn 1: prompt, prose, footer — establishes a KEPT prior widget.
+            app._add_user_message("first")
+            app.on_session_update(SessionUpdate(update_agent_message_text("first answer")))
+            await pilot.pause()
+            app._write_meta(0.1)
+
+            # turn 2: prompt, partial prose, then the user cancels mid-stream.
+            app._add_user_message("second")
+            app._turn_start = time.monotonic()
+            task = asyncio.create_task(app._send_prompt("second"))
+            await conn.started.wait()
+            await pilot.pause()
+            app.on_session_update(SessionUpdate(update_agent_message_text("second partial")))
+            await pilot.pause()
+
+            await app.action_cancel()
+            await pilot.pause()
+
+            # turn 2 actually ends now (prompt() unblocks with stop_reason=cancelled).
+            conn.release.set()
+            await task
+            await pilot.pause()
+
+            # turn 3 begins immediately — mirrors the live repro (screenshot).
+            app._add_user_message("third")
+            app.on_session_update(SessionUpdate(_classify_chip()))
+            await pilot.pause()
+
+            # a STRAGGLER delta for the cancelled turn 2 arrives late (cooperative
+            # cancellation: the agent subprocess isn't guaranteed to have stopped
+            # producing the instant cancel() was called).
+            app.on_session_update(SessionUpdate(update_agent_message_text(" late-straggler")))
+            await pilot.pause()
+
+            # turn 3's own prose follows.
+            app.on_session_update(SessionUpdate(update_agent_message_text("third answer")))
+            await pilot.pause()
+
+            scroll = app.query_one("#transcript", VerticalScroll)
+            md_sources = [_md_source(md) for md in scroll.query(Markdown)]
+
+        # turn 2's straggler must extend TURN 2's (already-closed) widget in
+        # place — it must NOT land in turn 3's fresh widget, and turn 3's
+        # widget must NOT be merged with turn 2's.
+        assert md_sources == ["first answer", "second partial late-straggler", "third answer"], (
+            "cancelled-turn straggler misrouted: expected the straggler to extend "
+            f"turn 2's own (closed) widget in place, got {md_sources!r}"
+        )
+
+    asyncio.run(go())
+
+
 def test_pilot_slash_menu_does_not_move_landing_input():
     """Opening the slash menu on the landing screen must not shift the input box.
     The menu should grow upward (overlay) so the input's vertical position is
