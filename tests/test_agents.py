@@ -65,6 +65,5 @@ def test_agents_md_from_project_cwd_reaches_base_block(tmp_path):
     (tmp_path / "AGENTS.md").write_text("PROJECT POLICY XYZ", encoding="utf-8")
     load = agents.resolve_agents(persona_dir=None, project_cwd=tmp_path,
                                  global_dir=paths.config_dir())
-    bb = base_prompt.render_base_prompt(model_id="mock", cwd=str(tmp_path),
-                                        system_line="os", agents_block=load.block)
+    bb = base_prompt.render_base_prompt(agents_block=load.block)
     assert "PROJECT POLICY XYZ" in bb

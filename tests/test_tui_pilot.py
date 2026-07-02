@@ -1521,6 +1521,7 @@ def test_status_right_shows_context_used_and_remaining():
     app._worker_model_id = "claude-opus-4-8"
     app._started = True
     app._tokens = 12_345
+    app._cache_pct = None
 
     markup = app._status_right()
 
@@ -1536,6 +1537,7 @@ def test_status_right_shows_context_window_before_usage():
     app._worker_model_id = "gpt-5.4"
     app._started = True
     app._tokens = 0
+    app._cache_pct = None
 
     # zero tokens → placeholder dashes, no percentage.
     out = app._status_right()

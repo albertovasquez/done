@@ -83,7 +83,8 @@ class MiniSweAgentRunner:
         self.result = None
 
     def run(self, task: str, *, skill_block: str = "", persona_block: str = "",
-            memory_block: str = "", base_block: str = "", registry=None, **kwargs) -> Iterator[Event]:
+            memory_block: str = "", base_block: str = "", env_block: str = "",
+            registry=None, **kwargs) -> Iterator[Event]:
         q: "queue.Queue[Any]" = queue.Queue()
         emitter = QueueEmitter(q, clock=lambda: 0.0)
         # Share the model's registry with the agent so schemas (model) and dispatch
@@ -91,6 +92,7 @@ class MiniSweAgentRunner:
         agent = TracingAgent(self._model, self._env, emitter=emitter,
                              skill_block=skill_block, persona_block=persona_block,
                              memory_block=memory_block, base_block=base_block,
+                             env_block=env_block,
                              registry=(registry if registry is not None
                                        else getattr(self._model, "registry", None)),
                              **self._agent_cfg)

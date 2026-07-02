@@ -30,6 +30,7 @@ class SessionState:
     memory_block: str | None = None      # None = not-yet-composed; "" = composed-empty
     memory_load: "MemoryLoad | None" = None
     memory_load_emitted: bool = False
+    prompt_hashes: dict | None = None   # last turn's block hashes (cache.boundary, #139)
 
 
 class SessionStore:

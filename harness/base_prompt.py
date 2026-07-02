@@ -1,7 +1,10 @@
 """The dn base system prompt: durable behavioral policy (security posture +
-agent discipline) plus a runtime environment block. Unlike persona/memory/skills
-this is dn's IDENTITY — always present, not file-backed, not user-overridable,
-not content-gated. A pure render function: values in, string out, no I/O."""
+agent discipline), most-stable-first, plus a separately-rendered runtime
+environment block appended at the system-prompt tail by callers (#139: keeps
+the volatile cwd/model/platform bytes out of the cacheable prefix). Unlike
+persona/memory/skills this is dn's IDENTITY — always present, not file-backed,
+not user-overridable, not content-gated. Pure render functions: values in,
+string out, no I/O."""
 
 from __future__ import annotations
 
@@ -78,29 +81,16 @@ output. Skip the plan for single-step or trivial work.
 """
 
 
-def render_base_prompt(*, model_id: str, cwd: str, system_line: str,
-                       cutoff: str = KNOWLEDGE_CUTOFF,
-                       persona_id: str | None = None,
+def render_base_prompt(*, persona_id: str | None = None,
                        persona_dir: str | None = None,
                        skills_menu: str | None = None,
                        agents_block: str | None = None) -> str:
-    """Return the base block: the static policy, a runtime # Environment section,
-    a # Persona files section (when persona_id + persona_dir are given) naming the
-    editable persona trio + its absolute path, a # Skills menu (when skills_menu is
-    given) the agent pulls bodies from via load_skill, and the AGENTS.md
-    instruction block (when agents_block is given) — the three-tier standing policy.
-    Pure — no I/O, no globals read; everything is resolved by the caller and passed
-    in. Both the agent runner and ChatHandler consume this block, so AGENTS.md
-    reaches both paths."""
-    env = (
-        "\n\n# Environment\n"
-        f"- Working directory: {cwd}\n"
-        f"- Model: {model_id}\n"
-        f"- Knowledge cutoff: {cutoff}\n"
-        f"- OS: {system_line}\n"
-        "- Surface: you run as Done in the user's terminal (a TUI); the agent and "
-        "the UI are separate processes communicating over a pipe.\n"
-    )
+    """Return the spine: static policy, then AGENTS.md block, then the skills
+    menu, then # Persona files — ordered most-stable-first so upstream prefix
+    caches survive persona/model differences as long as possible (#139). The
+    volatile # Environment block is rendered separately by render_env_block()
+    and appended at the system-prompt TAIL by the assembly sites. Pure — no
+    I/O, no globals read."""
     persona = ""
     if persona_id and persona_dir:
         persona = (
@@ -114,4 +104,20 @@ def render_base_prompt(*, model_id: str, cwd: str, system_line: str,
             "how you behave, or what you know about them — Read and then Edit the "
             "relevant file in that directory.\n"
         )
-    return BASE_POLICY + env + persona + (skills_menu or "") + (agents_block or "")
+    return BASE_POLICY + (agents_block or "") + (skills_menu or "") + persona
+
+
+def render_env_block(*, model_id: str, cwd: str, system_line: str,
+                     cutoff: str = KNOWLEDGE_CUTOFF) -> str:
+    """The runtime # Environment section — the least-stable prompt block
+    (cwd/model/platform vary per session; model can swap mid-session), so the
+    assembly sites append it LAST in the system prompt. Pure."""
+    return (
+        "\n\n# Environment\n"
+        f"- Working directory: {cwd}\n"
+        f"- Model: {model_id}\n"
+        f"- Knowledge cutoff: {cutoff}\n"
+        f"- OS: {system_line}\n"
+        "- Surface: you run as Done in the user's terminal (a TUI); the agent and "
+        "the UI are separate processes communicating over a pipe.\n"
+    )

@@ -156,6 +156,7 @@ class ChatHandler:
     def __init__(self, worker_model_id: str | None,
                  catalog: list[tuple[str, str]] | None = None,
                  persona_block: str = "", base_block: str = "",
+                 env_block: str = "",
                  skipped: "list[tuple[str, str]] | None" = None,
                  shadowed: "list[tuple[str, str]] | None" = None,
                  *, tool_schemas: "list[dict] | None" = None):
@@ -177,6 +178,10 @@ class ChatHandler:
         # Combined with persona_block as a single system message (base first).
         # "" => no additional system content (preserves byte-identical no-op).
         self._base_block = base_block
+        # Runtime # Environment block (cwd/model/platform), rendered separately by
+        # base_prompt.render_env_block and appended LAST so the volatile bytes sit
+        # at the system-prompt tail, not inside the cacheable prefix (#139).
+        self._env_block = env_block
         # Tool schemas (OpenAI function-tool dicts) for the wants_tool probe. None
         # => no probe possible (treated as "no tool"): keeps mock/CLI byte-identical.
         self._tool_schemas = tool_schemas or []
@@ -198,7 +203,7 @@ class ChatHandler:
         try:
             import litellm  # lazy: keep the ~1s import off startup
             from harness import vibeproxy
-            system_content = self._base_block + self._persona_block
+            system_content = self._base_block + self._persona_block + self._env_block
             resp = run_interruptible(
                 lambda: litellm.completion(
                     model=vibeproxy.model_id(self._model_id),
@@ -257,7 +262,7 @@ class ChatHandler:
         import litellm  # lazy: keep the ~1s import out of startup (mock never hits this)
         from harness import vibeproxy
         from minisweagent.exceptions import UserInterruption
-        system_content = self._base_block + self._persona_block
+        system_content = self._base_block + self._persona_block + self._env_block
         # Wrap the blocking completion() open: a stalled call that never yields a
         # first token is aborted here (the per-piece check below can't reach it).
         stream = run_interruptible(

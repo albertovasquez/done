@@ -535,12 +535,29 @@ class HarnessAgent(acp.Agent):
         # Absolute path so the agent's Edit tool (which requires absolute paths) can
         # act on it; .resolve() also guards a relative XDG_CONFIG_HOME (Codex).
         base_block = base_prompt.render_base_prompt(
-            model_id=(model_id or "mock"),
-            cwd=state.cwd, system_line=platform.platform(),
             persona_id=(ws.name if ws else None),
             persona_dir=(str(ws.resolve()) if ws else None),
             skills_menu=_skills_menu,
             agents_block=_agents_block)
+        env_block = base_prompt.render_env_block(
+            model_id=(model_id or "mock"),
+            cwd=state.cwd, system_line=platform.platform())
+
+        # cache.boundary: name which prompt block changed since the last turn.
+        # Declared boundaries (persona/model swap, skills/AGENTS.md edits) are
+        # expected; anything else appearing here is a silent cache invalidator.
+        from harness import prompt_hash as _prompt_hash
+        _hashes = _prompt_hash.block_hashes({
+            "base": base_block,
+            "persona": state.persona_block or "",
+            "memory": state.memory_block or "",
+            "env": env_block,
+        })
+        _changed = _prompt_hash.changed_blocks(state.prompt_hashes, _hashes)
+        if _changed:
+            await self._trace(session_id, "cache.boundary",
+                              sid=session_id, changed=",".join(_changed))
+        state.prompt_hashes = _hashes
 
         # Chat turns that want a tool escalate to the tool-running agent path.
         # Gated tightly so this is ZERO-COST on every path that can't escalate —
@@ -566,6 +583,7 @@ class HarnessAgent(acp.Agent):
                 _probe = ChatHandler(
                     model_id, base_block=base_block,
                     persona_block=(state.persona_block or "") + (state.memory_block or ""),
+                    env_block=env_block,
                     tool_schemas=_chat_tool_schemas)
                 wants = await loop.run_in_executor(
                     None, lambda: _probe.wants_tool(
@@ -586,6 +604,7 @@ class HarnessAgent(acp.Agent):
             handler = ChatHandler(model_id, catalog=_catalog_load.skills,
                                   persona_block=(state.persona_block or "") + (state.memory_block or ""),
                                   base_block=base_block,
+                                  env_block=env_block,
                                   skipped=_catalog_load.skipped,
                                   shadowed=_catalog_load.shadowed)
             pieces: list[str] = []
@@ -656,7 +675,8 @@ class HarnessAgent(acp.Agent):
                                       "skipped": ctx.skills.skipped}}))
         engine = await self._run_agent_turn(loop, session_id, state, text, ctx.skill_block,
                                             transcript, ctx.persona_block, ctx.memory_block,
-                                            base_block=base_block, model_id=model_id,
+                                            base_block=base_block, env_block=env_block,
+                                            model_id=model_id,
                                             task_type=cls.task_type)
         stop_reason = engine["stop_reason"]
         if stop_reason == "refusal":
@@ -675,7 +695,8 @@ class HarnessAgent(acp.Agent):
         return acp.PromptResponse(stop_reason=stop_reason)
 
     async def _run_agent_turn(self, loop, session_id, state, text, skill_block, prior,
-                              persona_block="", memory_block="", base_block="", model_id=None,
+                              persona_block="", memory_block="", base_block="", env_block="",
+                              model_id=None,
                               task_type="") -> dict:
         # Tool-call ids are TURN-LOCAL: the counter resets each turn and the
         # "current id" lives here (not on SessionState), so the start/done/permission
@@ -908,7 +929,7 @@ class HarnessAgent(acp.Agent):
                 agent = TracingAgent(model_obj, env,
                                      emitter=emitter, skill_block=skill_block,
                                      persona_block=persona_block, memory_block=memory_block,
-                                     base_block=base_block,
+                                     base_block=base_block, env_block=env_block,
                                      # share the model's registry; None (mock) => agent default.
                                      registry=getattr(model_obj, "registry", None),
                                      # ESC checkpoint: the loop ends between steps when set.

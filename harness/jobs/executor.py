@@ -164,11 +164,12 @@ def _default_deps() -> Deps:
             persona_dir=workspace, project_cwd=workspace,
             global_dir=_paths.config_dir()).block
         base_block = _base_prompt.render_base_prompt(
-            model_id=(model_id or "mock"),
-            cwd=str(workspace),
-            system_line=platform.platform(),
             skills_menu=ctx.skills_menu,
             agents_block=_agents_block)
+        env_block = _base_prompt.render_env_block(
+            model_id=(model_id or "mock"),
+            cwd=str(workspace),
+            system_line=platform.platform())
 
         # Construction via the shared chokepoint (harness/agent_build.py). Cron
         # passes model_name=None for mock, else the qualified model; the builder
@@ -194,10 +195,11 @@ def _default_deps() -> Deps:
         # leaves _remaining_secs unset (None) — behavior-preserving.
         if wall_budget:
             runner._env._remaining_secs = wall_budget
-        # Pass the REAL skill_block + base_block (run_traced.py:195-198 parity).
+        # Pass the REAL skill_block + base_block (run_traced.py parity).
         for _ in runner.run(message, skill_block=ctx.skill_block,
                             persona_block=ctx.persona_block,
-                            memory_block=ctx.memory_block, base_block=base_block):
+                            memory_block=ctx.memory_block, base_block=base_block,
+                            env_block=env_block):
             pass
         # A self-paced (Dynamic) loop turn calls set_next_run, which stamps
         # env._next_run_override. Surface it so ops.run can arm the next run.

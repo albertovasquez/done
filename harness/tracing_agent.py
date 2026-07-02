@@ -64,13 +64,24 @@ def _usage_from_extra(extra: dict) -> dict:
         out["prompt"] = prompt
     if completion is not None:
         out["completion"] = completion
+    # Cache-read tokens: OpenAI shape (prompt_tokens_details.cached_tokens)
+    # or Anthropic top-level (cache_read_input_tokens). #139: this is the
+    # signal that proves prefix caching is working in production.
+    details = usage.get("prompt_tokens_details")
+    cached = None
+    if isinstance(details, dict) and isinstance(details.get("cached_tokens"), int):
+        cached = details["cached_tokens"]
+    elif isinstance(usage.get("cache_read_input_tokens"), int):
+        cached = usage["cache_read_input_tokens"]
+    if cached is not None:
+        out["cached"] = cached
     return out
 
 
 class TracingAgent(DefaultAgent):
     def __init__(self, model, env, *, emitter: Emitter, skill_block: str = "",
                  persona_block: str = "", memory_block: str = "",
-                 base_block: str = "", registry=None,
+                 base_block: str = "", env_block: str = "", registry=None,
                  cancel_flag: threading.Event | None = None,
                  goal_ctx=None, **kwargs):
         # C1: AgentConfig (Pydantic) silently drops unknown keys via extra="ignore",
@@ -92,6 +103,7 @@ class TracingAgent(DefaultAgent):
         self._persona_block = persona_block
         self._memory_block = memory_block
         self._base_block = base_block
+        self._env_block = env_block
         from harness.tools.registry import build_registry
         # registry None => default tools (mock model passes None; the AGENT still
         # needs tools to dispatch any tool_name action even when the model ignores them).
@@ -100,9 +112,12 @@ class TracingAgent(DefaultAgent):
         self._run_start = time.time()  # tracer-local clock; parent's _start_time is set in __init__
 
     def _render_template(self, template: str) -> str:
-        # Inject selected skills AFTER Jinja renders the base, so a skill body
-        # containing {{ }}/{% %} is literal text and cannot break StrictUndefined.
-        # Identity match: only the system template gets skills, never instance.
+        # Inject blocks AFTER Jinja renders the base, so a skill body containing
+        # {{ }}/{% %} is literal text and cannot break StrictUndefined.
+        # System gets the stable blocks (env LAST — least stable, #139).
+        # Router-picked skill bodies differ per turn, so they ride the INSTANCE
+        # message: putting them in the system message changes message[0] bytes
+        # turn-over-turn and cold-misses the whole prompt cache.
         out = super()._render_template(template)
         if template is self.config.system_template:
             if self._base_block:
@@ -111,8 +126,11 @@ class TracingAgent(DefaultAgent):
                 out += self._persona_block
             if self._memory_block:
                 out += self._memory_block
-            if self._skill_block:
-                out += self._skill_block
+            if self._env_block:
+                out += self._env_block
+        elif template is self.config.instance_template and self._skill_block:
+            out = ("## Skills loaded for this task\n" + self._skill_block
+                   + "\n\n" + out)
         return out
 
     def _t(self) -> float:
