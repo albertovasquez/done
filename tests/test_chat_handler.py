@@ -403,3 +403,76 @@ def test_chat_cancel_flag_none_streams_unchanged(monkeypatch):
     import litellm
     monkeypatch.setattr(litellm, "completion", fake_completion)
     assert list(ChatHandler("vibeproxy").answer_stream("hi")) == ["x", "y"]
+
+
+# ---- wants_tool: the throwaway tools-probe (chat-path-tools) ----
+
+_BASH_SCHEMA = {"type": "function", "function": {"name": "bash", "parameters": {}}}
+
+
+def test_wants_tool_mock_mode_returns_false_no_call(monkeypatch):
+    """model_id=None (mock) must return False WITHOUT calling litellm."""
+    called = {"n": 0}
+
+    def _boom(*a, **k):
+        called["n"] += 1
+        raise AssertionError("litellm.completion must not be called in mock mode")
+
+    import litellm
+    monkeypatch.setattr(litellm, "completion", _boom)
+
+    handler = ChatHandler(None, tool_schemas=[_BASH_SCHEMA])
+    assert handler.wants_tool("what's my setup?") is False
+    assert called["n"] == 0
+
+
+def test_wants_tool_no_schemas_returns_false_no_call(monkeypatch):
+    """A real model but no tool_schemas => False, no litellm call."""
+    import litellm
+    monkeypatch.setattr(litellm, "completion",
+                        lambda *a, **k: (_ for _ in ()).throw(
+                            AssertionError("must not call without schemas")))
+    assert ChatHandler("glm-5.2").wants_tool("inspect") is False
+
+
+class _FakeMsg:
+    def __init__(self, tool_calls):
+        self.tool_calls = tool_calls
+
+
+class _FakeChoice:
+    def __init__(self, tool_calls):
+        self.message = _FakeMsg(tool_calls)
+
+
+class _FakeResp:
+    def __init__(self, tool_calls):
+        self.choices = [_FakeChoice(tool_calls)]
+
+
+def _handler_with_model():
+    return ChatHandler("glm-5.2", persona_block="", base_block="You are an agent.",
+                       tool_schemas=[_BASH_SCHEMA])
+
+
+def test_wants_tool_true_when_tool_calls_present(monkeypatch):
+    import litellm
+    monkeypatch.setattr(litellm, "completion",
+                        lambda *a, **k: _FakeResp([{"id": "tc1"}]))
+    assert _handler_with_model().wants_tool("inspect my setup") is True
+
+
+def test_wants_tool_false_when_no_tool_calls(monkeypatch):
+    import litellm
+    monkeypatch.setattr(litellm, "completion", lambda *a, **k: _FakeResp(None))
+    assert _handler_with_model().wants_tool("how are you?") is False
+
+
+def test_wants_tool_fail_open_on_exception(monkeypatch):
+    import litellm
+
+    def _raise(*a, **k):
+        raise RuntimeError("proxy down")
+
+    monkeypatch.setattr(litellm, "completion", _raise)
+    assert _handler_with_model().wants_tool("anything") is False
