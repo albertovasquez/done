@@ -112,3 +112,32 @@ def ensure_management_password() -> str:
     p.write_text(pw)
     os.chmod(p, 0o600)
     return pw
+
+
+def summarize(config_text: str) -> str:
+    """One truthful line about what a generated config actually contains, for
+    install()/upgrade()/refresh output. The 2026-07-01 failure survived ten
+    reinstalls because install() said "running" about a keyless config."""
+    if "openai-compatibility:" not in config_text:
+        return ("config: NO upstream providers — no NEURALWATT_API_KEY in "
+                "~/.config/harness/.env")
+    n = config_text.count('\n      - name: "')     # model entries (6-space indent)
+    return f"config: neuralwatt ({n} models)"
+
+
+def masking_note(file_env: dict, process_env: dict) -> str | None:
+    """Note when a non-empty shell export differs from a non-empty file key —
+    the shell wins (documented precedence) but never silently."""
+    f = (file_env.get("NEURALWATT_API_KEY") or "").strip()
+    p = (process_env.get("NEURALWATT_API_KEY") or "").strip()
+    if f and p and f != p:
+        return "note: shell NEURALWATT_API_KEY overrides ~/.config/harness/.env"
+    return None
+
+
+def removal_note(old_text: str, new_text: str) -> str | None:
+    """Name a provider that a regen dropped. The file is truth — removal is
+    honored, never silent."""
+    if '- name: "neuralwatt"' in old_text and '- name: "neuralwatt"' not in new_text:
+        return "removed: neuralwatt (key no longer present)"
+    return None

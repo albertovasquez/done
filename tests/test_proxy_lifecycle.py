@@ -180,3 +180,30 @@ def test_status_no_warning_when_config_missing(monkeypatch):
     monkeypatch.setattr(lifecycle.config_gen, "config_drift", lambda: "missing")
     out = lifecycle.status()
     assert "stale" not in out.lower()
+
+
+def test_install_reports_config_summary(monkeypatch, tmp_path):
+    from harness.proxy_service import lifecycle, config_gen, paths
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path)
+    monkeypatch.setattr(lifecycle.download, "download_and_install", lambda v: tmp_path / "bin")
+    monkeypatch.setattr(lifecycle, "_register_os_service", lambda *a: "")
+    monkeypatch.setattr(lifecycle, "start", lambda: "started")
+    monkeypatch.setattr(lifecycle.management, "is_ready", lambda pw: True)
+    monkeypatch.setattr(config_gen, "generate", lambda env=None: 'host: "x"\n')
+    out = lifecycle.install()
+    assert "NO upstream providers" in out
+
+
+def test_upgrade_names_removed_provider(monkeypatch, tmp_path):
+    from harness.proxy_service import lifecycle, config_gen, paths
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path)
+    # Capture real texts BEFORE stubbing: old on-disk = keyed, new generate = keyless.
+    keyed = config_gen.generate(env={"NEURALWATT_API_KEY": "sk-x"})
+    keyless = config_gen.generate(env={})
+    paths.config_path().write_text(keyed)
+    monkeypatch.setattr(lifecycle.download, "download_and_install", lambda v: tmp_path / "bin")
+    monkeypatch.setattr(lifecycle, "stop", lambda: "stopped")
+    monkeypatch.setattr(lifecycle, "start", lambda: "started")
+    monkeypatch.setattr(config_gen, "generate", lambda env=None: keyless)
+    out = lifecycle.upgrade()
+    assert "removed: neuralwatt" in out

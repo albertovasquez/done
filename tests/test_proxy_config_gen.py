@@ -181,3 +181,34 @@ def test_generate_default_env_is_machine_global(tmp_path, monkeypatch):
     monkeypatch.setenv("NEURALWATT_API_KEY", "")
     y = config_gen.generate()
     assert "neuralwatt" in y and "sk-real-key" in y
+
+
+def test_summarize_keyed_config_names_provider_and_model_count():
+    from harness.proxy_service import config_gen
+    y = config_gen.generate(env={"NEURALWATT_API_KEY": "sk-x"})
+    assert config_gen.summarize(y) == "config: neuralwatt (3 models)"
+
+
+def test_summarize_keyless_config_says_no_providers():
+    from harness.proxy_service import config_gen
+    y = config_gen.generate(env={})
+    s = config_gen.summarize(y)
+    assert "NO upstream providers" in s and "NEURALWATT_API_KEY" in s
+
+
+def test_masking_note_fires_only_on_differing_nonempty_values():
+    from harness.proxy_service import config_gen
+    assert config_gen.masking_note({"NEURALWATT_API_KEY": "a"}, {"NEURALWATT_API_KEY": "b"})
+    assert config_gen.masking_note({"NEURALWATT_API_KEY": "a"}, {"NEURALWATT_API_KEY": "a"}) is None
+    assert config_gen.masking_note({}, {"NEURALWATT_API_KEY": "b"}) is None
+    assert config_gen.masking_note({"NEURALWATT_API_KEY": "a"}, {}) is None
+    assert config_gen.masking_note({"NEURALWATT_API_KEY": "a"}, {"NEURALWATT_API_KEY": ""}) is None
+
+
+def test_removal_note_names_dropped_provider():
+    from harness.proxy_service import config_gen
+    old = config_gen.generate(env={"NEURALWATT_API_KEY": "sk-x"})
+    new = config_gen.generate(env={})
+    assert "neuralwatt" in config_gen.removal_note(old, new)
+    assert config_gen.removal_note(new, old) is None      # provider ADDED, not removed
+    assert config_gen.removal_note(old, old) is None
