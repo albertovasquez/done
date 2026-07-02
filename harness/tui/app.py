@@ -50,7 +50,7 @@ from harness.tui.widgets.permission_modal import PermissionModal
 from harness.tui.widgets.select_modal import SelectModal, SelectOption
 from harness.tui.widgets.agent_rail import AgentRail, PersonaSelected
 from harness.tui.screens.agent_dashboard import AgentDashboard
-from harness.tui.widgets.cron_dashboard import CronDashboard, JobActionFailed
+from harness.tui.widgets.cron_dashboard import CronDashboard, JobActionFailed, JobRemoveRequested
 from harness.tui.widgets.cron_detail import CronDetail
 from harness.tui.widgets.slash_menu import SlashMenu
 from harness.tui.widgets.prompt_area import PromptArea
@@ -1830,6 +1830,41 @@ class HarnessTui(App):
             self.query_one("#cron-dashboard", CronDashboard).refresh_jobs()
         except Exception:
             pass
+
+    def on_job_remove_requested(self, event: JobRemoveRequested) -> None:
+        """The user pressed delete on a job — confirm before the irreversible remove.
+
+        The dashboard never removes directly (#178): it posts this and we push a
+        confirm modal, mirroring _show_cron_install_prompt's push_screen(modal,
+        callback) lifecycle. ops.remove runs only on an explicit yes; on failure
+        we surface it via the same JobActionFailed path.
+        """
+        event.stop()
+        from harness.tui.widgets.confirm_modal import ConfirmModal
+        job_id, name = event.job_id, event.name
+
+        def _on_choice(confirmed: bool) -> None:
+            if not confirmed:
+                return
+            from harness.jobs import ops
+            try:
+                ops.remove(job_id)
+            except Exception as exc:  # noqa: BLE001
+                self.on_job_action_failed(JobActionFailed(job_id, "remove", str(exc)))
+                return
+            try:
+                self.query_one("#cron-dashboard", CronDashboard).refresh_jobs()
+            except Exception:
+                pass
+
+        self.push_screen(
+            ConfirmModal(
+                f"Delete job '{name}'?",
+                confirm_label="Delete",
+                confirm_variant="error",
+            ),
+            callback=_on_choice,
+        )
 
     async def on_persona_selected(self, event: PersonaSelected) -> None:
         event.stop()

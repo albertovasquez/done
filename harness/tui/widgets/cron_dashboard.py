@@ -5,7 +5,9 @@ One row per job: ● {name} · {status_word} · {when}
 Actions:
   action_run_now(job_id)       — trigger an immediate run via ops.run
   action_toggle_enabled(job_id) — flip enabled flag via ops.update
-  action_remove(job_id)        — delete job via ops.remove
+  action_request_remove(job_id) — ask to delete: posts JobRemoveRequested for the
+                                  app to confirm (delete is destructive/irreversible;
+                                  the widget never calls ops.remove directly — #178)
 (creation is agent-native: ask the agent in chat, no dashboard key)
 
 Pattern: mirrors AgentRail (agent_rail.py:61) — subclasses ListView, holds rows
@@ -106,6 +108,19 @@ class JobActionFailed(Message):
         super().__init__()
 
 
+class JobRemoveRequested(Message):
+    """Posted when the user asks to delete the focused job (the 'd' key).
+
+    Delete is destructive and irreversible, so the widget never calls
+    ops.remove itself (#178): it posts this, and the app confirms via a modal
+    before removing. Carries the job name so the confirm prompt can be specific.
+    """
+    def __init__(self, job_id: str, name: str) -> None:
+        self.job_id = job_id
+        self.name = name
+        super().__init__()
+
+
 # ── Widget ────────────────────────────────────────────────────────────────────
 
 class CronDashboard(ListView):
@@ -121,7 +136,10 @@ class CronDashboard(ListView):
     BINDINGS = [
         Binding("r", "run_now", "Run now"),
         Binding("t", "toggle_enabled", "Toggle enabled"),
-        Binding("backspace", "remove_job", "Remove job"),
+        # 'd' (not backspace) — backspace is the most-pressed correction key and
+        # instantly deleting a live job on a reflex press caused real data loss
+        # (#178). Delete now sits on a deliberate key and routes through a confirm.
+        Binding("d", "request_remove", "Delete job"),
     ]
 
     def __init__(self, *args, **kwargs) -> None:
@@ -190,16 +208,16 @@ class CronDashboard(ListView):
         else:
             self._reload()
 
-    def action_remove_job(self) -> None:
+    def action_request_remove(self) -> None:
+        """Ask to delete the focused job — post JobRemoveRequested for the app to
+        confirm. The widget never calls ops.remove itself: delete is destructive
+        and irreversible, so a bare key press must not be able to destroy a job
+        (#178). The app pushes a confirm modal and only then removes."""
         job_id = self._focused_job_id()
         if job_id is None:
             return
-        try:
-            ops.remove(job_id)
-        except Exception as exc:  # noqa: BLE001
-            self.post_message(JobActionFailed(job_id, "remove", str(exc)))
-        else:
-            self._reload()
+        name = next((j.name for j in self._jobs if j.id == job_id), job_id)
+        self.post_message(JobRemoveRequested(job_id, name))
 
     # ── internal helpers ──────────────────────────────────────────────────────
 

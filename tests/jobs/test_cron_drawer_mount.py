@@ -16,10 +16,45 @@ import pytest
 from harness.tui.app import HarnessTui
 from harness.tui.widgets.cron_dashboard import CronDashboard
 from harness.tui.widgets.cron_detail import CronDetail
+from harness.tui.widgets.confirm_modal import ConfirmModal
 from harness.tui.widgets.prompt_area import PromptArea
+from harness.jobs import model as m, ops
 
 REPO = Path(__file__).resolve().parent.parent.parent
 FAKE_CMD = [__import__("sys").executable, str(REPO / "tests/fake_agent.py")]
+
+
+def _seed_job(name: str = "keep-me", job_id: str = "j1") -> m.Job:
+    """Add one job to the (tmp-isolated) store and return it."""
+    job = m.Job(
+        id=job_id, name=name, agent_id="fred",
+        schedule=m.Every(seconds=120),
+        payload=m.Reminder(text="hi"),
+        grant=m.Grant(tools="inherit", paths="workspace",
+                      write=False, exec=False, network=False),
+        cost=m.CostGate(timeout_s=10, min_cadence_s=60, max_consecutive_failures=2),
+        state=m.JobState(),
+    )
+    ops.add(job, now=1_700_000_000.0)
+    return job
+
+
+def _confirm_open(app) -> bool:
+    """A ConfirmModal is a separate screen root, so app.query() (current-screen
+    only) can't see it — check the screen stack instead."""
+    return any(isinstance(s, ConfirmModal) for s in app.screen_stack)
+
+
+async def _open_cron_focused(app, pilot):
+    """Open the cron drawer (real ctrl+j path — makes it visible + focuses the
+    dashboard) and highlight the first job row so key bindings reach it."""
+    await pilot.press("ctrl+j")
+    await pilot.pause()
+    dash = app.query_one("#cron-dashboard", CronDashboard)
+    # index 0 is the non-selectable daemon-status header; the job is index 1.
+    dash.index = 1
+    await pilot.pause()
+    return dash
 
 
 @pytest.fixture(autouse=True)
@@ -152,5 +187,76 @@ def test_on_mount_survives_autostart_failure(monkeypatch):
         async with app.run_test() as pilot:
             await pilot.pause()
             assert app.query_one("#cron-drawer") is not None   # booted anyway
+
+    asyncio.run(go())
+
+
+# ── #178: delete is confirmed, off the reflex key ────────────────────────────
+
+def test_backspace_does_not_delete_focused_job():
+    """Regression for #178: backspace must NOT delete. A reflex backspace on the
+    focused roster once destroyed a live job with no prompt; the binding is gone,
+    so the job survives and no confirm modal appears."""
+    async def go():
+        _seed_job(name="survivor")
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await _open_cron_focused(app, pilot)
+            await pilot.pause()
+
+            await pilot.press("backspace")
+            await pilot.pause()
+
+            # job still there, and no confirm modal was pushed
+            assert len(ops.list_jobs()) == 1, "backspace must not delete the job"
+            assert not _confirm_open(app), "backspace must not open a confirm modal"
+
+    asyncio.run(go())
+
+
+def test_d_opens_confirm_and_does_not_delete_until_confirmed():
+    """Pressing 'd' asks for confirmation and does NOT remove on its own — the
+    job is still in the store while the modal is up."""
+    async def go():
+        _seed_job(name="pending")
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await _open_cron_focused(app, pilot)
+            await pilot.pause()
+
+            await pilot.press("d")
+            await pilot.pause()
+
+            assert _confirm_open(app), "'d' must push a confirm modal"
+            assert len(ops.list_jobs()) == 1, "job must survive until the user confirms"
+
+    asyncio.run(go())
+
+
+def test_confirm_removes_cancel_keeps():
+    """esc on the confirm modal keeps the job; a fresh 'd' then 'y' removes it."""
+    async def go():
+        _seed_job(name="doomed")
+        app = HarnessTui(agent_cmd=FAKE_CMD, cwd=str(REPO), model="mock")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await _open_cron_focused(app, pilot)
+            await pilot.pause()
+
+            # cancel path: esc dismisses without deleting
+            await pilot.press("d")
+            await pilot.pause()
+            await pilot.press("escape")
+            await pilot.pause()
+            assert len(ops.list_jobs()) == 1, "cancel must keep the job"
+
+            # confirm path: 'd' then 'y' removes it
+            await pilot.press("d")
+            await pilot.pause()
+            await pilot.press("y")
+            await pilot.pause()
+            assert len(ops.list_jobs()) == 0, "confirming must remove the job"
 
     asyncio.run(go())
