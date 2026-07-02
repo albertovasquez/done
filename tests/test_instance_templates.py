@@ -1,7 +1,7 @@
 import pytest
 from harness.instance_templates import (
     ANSWER_ONLY_INSTANCE, OBSERVE_FIRST_INSTANCE, WORK_ORDER_INSTANCE,
-    DONE_SYSTEM_TEMPLATE, _instance_template_for, done_agent_cfg,
+    DONE_SYSTEM_TEMPLATE, ACTION_SKILLS, _instance_template_for, done_agent_cfg,
 )
 
 DEFAULT = "Please solve this issue: {{task}}\nEdit the source code to resolve it."
@@ -78,3 +78,50 @@ def test_done_agent_cfg_overrides_both_system_and_instance():
 def test_done_agent_cfg_respects_task_type():
     assert done_agent_cfg({}, "code_explain")["instance_template"] == ANSWER_ONLY_INSTANCE
     assert done_agent_cfg({}, "ops_task")["instance_template"] == OBSERVE_FIRST_INSTANCE
+
+
+# --------------------------------------------------------------------------
+# #307: an attached ACTION skill (create-job/create-persona) overrides the
+# ops_task observe floor. The router keys on the "cron"/"agent" noun and can
+# misfile a *create* request as ops_task; when it does, an action skill is
+# attached, and the observe-only floor would hand the agent the create tool and
+# forbid using it. A genuine observe request ("is the cron firing") attaches no
+# action skill, so it must still get the floor — that is the differentiator.
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("skill", sorted(ACTION_SKILLS))
+def test_ops_task_with_action_skill_gets_work_order_not_observe(skill):
+    # a create request the router misfiled as ops_task must still be allowed to act
+    assert _instance_template_for("ops_task", DEFAULT, [skill]) == WORK_ORDER_INSTANCE
+    assert done_agent_cfg({}, "ops_task", [skill])["instance_template"] == WORK_ORDER_INSTANCE
+
+
+def test_ops_task_without_action_skill_still_observes():
+    # GUARD: a genuine observe request (no action skill) keeps the observe floor.
+    assert _instance_template_for("ops_task", DEFAULT, []) == OBSERVE_FIRST_INSTANCE
+    # a non-action skill attached to an ops_task does NOT lift the floor
+    assert _instance_template_for("ops_task", DEFAULT, ["systematic-debugging"]) == OBSERVE_FIRST_INSTANCE
+    # and the chokepoint agrees
+    assert done_agent_cfg({}, "ops_task", [])["instance_template"] == OBSERVE_FIRST_INSTANCE
+
+
+def test_action_skill_mixed_with_others_still_lifts_floor():
+    # the router commonly attaches create-job alongside a helper skill; presence of
+    # ANY action skill is enough to lift the observe floor.
+    mixed = ["verification-before-completion", "create-job"]
+    assert _instance_template_for("ops_task", DEFAULT, mixed) == WORK_ORDER_INSTANCE
+
+
+def test_action_skill_does_not_disturb_non_ops_task_types():
+    # the guard is scoped to ops_task; other task types are unaffected whether or
+    # not an action skill is attached.
+    assert _instance_template_for("code_explain", DEFAULT, ["create-job"]) == ANSWER_ONLY_INSTANCE
+    assert _instance_template_for("code_feature", DEFAULT, ["create-job"]) == WORK_ORDER_INSTANCE
+
+
+def test_done_agent_cfg_skills_defaults_preserve_prior_behavior():
+    # backward compat: the skills arg is optional; omitting it reproduces the
+    # pre-#307 per-task-type behavior exactly (every existing caller/test relies
+    # on this).
+    assert done_agent_cfg({}, "ops_task")["instance_template"] == OBSERVE_FIRST_INSTANCE
+    assert done_agent_cfg({}, "code_fix")["instance_template"] == WORK_ORDER_INSTANCE

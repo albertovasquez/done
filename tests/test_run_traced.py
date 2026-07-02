@@ -23,7 +23,7 @@ class _FixedRouter:
 
 def _spy_agent():
     calls = []
-    def run_agent(prompt, skill_block="", task_type=""):
+    def run_agent(prompt, skill_block="", task_type="", skills=()):
         calls.append(prompt)
     run_agent.calls = calls
     return run_agent
@@ -124,7 +124,7 @@ def test_8_eof_and_empty_clarification_fail_safe(tmp_path):
 def test_9_event_seq_contiguous_with_classified_first(tmp_path):
     from harness.events import Emitter, Event
     em = Emitter(tmp_path / "events.jsonl", clock=lambda: 0.0, console=False)
-    def run_agent(prompt, skill_block="", task_type=""):
+    def run_agent(prompt, skill_block="", task_type="", skills=()):
         # simulate runner events arriving pre-built with their OWN seq 0,1
         for i, t in enumerate(["llm.call", "action"]):
             em.write_renumbered(Event(seq=i, t=0.0, type=t, data={}))
@@ -219,7 +219,7 @@ def test_classify_failure_is_emitted(tmp_path):
 def test_run_failure_is_emitted(tmp_path):
     """An agent-run crash must be recorded in the trace, not swallowed to stderr."""
     em = _emitter(tmp_path)
-    def boom_agent(prompt, skill_block="", task_type=""):
+    def boom_agent(prompt, skill_block="", task_type="", skills=()):
         raise RuntimeError("engine exploded")
     import pytest
     with pytest.raises(RuntimeError):
@@ -317,7 +317,7 @@ def test_11_skill_load_emitted_and_block_passed(tmp_path):
     import json as _j
     em = Emitter(tmp_path / "events.jsonl", clock=lambda: 0.0, console=False)
     received = {}
-    def run_agent(prompt, skill_block="", task_type=""):
+    def run_agent(prompt, skill_block="", task_type="", skills=()):
         received["block"] = skill_block
     out = []
     route_and_dispatch(
