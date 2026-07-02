@@ -115,6 +115,12 @@ def main(argv=None) -> int | None:
     # os.environ here when the shell did NOT already set it.
     from harness import vibeproxy
     shell_set_model = vibeproxy.model_set_in(os.environ)
+    # Same discipline for NEURALWATT_API_KEY: capture whatever is genuinely in the
+    # shell BEFORE load_env(cwd) can merge a project-local .env value into
+    # os.environ. Once merged the two are indistinguishable (load_env uses
+    # override=False), which would make the proxy config-drift check (which must
+    # compare against machine-global env only, never project env) unreliable.
+    _shell_neuralwatt_key = os.environ.get("NEURALWATT_API_KEY")
     paths.load_env(cwd)               # resolve VIBEPROXY_* / PROXY_MODEL before spawning the agent
     backend, model_override = _resolve_model(args.model, args.persona)
     args.model = backend              # normalize so _relaunch_args carries the resolved backend
@@ -138,7 +144,8 @@ def main(argv=None) -> int | None:
         agent_cmd.append("--debug")   # the subprocess relays trace payloads when set
     app = HarnessTui(agent_cmd=agent_cmd, cwd=cwd, model=backend,
                      worker_model_id=worker_model_id, yolo=yolo,
-                     persona=args.persona, debug=debug)
+                     persona=args.persona, debug=debug,
+                     shell_neuralwatt_key=_shell_neuralwatt_key)
     app.run()
     if getattr(app, "_reexec", False):
         cmd = _relaunch_command(args, cwd)
