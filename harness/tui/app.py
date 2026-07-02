@@ -483,6 +483,8 @@ class HarnessTui(App):
         directly and only overlay NEURALWATT_API_KEY from
         self._shell_neuralwatt_key — the pre-load_env snapshot captured in
         tui_main.py — never from ambient os.environ."""
+        if self.model == "mock":
+            return    # hermetic/test mode: never read real machine config, never prompt
         try:
             from harness.proxy_service import config_gen as _proxy_config_gen
             from harness import paths as _harness_paths

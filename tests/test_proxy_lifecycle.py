@@ -27,9 +27,11 @@ def test_install_downloads_then_registers_and_starts(monkeypatch, tmp_path):
     monkeypatch.setattr(lifecycle, "start", lambda: (seq.append("start") or "started"))
     monkeypatch.setattr(lifecycle.management, "is_ready", lambda pw: True)
     monkeypatch.setattr(lifecycle.binary, "target_path", lambda: tmp_path / "cli-proxy-api")
+    monkeypatch.setattr(lifecycle.paths, "data_dir", lambda: tmp_path)
     out = lifecycle.install()
     assert seq == ["download", "register", "start"]
     assert "running" in out.lower() or "started" in out.lower()
+    assert (tmp_path / "config.yaml").exists()
 
 
 def test_uninstall_stops_and_removes_data_dir(monkeypatch, tmp_path):

@@ -407,12 +407,38 @@ def test_tool_call_row_collapsed_line_unchanged():
 # attribute so `self._shell_neuralwatt_key` resolves; None means "the shell did
 # not genuinely export NEURALWATT_API_KEY", matching tui_main.py's capture.
 class _DriftStub:
+    model = "vibeproxy"   # non-mock: exercise the real drifted/ok branches below
+
     def __init__(self, shell_neuralwatt_key=None):
         self._shell_neuralwatt_key = shell_neuralwatt_key
         self.logged = []
 
     def log(self, msg):
         self.logged.append(msg)
+
+
+def test_check_proxy_config_drift_skips_entirely_in_mock_mode(monkeypatch):
+    """Hermeticity guard: mock-mode (pilot/stress tests) must never read the
+    real machine config or push the refresh modal — verified regression where
+    a genuinely-drifted machine config popped ProxyRefreshModal and ate pilot
+    keystrokes."""
+    from harness.tui import app as app_mod
+
+    calls = []
+    monkeypatch.setattr(
+        "harness.proxy_service.config_gen.config_drift",
+        lambda env=None: (calls.append(env) or "drifted"),
+    )
+    stub = _DriftStub()
+    stub.model = "mock"
+    stub._show_proxy_refresh_prompt = lambda: (_ for _ in ()).throw(
+        AssertionError("must not prompt in mock mode")
+    )
+
+    app_mod.HarnessTui._check_proxy_config_drift(stub)
+
+    assert calls == []          # config_drift() never called
+    assert stub.logged == []    # nothing logged either
 
 
 def test_check_proxy_config_drift_logs_when_drifted(monkeypatch):
