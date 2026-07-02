@@ -1,5 +1,6 @@
 import os
 import stat
+from harness import paths as harness_paths
 from harness.proxy_service import config_gen, paths
 
 
@@ -90,3 +91,48 @@ def test_config_drift_drifted_when_key_removed(tmp_path, monkeypatch):
     monkeypatch.setattr(paths, "data_dir", lambda: tmp_path)
     cfg_path.write_text(config_gen.generate(env={"NEURALWATT_API_KEY": "nw-123"}))
     assert config_gen.config_drift(env={}) == "drifted"
+
+
+def test_config_drift_default_reads_machine_global_env_file(tmp_path, monkeypatch):
+    """config_drift()'s default (no env= arg) must resolve NEURALWATT_API_KEY
+    from the machine-global ~/.config/harness/.env FILE, not just whatever is
+    already in os.environ. This is the TUI vs `dn proxy` asymmetry from the
+    review: the TUI process's os.environ may lack a key that only lives in
+    the machine-global .env file (never loaded into this test process), yet
+    config_drift() must still see it — because that's what install()/upgrade()
+    actually baked into config.yaml."""
+    cfg_path = tmp_path / "config.yaml"
+    machine_global_dir = tmp_path / "machine-global"
+    machine_global_dir.mkdir()
+    (machine_global_dir / ".env").write_text("NEURALWATT_API_KEY=machine-global-key\n")
+    monkeypatch.setattr(paths, "config_path", lambda: cfg_path)
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path)
+    monkeypatch.setattr(harness_paths, "config_dir", lambda: machine_global_dir)
+    monkeypatch.delenv("NEURALWATT_API_KEY", raising=False)
+
+    # config.yaml was written using the machine-global key (what install() saw).
+    cfg_path.write_text(config_gen.generate(env={"NEURALWATT_API_KEY": "machine-global-key"}))
+
+    # No env= override, no process env for the key: default must still resolve
+    # "ok" by reading the machine-global .env file directly, not raw os.environ
+    # (which is empty of the key in this test process).
+    assert config_gen.config_drift() == "ok"
+
+
+def test_config_drift_default_process_env_wins_over_machine_global_file(tmp_path, monkeypatch):
+    """Process-level env (e.g. a real shell export) must still take precedence
+    over the machine-global .env FILE, matching load_env()'s documented
+    override=False precedence ("process env always wins")."""
+    cfg_path = tmp_path / "config.yaml"
+    machine_global_dir = tmp_path / "machine-global"
+    machine_global_dir.mkdir()
+    (machine_global_dir / ".env").write_text("NEURALWATT_API_KEY=stale-file-key\n")
+    monkeypatch.setattr(paths, "config_path", lambda: cfg_path)
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path)
+    monkeypatch.setattr(harness_paths, "config_dir", lambda: machine_global_dir)
+    monkeypatch.setenv("NEURALWATT_API_KEY", "process-env-key")
+
+    # config.yaml matches the process-env key, NOT the stale file key.
+    cfg_path.write_text(config_gen.generate(env={"NEURALWATT_API_KEY": "process-env-key"}))
+
+    assert config_gen.config_drift() == "ok"

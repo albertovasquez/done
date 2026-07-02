@@ -43,6 +43,23 @@ def generate(port: int = 8317, *, env=None) -> str:
     return base
 
 
+def _machine_global_env() -> dict:
+    """Resolve NEURALWATT_API_KEY (and anything else) from process env layered
+    over ONLY the machine-global ~/.config/harness/.env — never a project-local
+    .env. This mirrors what `dn proxy install`/`upgrade` actually bakes into
+    config.yaml (proxy_service/cli.py:5-12 deliberately excludes project env,
+    since the proxy is machine-global). config_drift() must compare against
+    THIS, not raw os.environ, so a project-local NEURALWATT_API_KEY (which the
+    TUI's own env loading layers in) can never produce an unresolvable
+    "drifted" warning that `dn proxy upgrade` could never clear."""
+    from dotenv import dotenv_values
+    from harness import paths as _harness_paths
+
+    merged = dict(dotenv_values(_harness_paths.config_dir() / ".env"))
+    merged.update(os.environ)  # process env always wins — matches load_env()'s override=False precedence
+    return merged
+
+
 def config_drift(*, env=None) -> str:
     """Compare config.yaml on disk against what generate() would produce now.
 
@@ -53,10 +70,22 @@ def config_drift(*, env=None) -> str:
     mkdirs the data dir as a side effect (harmless, idempotent, same dir
     install() creates anyway), but this function never writes config.yaml
     itself and never raises on a missing file.
+
+    Defaults (env=None) to _machine_global_env() rather than raw os.environ:
+    the two call sites (lifecycle.status() and the TUI's
+    _check_proxy_config_drift()) run in processes with DIFFERENT os.environ
+    precedence — the TUI layers in a project-local .env, `dn proxy` never
+    does — so comparing against raw os.environ would make the two callers
+    disagree about drift for the same on-disk config.yaml. config.yaml is
+    always written from machine-global env only (see generate()'s callers in
+    install()/upgrade()), so that's what we must diff against here,
+    regardless of which process calls us.
     """
     cfg_path = paths.config_path()
     if not cfg_path.exists():
         return "missing"
+    if env is None:
+        env = _machine_global_env()
     current = generate(env=env)
     on_disk = cfg_path.read_text()
     return "ok" if current == on_disk else "drifted"

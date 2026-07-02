@@ -441,6 +441,9 @@ class HarnessTui(App):
             from harness.proxy_service import config_gen as _proxy_config_gen
             if _proxy_config_gen.config_drift() == "drifted":
                 self.log("proxy config stale — run `dn proxy upgrade` to pick up NEURALWATT_API_KEY changes")
+            # "missing" is intentionally silent here (no self.log) — auto_install's
+            # session_start hook owns that path, and logging it here would perturb
+            # the TUI snapshot-test baseline (tests/test_tui_snapshots.py).
         except Exception as e:
             self.log(f"proxy config drift check skipped: {e!r}")
 
