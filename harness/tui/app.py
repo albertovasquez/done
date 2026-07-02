@@ -435,9 +435,60 @@ class HarnessTui(App):
                 self._tracer.emit("dn", "cron.autostart.failed", error=str(e))
 
         self._check_proxy_config_drift()
+        self.run_worker(self._warn_if_model_unserved(), thread=False)
 
         _hooks.dispatch("session_start", tracer=self._tracer,
                         cwd=self.cwd, persona_id=self._current_persona())
+
+    async def _warn_if_model_unserved(self) -> None:
+        """Session-start availability warning (#290's warn half): one visible
+        line when the configured worker model isn't served by the proxy —
+        BEFORE the first turn dies in an opaque BadGatewayError retry loop.
+        Never substitutes (resolve_or_warn contract). Fail-open: any error is
+        silent; skipped entirely in mock mode (snapshot tests run mock, and
+        mock has no proxy to reconcile against)."""
+        try:
+            if self.model == "mock" or not self._worker_model_id:
+                return
+            proxy_ids = await self._fetch_models()
+            from harness import model_catalog, model_keys, model_availability
+            from harness.proxy_service import management, config_gen as _pcg
+
+            def _fetch_auth() -> dict:
+                try:
+                    pw = _pcg.ensure_management_password()
+                    return management._get("get-auth-status", pw).json()
+                except Exception:
+                    return {}
+
+            import asyncio
+            auth = await asyncio.get_running_loop().run_in_executor(None, _fetch_auth)
+            keys = model_keys.keys_present(auth_status=auth, environ=self._machine_env_snapshot())
+            statuses = model_availability.reconcile(
+                model_catalog.providers(), proxy_ids, keys)
+            _, warning = model_availability.resolve_or_warn(
+                self._worker_model_id, statuses)
+            if warning:
+                self._notify_line(f"{self._launch_persona}: {warning} — running anyway")
+        except Exception:
+            return
+
+    def _machine_env_snapshot(self) -> dict:
+        """Machine-global env for comparing against / regenerating config.yaml:
+        the ~/.config/harness/.env file, overlaid with NEURALWATT_API_KEY from
+        self._shell_neuralwatt_key (the pre-load_env shell snapshot captured in
+        tui_main.py) when it was genuinely exported. Never reads os.environ
+        directly — by the time the TUI runs, tui_main.py's load_env(cwd) has
+        already merged a project-local .env into os.environ (override=False),
+        indistinguishable from a real shell export. Shared by
+        _check_proxy_config_drift and _warn_if_model_unserved so both agree on
+        what "the machine-global config" is."""
+        from harness import paths as _harness_paths
+        from dotenv import dotenv_values
+        machine_global = dict(dotenv_values(_harness_paths.config_dir() / ".env"))
+        if self._shell_neuralwatt_key:   # "" = no real export; must not mask the file key
+            machine_global["NEURALWATT_API_KEY"] = self._shell_neuralwatt_key
+        return machine_global
 
     def _check_proxy_config_drift(self) -> None:
         """Warn (never auto-restart) when config.yaml has drifted from current
@@ -446,28 +497,51 @@ class HarnessTui(App):
         auto_install session_start hook (harness/proxy_service/auto_install.py);
         this only covers "drifted". Never raises past this method.
 
-        Builds the comparison env explicitly instead of relying on
-        config_drift()'s os.environ-derived default: by the time this runs,
-        tui_main.py's load_env(cwd) has already merged any project-local .env
-        NEURALWATT_API_KEY into os.environ (override=False), indistinguishable
-        from a genuine shell export. So we read the machine-global .env file
-        directly and only overlay NEURALWATT_API_KEY from
-        self._shell_neuralwatt_key — the pre-load_env snapshot captured in
-        tui_main.py — never from ambient os.environ."""
+        Builds the comparison env via _machine_env_snapshot() instead of
+        relying on config_drift()'s os.environ-derived default — see that
+        method's docstring for why raw os.environ can't be trusted here."""
+        if self.model == "mock":
+            return    # hermetic/test mode: never read real machine config, never prompt
         try:
             from harness.proxy_service import config_gen as _proxy_config_gen
-            from harness import paths as _harness_paths
-            from dotenv import dotenv_values
-            machine_global = dict(dotenv_values(_harness_paths.config_dir() / ".env"))
-            if self._shell_neuralwatt_key is not None:
-                machine_global["NEURALWATT_API_KEY"] = self._shell_neuralwatt_key
+            machine_global = self._machine_env_snapshot()
             if _proxy_config_gen.config_drift(env=machine_global) == "drifted":
-                self.log("proxy config stale — run `dn proxy upgrade` to pick up NEURALWATT_API_KEY changes")
+                self._show_proxy_refresh_prompt(machine_global)
             # "missing" is intentionally silent here (no self.log) — auto_install's
             # session_start hook owns that path, and logging it here would perturb
             # the TUI snapshot-test baseline (tests/test_tui_snapshots.py).
         except Exception as e:
             self.log(f"proxy config drift check skipped: {e!r}")
+
+    def _show_proxy_refresh_prompt(self, machine_global: dict) -> None:
+        """One-keypress consent for a drifted proxy config (spec B). Accept →
+        regenerate + restart via lifecycle.refresh_config in an async worker,
+        using the SAME machine_global env the drift check just compared
+        against (never re-derived from polluted os.environ); decline/esc →
+        the #292 log line, unchanged. on_mount runs once, so this prompts at
+        most once per TUI session."""
+        from harness.tui.widgets.proxy_refresh_modal import ProxyRefreshModal
+
+        def _on_choice(accepted) -> None:
+            if accepted:
+                self.run_worker(self._do_proxy_refresh(machine_global), thread=False)
+            else:
+                self.log("proxy config stale — run `dn proxy upgrade` to pick up "
+                         "NEURALWATT_API_KEY changes")
+
+        self.push_screen(ProxyRefreshModal(), callback=_on_choice)
+
+    async def _do_proxy_refresh(self, env: dict) -> None:
+        """Regenerate config.yaml + restart the proxy from the given
+        machine-global env. Runs as an async worker (see on_mount's
+        run_worker(..., thread=False)); the blocking lifecycle call itself is
+        offloaded to an executor thread so it never blocks the event loop."""
+        import asyncio
+        from harness.proxy_service import lifecycle
+        result = await asyncio.get_running_loop().run_in_executor(
+            None, lambda: lifecycle.refresh_config(env=env))
+        for line in result.splitlines():
+            self._notify_line(line)
 
     def _decide_cron_autostart(self, *, show_prompt) -> str:
         """Decide how to ensure cron runs. Returns the branch taken (testable).

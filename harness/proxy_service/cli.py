@@ -16,6 +16,7 @@ def run(argv) -> int:
         "install": lifecycle.install, "uninstall": lifecycle.uninstall,
         "start": lifecycle.start, "stop": lifecycle.stop,
         "status": lifecycle.status, "upgrade": lifecycle.upgrade,
+        "refresh": lifecycle.refresh_config,
         "login": lambda: lifecycle.login(argv[1] if len(argv) > 1 else None),
     }.get(cmd)
     if fn is None:

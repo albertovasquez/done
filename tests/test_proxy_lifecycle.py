@@ -27,9 +27,11 @@ def test_install_downloads_then_registers_and_starts(monkeypatch, tmp_path):
     monkeypatch.setattr(lifecycle, "start", lambda: (seq.append("start") or "started"))
     monkeypatch.setattr(lifecycle.management, "is_ready", lambda pw: True)
     monkeypatch.setattr(lifecycle.binary, "target_path", lambda: tmp_path / "cli-proxy-api")
+    monkeypatch.setattr(lifecycle.paths, "data_dir", lambda: tmp_path)
     out = lifecycle.install()
     assert seq == ["download", "register", "start"]
     assert "running" in out.lower() or "started" in out.lower()
+    assert (tmp_path / "config.yaml").exists()
 
 
 def test_uninstall_stops_and_removes_data_dir(monkeypatch, tmp_path):
@@ -180,3 +182,84 @@ def test_status_no_warning_when_config_missing(monkeypatch):
     monkeypatch.setattr(lifecycle.config_gen, "config_drift", lambda: "missing")
     out = lifecycle.status()
     assert "stale" not in out.lower()
+
+
+def test_install_reports_config_summary(monkeypatch, tmp_path):
+    from harness.proxy_service import lifecycle, config_gen, paths
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path)
+    monkeypatch.setattr(lifecycle.download, "download_and_install", lambda v: tmp_path / "bin")
+    monkeypatch.setattr(lifecycle, "_register_os_service", lambda *a: "")
+    monkeypatch.setattr(lifecycle, "start", lambda: "started")
+    monkeypatch.setattr(lifecycle.management, "is_ready", lambda pw: True)
+    monkeypatch.setattr(config_gen, "generate", lambda env=None: 'host: "x"\n')
+    out = lifecycle.install()
+    assert "NO upstream providers" in out
+
+
+def test_upgrade_names_removed_provider(monkeypatch, tmp_path):
+    from harness.proxy_service import lifecycle, config_gen, paths
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path)
+    # Capture real texts BEFORE stubbing: old on-disk = keyed, new generate = keyless.
+    keyed = config_gen.generate(env={"NEURALWATT_API_KEY": "sk-x"})
+    keyless = config_gen.generate(env={})
+    paths.config_path().write_text(keyed)
+    monkeypatch.setattr(lifecycle.download, "download_and_install", lambda v: tmp_path / "bin")
+    monkeypatch.setattr(lifecycle, "stop", lambda: "stopped")
+    monkeypatch.setattr(lifecycle, "start", lambda: "started")
+    monkeypatch.setattr(config_gen, "generate", lambda env=None: keyless)
+    out = lifecycle.upgrade()
+    assert "removed: neuralwatt" in out
+
+
+def test_refresh_config_regenerates_and_restarts(monkeypatch, tmp_path):
+    from harness.proxy_service import lifecycle, config_gen, paths
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path)
+    calls = []
+    monkeypatch.setattr(lifecycle, "stop", lambda: calls.append("stop") or "stopped")
+    monkeypatch.setattr(lifecycle, "start", lambda: calls.append("start") or "started")
+    monkeypatch.setattr(config_gen, "generate",
+                        lambda env=None: 'host: "x"\nopenai-compatibility:\n  - name: "neuralwatt"\n    models:\n      - name: "glm-5.2"\n')
+    out = lifecycle.refresh_config()
+    assert calls == ["stop", "start"]
+    assert "refresh: complete" in out
+    assert "neuralwatt" in paths.config_path().read_text()
+
+
+def test_refresh_config_write_failure_aborts_before_restart(monkeypatch, tmp_path):
+    from harness.proxy_service import lifecycle, config_gen, paths
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path)
+    calls = []
+    monkeypatch.setattr(lifecycle, "stop", lambda: calls.append("stop"))
+    monkeypatch.setattr(lifecycle, "start", lambda: calls.append("start"))
+    monkeypatch.setattr(config_gen, "generate", lambda env=None: (_ for _ in ()).throw(RuntimeError("boom")))
+    out = lifecycle.refresh_config()
+    assert calls == []                      # never restart against a half-written config
+    assert "config write failed" in out
+
+
+def test_refresh_config_env_passthrough(monkeypatch, tmp_path):
+    """C1: refresh_config must forward its env kwarg to config_gen.generate()
+    verbatim — the TUI's caller passes the drift-check's machine-global env
+    (never os.environ) so a project-local key never gets baked into the
+    machine-global config.yaml."""
+    from harness.proxy_service import lifecycle, config_gen, paths
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path)
+    monkeypatch.setattr(lifecycle, "stop", lambda: "stopped")
+    monkeypatch.setattr(lifecycle, "start", lambda: "started")
+    seen = []
+
+    def fake_generate(env=None):
+        seen.append(env)
+        return 'host: "x"\n'
+
+    monkeypatch.setattr(config_gen, "generate", fake_generate)
+    want = {"NEURALWATT_API_KEY": "sk-tui"}
+    lifecycle.refresh_config(env=want)
+    assert seen == [want]
+
+
+def test_cli_dispatches_refresh(monkeypatch):
+    from harness.proxy_service import cli, lifecycle
+    monkeypatch.setattr(lifecycle, "refresh_config", lambda: "CLIProxyAPI refresh: complete")
+    monkeypatch.setattr("harness.paths.load_env", lambda project_dir=None: None)
+    assert cli.run(["refresh"]) == 0

@@ -136,3 +136,79 @@ def test_config_drift_default_process_env_wins_over_machine_global_file(tmp_path
     cfg_path.write_text(config_gen.generate(env={"NEURALWATT_API_KEY": "process-env-key"}))
 
     assert config_gen.config_drift() == "ok"
+
+
+def test_machine_global_env_empty_shell_value_does_not_mask_file_key(tmp_path, monkeypatch):
+    # Poisoned terminal: shell exports NEURALWATT_API_KEY="" while the real key
+    # lives in ~/.config/harness/.env. Empty must be treated as absent.
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    (cfg_dir / ".env").write_text("NEURALWATT_API_KEY=sk-real-key\n")
+    monkeypatch.setattr(harness_paths, "config_dir", lambda: cfg_dir)
+    monkeypatch.setenv("NEURALWATT_API_KEY", "")
+    env = config_gen._machine_global_env()
+    assert env.get("NEURALWATT_API_KEY") == "sk-real-key"
+
+
+def test_machine_global_env_nonempty_shell_value_still_wins(tmp_path, monkeypatch):
+    # A REAL shell export keeps #292's documented precedence (process env wins).
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    (cfg_dir / ".env").write_text("NEURALWATT_API_KEY=sk-file-key\n")
+    monkeypatch.setattr(harness_paths, "config_dir", lambda: cfg_dir)
+    monkeypatch.setenv("NEURALWATT_API_KEY", "sk-shell-key")
+    env = config_gen._machine_global_env()
+    assert env.get("NEURALWATT_API_KEY") == "sk-shell-key"
+
+
+def test_machine_global_env_empty_file_value_is_absent(tmp_path, monkeypatch):
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    (cfg_dir / ".env").write_text("NEURALWATT_API_KEY=\n")
+    monkeypatch.setattr(harness_paths, "config_dir", lambda: cfg_dir)
+    monkeypatch.delenv("NEURALWATT_API_KEY", raising=False)
+    env = config_gen._machine_global_env()
+    assert "NEURALWATT_API_KEY" not in env
+
+
+def test_generate_default_env_is_machine_global(tmp_path, monkeypatch):
+    # generate(env=None) must resolve through _machine_global_env(), so
+    # install()/upgrade() write keyed configs even from a poisoned shell.
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    (cfg_dir / ".env").write_text("NEURALWATT_API_KEY=sk-real-key\n")
+    monkeypatch.setattr(harness_paths, "config_dir", lambda: cfg_dir)
+    monkeypatch.setenv("NEURALWATT_API_KEY", "")
+    y = config_gen.generate()
+    assert "neuralwatt" in y and "sk-real-key" in y
+
+
+def test_summarize_keyed_config_names_provider_and_model_count():
+    from harness.proxy_service import config_gen
+    y = config_gen.generate(env={"NEURALWATT_API_KEY": "sk-x"})
+    assert config_gen.summarize(y) == "config: neuralwatt (3 models)"
+
+
+def test_summarize_keyless_config_says_no_providers():
+    from harness.proxy_service import config_gen
+    y = config_gen.generate(env={})
+    s = config_gen.summarize(y)
+    assert "NO upstream providers" in s and "NEURALWATT_API_KEY" in s
+
+
+def test_masking_note_fires_only_on_differing_nonempty_values():
+    from harness.proxy_service import config_gen
+    assert config_gen.masking_note({"NEURALWATT_API_KEY": "a"}, {"NEURALWATT_API_KEY": "b"})
+    assert config_gen.masking_note({"NEURALWATT_API_KEY": "a"}, {"NEURALWATT_API_KEY": "a"}) is None
+    assert config_gen.masking_note({}, {"NEURALWATT_API_KEY": "b"}) is None
+    assert config_gen.masking_note({"NEURALWATT_API_KEY": "a"}, {}) is None
+    assert config_gen.masking_note({"NEURALWATT_API_KEY": "a"}, {"NEURALWATT_API_KEY": ""}) is None
+
+
+def test_removal_note_names_dropped_provider():
+    from harness.proxy_service import config_gen
+    old = config_gen.generate(env={"NEURALWATT_API_KEY": "sk-x"})
+    new = config_gen.generate(env={})
+    assert "neuralwatt" in config_gen.removal_note(old, new)
+    assert config_gen.removal_note(new, old) is None      # provider ADDED, not removed
+    assert config_gen.removal_note(old, old) is None

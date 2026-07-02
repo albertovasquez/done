@@ -76,8 +76,9 @@ def install() -> str:
 
     # Step 2 — write config.
     try:
-        config_text = config_gen.generate()
         cfg_path = paths.config_path()
+        old_text = cfg_path.read_text() if cfg_path.exists() else ""
+        config_text = config_gen.generate()
         cfg_path.write_text(config_text)
     except Exception as exc:
         return f"CLIProxyAPI install: config write failed — {exc}"
@@ -94,15 +95,27 @@ def install() -> str:
     except Exception as exc:
         return f"CLIProxyAPI install: start failed — {exc}"
 
+    from dotenv import dotenv_values
+    from harness import paths as harness_paths
+    extra = [config_gen.summarize(config_text)]
+    removal = config_gen.removal_note(old_text, config_text)
+    if removal:
+        extra.append(removal)
+    masking = config_gen.masking_note(
+        dict(dotenv_values(harness_paths.config_dir() / ".env")), dict(os.environ))
+    if masking:
+        extra.append(masking)
+
     # Step 5 — readiness poll (a few attempts, short sleep).
     _MAX_ATTEMPTS = 5
     _SLEEP_SECS = 0.5
     for _ in range(_MAX_ATTEMPTS):
         if management.is_ready(pw):
-            return "CLIProxyAPI install: running"
+            return "\n".join(["CLIProxyAPI install: running", *extra])
         time.sleep(_SLEEP_SECS)
 
-    return "CLIProxyAPI install: started (readiness check timed out — may still be starting)"
+    return "\n".join(
+        ["CLIProxyAPI install: started (readiness check timed out — may still be starting)", *extra])
 
 
 def upgrade() -> str:
@@ -128,13 +141,58 @@ def upgrade() -> str:
     try:
         config_gen.ensure_management_password()
         cfg_path = paths.config_path()
-        cfg_path.write_text(config_gen.generate())
+        old_text = cfg_path.read_text() if cfg_path.exists() else ""
+        config_text = config_gen.generate()
+        cfg_path.write_text(config_text)
     except Exception as exc:
         return f"CLIProxyAPI upgrade: config write failed — {exc}"
 
+    from dotenv import dotenv_values
+    from harness import paths as harness_paths
+    extra = [config_gen.summarize(config_text)]
+    removal = config_gen.removal_note(old_text, config_text)
+    if removal:
+        extra.append(removal)
+    masking = config_gen.masking_note(
+        dict(dotenv_values(harness_paths.config_dir() / ".env")), dict(os.environ))
+    if masking:
+        extra.append(masking)
+
     stop_result = stop()
     start_result = start()
-    return f"CLIProxyAPI upgrade: complete ({stop_result}; {start_result})"
+    return "\n".join(
+        [f"CLIProxyAPI upgrade: complete ({stop_result}; {start_result})", *extra])
+
+
+def refresh_config(*, env: dict | None = None) -> str:
+    """Regenerate config.yaml from current machine-global env and restart the
+    service — `dn proxy upgrade` minus the binary re-download. Only ever called
+    from user-consented paths (the TUI drift prompt, the explicit
+    `dn proxy refresh` verb); never run unattended — restarting the
+    machine-global proxy under other sessions/cron is the #292 hard constraint.
+
+    env — passed straight through to config_gen.generate(). None (the CLI's
+    default) keeps generate()'s own machine-global default. Callers whose
+    os.environ is polluted by a project-local .env (the TUI) MUST pass an
+    explicit machine-global env — see HarnessTui._machine_env_snapshot.
+    """
+    try:
+        config_gen.ensure_management_password()
+        cfg_path = paths.config_path()
+        old_text = cfg_path.read_text() if cfg_path.exists() else ""
+        new_text = config_gen.generate(env=env)
+        cfg_path.write_text(new_text)
+    except Exception as exc:
+        return f"CLIProxyAPI refresh: config write failed — {exc}"
+
+    stop_result = stop()
+    start_result = start()
+    lines = [f"CLIProxyAPI refresh: complete ({stop_result}; {start_result})",
+             config_gen.summarize(new_text)]
+    removal = config_gen.removal_note(old_text, new_text)
+    if removal:
+        lines.append(removal)
+    return "\n".join(lines)
 
 
 def uninstall() -> str:

@@ -407,12 +407,48 @@ def test_tool_call_row_collapsed_line_unchanged():
 # attribute so `self._shell_neuralwatt_key` resolves; None means "the shell did
 # not genuinely export NEURALWATT_API_KEY", matching tui_main.py's capture.
 class _DriftStub:
+    model = "vibeproxy"   # non-mock: exercise the real drifted/ok branches below
+
     def __init__(self, shell_neuralwatt_key=None):
         self._shell_neuralwatt_key = shell_neuralwatt_key
         self.logged = []
+        self.notified = []
 
     def log(self, msg):
         self.logged.append(msg)
+
+    def _notify_line(self, msg):
+        self.notified.append(msg)
+
+    # Real implementation — _check_proxy_config_drift and _warn_if_model_unserved
+    # both call self._machine_env_snapshot(); exercise the actual method rather
+    # than re-deriving its logic in the stub.
+    from harness.tui.app import HarnessTui as _RealHarnessTui
+    _machine_env_snapshot = _RealHarnessTui._machine_env_snapshot
+
+
+def test_check_proxy_config_drift_skips_entirely_in_mock_mode(monkeypatch):
+    """Hermeticity guard: mock-mode (pilot/stress tests) must never read the
+    real machine config or push the refresh modal — verified regression where
+    a genuinely-drifted machine config popped ProxyRefreshModal and ate pilot
+    keystrokes."""
+    from harness.tui import app as app_mod
+
+    calls = []
+    monkeypatch.setattr(
+        "harness.proxy_service.config_gen.config_drift",
+        lambda env=None: (calls.append(env) or "drifted"),
+    )
+    stub = _DriftStub()
+    stub.model = "mock"
+    stub._show_proxy_refresh_prompt = lambda machine_global: (_ for _ in ()).throw(
+        AssertionError("must not prompt in mock mode")
+    )
+
+    app_mod.HarnessTui._check_proxy_config_drift(stub)
+
+    assert calls == []          # config_drift() never called
+    assert stub.logged == []    # nothing logged either
 
 
 def test_check_proxy_config_drift_logs_when_drifted(monkeypatch):
@@ -422,9 +458,12 @@ def test_check_proxy_config_drift_logs_when_drifted(monkeypatch):
         "harness.proxy_service.config_gen.config_drift", lambda env=None: "drifted"
     )
     stub = _DriftStub()
+    prompted = []
+    stub._show_proxy_refresh_prompt = lambda machine_global: prompted.append(machine_global)
 
     app_mod.HarnessTui._check_proxy_config_drift(stub)
-    assert any("proxy config stale" in m.lower() for m in stub.logged)
+    assert prompted and prompted[0] is not None
+    assert stub.logged == []
 
 
 def test_check_proxy_config_drift_silent_when_ok(monkeypatch):
@@ -513,3 +552,156 @@ def test_check_proxy_config_drift_uses_shell_snapshot_when_present(monkeypatch, 
 
     assert len(seen_envs) == 1
     assert seen_envs[0].get("NEURALWATT_API_KEY") == "genuine-shell-key"
+
+
+def test_check_proxy_config_drift_empty_shell_key_does_not_mask(monkeypatch, tmp_path):
+    # Poisoned terminal: pre-launch snapshot captured "" — the overlay must
+    # treat it like None (fall through to the file key), so a keyless on-disk
+    # config in that terminal reports "drifted", not "ok".
+    from harness.tui import app as app_mod
+    from harness import paths as harness_paths
+
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    (cfg_dir / ".env").write_text("NEURALWATT_API_KEY=sk-real-key\n")
+    monkeypatch.setattr(harness_paths, "config_dir", lambda: cfg_dir)
+    seen_envs = []
+
+    def fake_drift(env=None):
+        seen_envs.append(env)
+        return "ok"
+
+    monkeypatch.setattr("harness.proxy_service.config_gen.config_drift", fake_drift)
+    stub = _DriftStub(shell_neuralwatt_key="")
+    app_mod.HarnessTui._check_proxy_config_drift(stub)
+    assert seen_envs and seen_envs[0].get("NEURALWATT_API_KEY") == "sk-real-key"
+
+
+def test_refresh_prompt_decline_falls_back_to_log(monkeypatch):
+    from harness.tui import app as app_mod
+
+    logged = []
+    pushed = []
+
+    class Stub:
+        log = staticmethod(lambda msg: logged.append(msg))
+        run_worker = staticmethod(lambda *a, **k: pushed.append(("worker", a)))
+
+        def push_screen(self, modal, callback):
+            pushed.append(("screen", type(modal).__name__))
+            callback(False)              # user declines
+
+    app_mod.HarnessTui._show_proxy_refresh_prompt(Stub(), {"NEURALWATT_API_KEY": "sk-machine"})
+    assert ("screen", "ProxyRefreshModal") in pushed
+    assert any("proxy config stale" in m for m in logged)
+    assert not any(p[0] == "worker" for p in pushed)
+
+
+def test_refresh_prompt_accept_runs_refresh_worker(monkeypatch):
+    """C1 regression: the env the drift check compared against must be the
+    SAME dict handed to _do_proxy_refresh — never re-derived from polluted
+    os.environ. Recorded via a fake _do_proxy_refresh so this stays a unit
+    test (no real coroutine execution)."""
+    from harness.tui import app as app_mod
+
+    workers = []
+    received_env = []
+
+    class Stub:
+        log = staticmethod(lambda msg: None)
+
+        def _do_proxy_refresh(self, env):
+            received_env.append(env)
+
+            async def _coro():
+                pass
+            return _coro()
+
+        def run_worker(self, coro, thread=False):
+            coro.close()                 # don't actually run it in this unit test
+            workers.append(True)
+
+        def push_screen(self, modal, callback):
+            callback(True)               # user accepts
+
+    machine_global = {"NEURALWATT_API_KEY": "sk-machine"}
+    app_mod.HarnessTui._show_proxy_refresh_prompt(Stub(), machine_global)
+    assert workers == [True]
+    assert received_env == [machine_global]
+
+
+def test_warn_if_model_unserved_logs_when_missing(monkeypatch):
+    import asyncio
+    import harness.tui.app as app_mod
+    from harness import model_keys as model_keys_mod
+    # Determinism: whether NEURALWATT_API_KEY is present in the test process env
+    # changes resolve_or_warn's reason text (login_needed vs stale_config). Force
+    # "no keys" so the warning text is independent of the environment.
+    monkeypatch.setattr(model_keys_mod, "keys_present", lambda **k: {})
+    notified = []
+
+    class Stub:
+        model = "vibeproxy"
+        _worker_model_id = "glm-5.2"
+        _launch_persona = "default"
+        _machine_env_snapshot = staticmethod(lambda: {})
+        _notify_line = staticmethod(lambda msg: notified.append(msg))
+        async def _fetch_models(self):
+            return ["claude-opus-4-8"]           # configured model NOT served
+
+    asyncio.run(app_mod.HarnessTui._warn_if_model_unserved(Stub()))
+    assert notified and "glm-5.2" in notified[0] and "running anyway" in notified[0]
+
+
+def test_warn_if_model_unserved_silent_when_served():
+    import asyncio
+    import harness.tui.app as app_mod
+    notified = []
+
+    class Stub:
+        model = "vibeproxy"
+        _worker_model_id = "glm-5.2"
+        _launch_persona = "default"
+        _machine_env_snapshot = staticmethod(lambda: {})
+        _notify_line = staticmethod(lambda msg: notified.append(msg))
+        async def _fetch_models(self):
+            return ["glm-5.2"]
+
+    asyncio.run(app_mod.HarnessTui._warn_if_model_unserved(Stub()))
+    assert notified == []
+
+
+def test_warn_if_model_unserved_fail_open_on_fetch_error():
+    import asyncio
+    import harness.tui.app as app_mod
+    notified = []
+
+    class Stub:
+        model = "vibeproxy"
+        _worker_model_id = "glm-5.2"
+        _launch_persona = "default"
+        _machine_env_snapshot = staticmethod(lambda: {})
+        _notify_line = staticmethod(lambda msg: notified.append(msg))
+        async def _fetch_models(self):
+            raise OSError("proxy down")
+
+    asyncio.run(app_mod.HarnessTui._warn_if_model_unserved(Stub()))
+    assert notified == []
+
+
+def test_warn_if_model_unserved_skips_mock_mode():
+    import asyncio
+    import harness.tui.app as app_mod
+    fetched = []
+
+    class Stub:
+        model = "mock"
+        _worker_model_id = None
+        _launch_persona = "default"
+        log = staticmethod(lambda msg: fetched.append(("log", msg)))
+        async def _fetch_models(self):
+            fetched.append(("fetch",))
+            return []
+
+    asyncio.run(app_mod.HarnessTui._warn_if_model_unserved(Stub()))
+    assert fetched == []
