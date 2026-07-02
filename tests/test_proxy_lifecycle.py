@@ -207,3 +207,36 @@ def test_upgrade_names_removed_provider(monkeypatch, tmp_path):
     monkeypatch.setattr(config_gen, "generate", lambda env=None: keyless)
     out = lifecycle.upgrade()
     assert "removed: neuralwatt" in out
+
+
+def test_refresh_config_regenerates_and_restarts(monkeypatch, tmp_path):
+    from harness.proxy_service import lifecycle, config_gen, paths
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path)
+    calls = []
+    monkeypatch.setattr(lifecycle, "stop", lambda: calls.append("stop") or "stopped")
+    monkeypatch.setattr(lifecycle, "start", lambda: calls.append("start") or "started")
+    monkeypatch.setattr(config_gen, "generate",
+                        lambda env=None: 'host: "x"\nopenai-compatibility:\n  - name: "neuralwatt"\n    models:\n      - name: "glm-5.2"\n')
+    out = lifecycle.refresh_config()
+    assert calls == ["stop", "start"]
+    assert "refresh: complete" in out
+    assert "neuralwatt" in paths.config_path().read_text()
+
+
+def test_refresh_config_write_failure_aborts_before_restart(monkeypatch, tmp_path):
+    from harness.proxy_service import lifecycle, config_gen, paths
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path)
+    calls = []
+    monkeypatch.setattr(lifecycle, "stop", lambda: calls.append("stop"))
+    monkeypatch.setattr(lifecycle, "start", lambda: calls.append("start"))
+    monkeypatch.setattr(config_gen, "generate", lambda env=None: (_ for _ in ()).throw(RuntimeError("boom")))
+    out = lifecycle.refresh_config()
+    assert calls == []                      # never restart against a half-written config
+    assert "config write failed" in out
+
+
+def test_cli_dispatches_refresh(monkeypatch):
+    from harness.proxy_service import cli, lifecycle
+    monkeypatch.setattr(lifecycle, "refresh_config", lambda: "CLIProxyAPI refresh: complete")
+    monkeypatch.setattr("harness.paths.load_env", lambda project_dir=None: None)
+    assert cli.run(["refresh"]) == 0

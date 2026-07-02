@@ -164,6 +164,32 @@ def upgrade() -> str:
         [f"CLIProxyAPI upgrade: complete ({stop_result}; {start_result})", *extra])
 
 
+def refresh_config() -> str:
+    """Regenerate config.yaml from current machine-global env and restart the
+    service — `dn proxy upgrade` minus the binary re-download. Only ever called
+    from user-consented paths (the TUI drift prompt, the explicit
+    `dn proxy refresh` verb); never run unattended — restarting the
+    machine-global proxy under other sessions/cron is the #292 hard constraint.
+    """
+    try:
+        config_gen.ensure_management_password()
+        cfg_path = paths.config_path()
+        old_text = cfg_path.read_text() if cfg_path.exists() else ""
+        new_text = config_gen.generate()
+        cfg_path.write_text(new_text)
+    except Exception as exc:
+        return f"CLIProxyAPI refresh: config write failed — {exc}"
+
+    stop_result = stop()
+    start_result = start()
+    lines = [f"CLIProxyAPI refresh: complete ({stop_result}; {start_result})",
+             config_gen.summarize(new_text)]
+    removal = config_gen.removal_note(old_text, new_text)
+    if removal:
+        lines.append(removal)
+    return "\n".join(lines)
+
+
 def uninstall() -> str:
     """Stop the service, deregister it, and remove all proxy data.
 
