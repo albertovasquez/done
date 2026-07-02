@@ -459,7 +459,7 @@ class HarnessTui(App):
             from harness import paths as _harness_paths
             from dotenv import dotenv_values
             machine_global = dict(dotenv_values(_harness_paths.config_dir() / ".env"))
-            if self._shell_neuralwatt_key is not None:
+            if self._shell_neuralwatt_key:   # "" = no real export; must not mask the file key
                 machine_global["NEURALWATT_API_KEY"] = self._shell_neuralwatt_key
             if _proxy_config_gen.config_drift(env=machine_global) == "drifted":
                 self.log("proxy config stale — run `dn proxy upgrade` to pick up NEURALWATT_API_KEY changes")

@@ -11,7 +11,7 @@ def generate(port: int = 8317, *, env=None) -> str:
     # we intentionally omit remote-management.secret-key (config plaintext is
     # bcrypt-hashed on boot and unusable thereafter).
     if env is None:
-        env = os.environ
+        env = _machine_global_env()
     # auth-dir pins where OAuth tokens (auths/*.json) are written and read. Without
     # it CLIProxyAPI defaults to ./auths relative to the process cwd, so the
     # `dn proxy login` foreground process and the background service would write to
@@ -59,13 +59,18 @@ def _machine_global_env() -> dict:
     os.environ is polluted by `paths.load_env(cwd)` before it ever runs, so it
     builds its own env explicitly from a pre-load_env shell snapshot instead
     (see harness/tui/app.py::HarnessTui._check_proxy_config_drift). Do not
-    reuse this function's default from a process that loads a project .env."""
+    reuse this function's default from a process that loads a project .env.
+    Empty-string values are treated as absent — an exported empty key must
+    never mask the file's real key."""
     from dotenv import dotenv_values
     from harness import paths as _harness_paths
 
     merged = dict(dotenv_values(_harness_paths.config_dir() / ".env"))
-    merged.update(os.environ)  # process env always wins — matches load_env()'s override=False precedence
-    return merged
+    # Process env wins — matches load_env()'s override=False precedence — but an
+    # EMPTY exported value is "absent", not an override: it must not mask a real
+    # file key (the 2026-07-01 ten-reinstalls foot-gun).
+    merged.update({k: v for k, v in os.environ.items() if v != ""})
+    return {k: v for k, v in merged.items() if v}
 
 
 def config_drift(*, env=None) -> str:

@@ -513,3 +513,26 @@ def test_check_proxy_config_drift_uses_shell_snapshot_when_present(monkeypatch, 
 
     assert len(seen_envs) == 1
     assert seen_envs[0].get("NEURALWATT_API_KEY") == "genuine-shell-key"
+
+
+def test_check_proxy_config_drift_empty_shell_key_does_not_mask(monkeypatch, tmp_path):
+    # Poisoned terminal: pre-launch snapshot captured "" — the overlay must
+    # treat it like None (fall through to the file key), so a keyless on-disk
+    # config in that terminal reports "drifted", not "ok".
+    from harness.tui import app as app_mod
+    from harness import paths as harness_paths
+
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    (cfg_dir / ".env").write_text("NEURALWATT_API_KEY=sk-real-key\n")
+    monkeypatch.setattr(harness_paths, "config_dir", lambda: cfg_dir)
+    seen_envs = []
+
+    def fake_drift(env=None):
+        seen_envs.append(env)
+        return "ok"
+
+    monkeypatch.setattr("harness.proxy_service.config_gen.config_drift", fake_drift)
+    stub = _DriftStub(shell_neuralwatt_key="")
+    app_mod.HarnessTui._check_proxy_config_drift(stub)
+    assert seen_envs and seen_envs[0].get("NEURALWATT_API_KEY") == "sk-real-key"
