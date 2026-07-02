@@ -435,9 +435,38 @@ class HarnessTui(App):
                 self._tracer.emit("dn", "cron.autostart.failed", error=str(e))
 
         self._check_proxy_config_drift()
+        self.run_worker(self._warn_if_model_unserved(), thread=False)
 
         _hooks.dispatch("session_start", tracer=self._tracer,
                         cwd=self.cwd, persona_id=self._current_persona())
+
+    async def _warn_if_model_unserved(self) -> None:
+        """Session-start availability warning (#290's warn half): one visible
+        line when the configured worker model isn't served by the proxy —
+        BEFORE the first turn dies in an opaque BadGatewayError retry loop.
+        Never substitutes (resolve_or_warn contract). Fail-open: any error is
+        silent; skipped entirely in mock mode (snapshot tests run mock, and
+        mock has no proxy to reconcile against)."""
+        try:
+            if self.model == "mock" or not self._worker_model_id:
+                return
+            proxy_ids = await self._fetch_models()
+            from harness import model_catalog, model_keys, model_availability
+            from harness.proxy_service import management, config_gen as _pcg
+            try:
+                pw = _pcg.ensure_management_password()
+                auth = management._get("get-auth-status", pw).json()
+            except Exception:
+                auth = {}
+            keys = model_keys.keys_present(auth_status=auth, environ=os.environ)
+            statuses = model_availability.reconcile(
+                model_catalog.providers(), proxy_ids, keys)
+            _, warning = model_availability.resolve_or_warn(
+                self._worker_model_id, statuses)
+            if warning:
+                self.log(f"{self._launch_persona}: {warning} — running anyway")
+        except Exception:
+            return
 
     def _check_proxy_config_drift(self) -> None:
         """Warn (never auto-restart) when config.yaml has drifted from current

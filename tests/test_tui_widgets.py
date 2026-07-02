@@ -581,3 +581,77 @@ def test_refresh_prompt_accept_runs_refresh_worker(monkeypatch):
 
     app_mod.HarnessTui._show_proxy_refresh_prompt(Stub())
     assert workers == [True]
+
+
+def test_warn_if_model_unserved_logs_when_missing(monkeypatch):
+    import asyncio
+    import harness.tui.app as app_mod
+    from harness import model_keys as model_keys_mod
+    # Determinism: whether NEURALWATT_API_KEY is present in the test process env
+    # changes resolve_or_warn's reason text (login_needed vs stale_config). Force
+    # "no keys" so the warning text is independent of the environment.
+    monkeypatch.setattr(model_keys_mod, "keys_present", lambda **k: {})
+    logged = []
+
+    class Stub:
+        model = "vibeproxy"
+        _worker_model_id = "glm-5.2"
+        _launch_persona = "default"
+        log = staticmethod(lambda msg: logged.append(msg))
+        async def _fetch_models(self):
+            return ["claude-opus-4-8"]           # configured model NOT served
+
+    asyncio.run(app_mod.HarnessTui._warn_if_model_unserved(Stub()))
+    assert logged and "glm-5.2" in logged[0] and "running anyway" in logged[0]
+
+
+def test_warn_if_model_unserved_silent_when_served():
+    import asyncio
+    import harness.tui.app as app_mod
+    logged = []
+
+    class Stub:
+        model = "vibeproxy"
+        _worker_model_id = "glm-5.2"
+        _launch_persona = "default"
+        log = staticmethod(lambda msg: logged.append(msg))
+        async def _fetch_models(self):
+            return ["glm-5.2"]
+
+    asyncio.run(app_mod.HarnessTui._warn_if_model_unserved(Stub()))
+    assert logged == []
+
+
+def test_warn_if_model_unserved_fail_open_on_fetch_error():
+    import asyncio
+    import harness.tui.app as app_mod
+    logged = []
+
+    class Stub:
+        model = "vibeproxy"
+        _worker_model_id = "glm-5.2"
+        _launch_persona = "default"
+        log = staticmethod(lambda msg: logged.append(msg))
+        async def _fetch_models(self):
+            raise OSError("proxy down")
+
+    asyncio.run(app_mod.HarnessTui._warn_if_model_unserved(Stub()))
+    assert logged == []
+
+
+def test_warn_if_model_unserved_skips_mock_mode():
+    import asyncio
+    import harness.tui.app as app_mod
+    fetched = []
+
+    class Stub:
+        model = "mock"
+        _worker_model_id = None
+        _launch_persona = "default"
+        log = staticmethod(lambda msg: fetched.append(("log", msg)))
+        async def _fetch_models(self):
+            fetched.append(("fetch",))
+            return []
+
+    asyncio.run(app_mod.HarnessTui._warn_if_model_unserved(Stub()))
+    assert fetched == []
