@@ -1,7 +1,19 @@
 import os
 import stat
+
+import pytest
+
 from harness import paths as harness_paths
 from harness.proxy_service import config_gen, paths
+
+
+@pytest.fixture(autouse=True)
+def _isolated_proxy_data_dir(tmp_path, monkeypatch):
+    """generate() now reads the machine-global client-api-key file; without
+    isolation, a key provisioned on the dev machine would leak into every
+    un-monkeypatched generate() call below (the #295 hermeticity lesson).
+    Tests that need their own data_dir still override this per-test."""
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path / "proxy-data")
 
 
 def test_generated_config_is_localhost_and_has_no_secret_key():
@@ -20,6 +32,45 @@ def test_management_password_is_persisted_0600(tmp_path, monkeypatch):
     assert pw1 == pw2 and len(pw1) >= 32
     mode = stat.S_IMODE(os.stat(paths.secret_path()).st_mode)
     assert mode == 0o600
+
+
+def test_client_api_key_is_persisted_0600_and_idempotent(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path)
+    k1 = config_gen.ensure_client_api_key()
+    k2 = config_gen.ensure_client_api_key()            # idempotent: same value
+    assert k1 == k2 and len(k1) >= 32
+    mode = stat.S_IMODE(os.stat(paths.client_key_path()).st_mode)
+    assert mode == 0o600
+
+
+def test_generate_embeds_client_api_key_when_provisioned(tmp_path, monkeypatch):
+    import yaml
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path)
+    key = config_gen.ensure_client_api_key()
+    d = yaml.safe_load(config_gen.generate(env={}))
+    assert d["api-keys"] == [key]
+
+
+def test_generate_keeps_empty_api_keys_before_provisioning():
+    # autouse fixture points data_dir at an empty tmp dir: no key file yet.
+    assert "api-keys: []" in config_gen.generate(env={})
+
+
+def test_client_api_key_empty_file_is_absent(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path)
+    paths.client_key_path().write_text("")
+    assert config_gen.client_api_key() is None
+
+
+def test_config_drift_ok_with_client_key_and_drifted_when_key_removed(tmp_path, monkeypatch):
+    cfg_path = tmp_path / "config.yaml"
+    monkeypatch.setattr(paths, "config_path", lambda: cfg_path)
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path)
+    config_gen.ensure_client_api_key()
+    cfg_path.write_text(config_gen.generate(env={}))
+    assert config_gen.config_drift(env={}) == "ok"
+    paths.client_key_path().unlink()                   # key gone → truthful drift
+    assert config_gen.config_drift(env={}) == "drifted"
 
 
 def test_generate_includes_neuralwatt_when_key_set():

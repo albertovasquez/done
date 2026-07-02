@@ -76,6 +76,7 @@ def install() -> str:
 
     # Step 2 — write config.
     try:
+        config_gen.ensure_client_api_key()   # provision before generate() reads it
         cfg_path = paths.config_path()
         old_text = cfg_path.read_text() if cfg_path.exists() else ""
         config_text = config_gen.generate()
@@ -140,6 +141,7 @@ def upgrade() -> str:
     # restart against a half-written config.
     try:
         config_gen.ensure_management_password()
+        config_gen.ensure_client_api_key()
         cfg_path = paths.config_path()
         old_text = cfg_path.read_text() if cfg_path.exists() else ""
         config_text = config_gen.generate()
@@ -178,6 +180,7 @@ def refresh_config(*, env: dict | None = None) -> str:
     """
     try:
         config_gen.ensure_management_password()
+        config_gen.ensure_client_api_key()
         cfg_path = paths.config_path()
         old_text = cfg_path.read_text() if cfg_path.exists() else ""
         new_text = config_gen.generate(env=env)

@@ -15,3 +15,7 @@ def config_path() -> Path:
 
 def secret_path() -> Path:
     return data_dir() / "management-password"   # 0600, plaintext, in-memory injected
+
+
+def client_key_path() -> Path:
+    return data_dir() / "client-api-key"        # 0600, plaintext, baked into config.yaml
