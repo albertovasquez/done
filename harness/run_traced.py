@@ -85,15 +85,25 @@ def route_and_dispatch(prompt, *, router, emitter, make_chat_handler, run_agent,
     The caller owns the emitter's lifecycle (open/close); this function only
     emits through it. Returns an exit code (0 on a handled/declined request).
     """
-    try:
-        cls = router.classify(prompt)
-    except Exception as e:  # noqa: BLE001 — record the failure in the trace, then re-raise
-        # The trace IS the point of this CLI; a run that died classifying must
-        # leave a record, not just a stderr line main() prints.
-        emitter.emit("task.classify_failed", error=str(e))
-        raise
-    emitter.emit("task.classified", task_type=cls.task_type, skills=cls.skills,
-                 confidence=cls.confidence, suggested_model=cls.suggested_model)
+    def classify_timed(text):
+        # Router classify runs BEFORE the runner installs its run-relative clock,
+        # so the event's own t= is frozen at ~0.0 and does NOT time the router
+        # (#306). Measure the real round-trip with a monotonic delta and carry it
+        # in duration_s so the router's latency is visible in the trace.
+        t0 = time.monotonic()
+        try:
+            result = router.classify(text)
+        except Exception as e:  # noqa: BLE001 — record the failure in the trace, then re-raise
+            # The trace IS the point of this CLI; a run that died classifying must
+            # leave a record, not just a stderr line main() prints.
+            emitter.emit("task.classify_failed", error=str(e))
+            raise
+        emitter.emit("router.classified", duration_s=round(time.monotonic() - t0, 3))
+        emitter.emit("task.classified", task_type=result.task_type, skills=result.skills,
+                     confidence=result.confidence, suggested_model=result.suggested_model)
+        return result
+
+    cls = classify_timed(prompt)
     if cls.needs_clarification:
         try:
             answer = ask_user(cls.clarifying_question or "Please clarify:")
@@ -102,11 +112,9 @@ def route_and_dispatch(prompt, *, router, emitter, make_chat_handler, run_agent,
         if not answer.strip():
             echo("no clarification provided — not running the agent.")
             return 0
-        cls = router.classify(prompt + "\n\n[clarification]: " + answer)
-        # Re-emit so the trace reflects the decision the run ACTUALLY dispatched
-        # on (not the pre-clarification guess) — observability is the point here.
-        emitter.emit("task.classified", task_type=cls.task_type, skills=cls.skills,
-                     confidence=cls.confidence, suggested_model=cls.suggested_model)
+        # Re-time + re-emit so the trace reflects the decision the run ACTUALLY
+        # dispatched on (not the pre-clarification guess) — observability is the point.
+        cls = classify_timed(prompt + "\n\n[clarification]: " + answer)
     if cls.suggested_model and cls.suggested_model != worker_model_id:
         echo(f"(router suggests model '{cls.suggested_model}'; using your '{worker_model_id}')")
     if cls.task_type == "chat_question":
