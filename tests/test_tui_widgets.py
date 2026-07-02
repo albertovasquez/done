@@ -399,3 +399,117 @@ def test_tool_call_row_collapsed_line_unchanged():
     tool = ToolView(title="$ pytest", status=ToolStatus.ACTIVE, subtype="test", id="t1")
     row = ToolCallRow(tool)
     assert "⚑" in row.line_for(tool) and "pytest" in row.line_for(tool)
+
+
+# Stub for _check_proxy_config_drift: the method now reads self._shell_neuralwatt_key
+# (the pre-load_env shell snapshot captured in tui_main.py) instead of trusting
+# config_drift()'s os.environ-derived default. Every stub below carries the
+# attribute so `self._shell_neuralwatt_key` resolves; None means "the shell did
+# not genuinely export NEURALWATT_API_KEY", matching tui_main.py's capture.
+class _DriftStub:
+    def __init__(self, shell_neuralwatt_key=None):
+        self._shell_neuralwatt_key = shell_neuralwatt_key
+        self.logged = []
+
+    def log(self, msg):
+        self.logged.append(msg)
+
+
+def test_check_proxy_config_drift_logs_when_drifted(monkeypatch):
+    from harness.tui import app as app_mod
+
+    monkeypatch.setattr(
+        "harness.proxy_service.config_gen.config_drift", lambda env=None: "drifted"
+    )
+    stub = _DriftStub()
+
+    app_mod.HarnessTui._check_proxy_config_drift(stub)
+    assert any("proxy config stale" in m.lower() for m in stub.logged)
+
+
+def test_check_proxy_config_drift_silent_when_ok(monkeypatch):
+    from harness.tui import app as app_mod
+
+    monkeypatch.setattr(
+        "harness.proxy_service.config_gen.config_drift", lambda env=None: "ok"
+    )
+    stub = _DriftStub()
+
+    app_mod.HarnessTui._check_proxy_config_drift(stub)
+    assert stub.logged == []
+
+
+def test_check_proxy_config_drift_never_raises(monkeypatch):
+    from harness.tui import app as app_mod
+
+    def boom(env=None):
+        raise RuntimeError("drift check exploded")
+
+    monkeypatch.setattr("harness.proxy_service.config_gen.config_drift", boom)
+    stub = _DriftStub()
+
+    app_mod.HarnessTui._check_proxy_config_drift(stub)  # must not raise
+    assert any("drift check skipped" in m.lower() for m in stub.logged)
+
+
+def test_check_proxy_config_drift_ignores_project_local_env_leak(monkeypatch, tmp_path):
+    """Reproduces the second-pass review finding: tui_main.py's load_env(cwd)
+    merges a project-local .env NEURALWATT_API_KEY into os.environ (override=False)
+    BEFORE _check_proxy_config_drift() runs. The drift check must ignore that
+    ambient leak entirely and rely only on self._shell_neuralwatt_key (the
+    pre-load_env snapshot) — never on os.environ. Simulate the leak via
+    monkeypatch.setenv (standing in for load_dotenv's os.environ mutation) while
+    leaving the stub's _shell_neuralwatt_key at None (the shell genuinely did not
+    export it). If the method regressed to reading os.environ directly (or to
+    config_drift()'s os.environ-derived default), it would see the leaked
+    project-local key and could report the wrong drift state."""
+    from harness.tui import app as app_mod
+
+    # Simulate load_env(cwd)'s leak: a project .env value now sits in os.environ,
+    # but the shell never genuinely exported NEURALWATT_API_KEY.
+    monkeypatch.setenv("NEURALWATT_API_KEY", "project-local-leaked-key")
+
+    # Isolate machine-global config_dir() so the test doesn't depend on this
+    # machine's real ~/.config/harness/.env.
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    seen_envs = []
+
+    def fake_config_drift(env=None):
+        seen_envs.append(env)
+        return "ok"
+
+    monkeypatch.setattr("harness.proxy_service.config_gen.config_drift", fake_config_drift)
+
+    stub = _DriftStub(shell_neuralwatt_key=None)  # shell did NOT export it
+    app_mod.HarnessTui._check_proxy_config_drift(stub)
+
+    assert len(seen_envs) == 1
+    # The leaked os.environ value must NOT appear in the env config_drift() saw.
+    assert seen_envs[0].get("NEURALWATT_API_KEY") != "project-local-leaked-key"
+    assert "NEURALWATT_API_KEY" not in seen_envs[0]
+    assert stub.logged == []
+
+
+def test_check_proxy_config_drift_uses_shell_snapshot_when_present(monkeypatch, tmp_path):
+    """The inverse case: the shell DID genuinely export NEURALWATT_API_KEY (captured
+    pre-load_env as self._shell_neuralwatt_key). That value must reach
+    config_drift()'s env, regardless of whatever else os.environ contains."""
+    from harness.tui import app as app_mod
+
+    monkeypatch.delenv("NEURALWATT_API_KEY", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    seen_envs = []
+
+    def fake_config_drift(env=None):
+        seen_envs.append(env)
+        return "ok"
+
+    monkeypatch.setattr("harness.proxy_service.config_gen.config_drift", fake_config_drift)
+
+    stub = _DriftStub(shell_neuralwatt_key="genuine-shell-key")
+    app_mod.HarnessTui._check_proxy_config_drift(stub)
+
+    assert len(seen_envs) == 1
+    assert seen_envs[0].get("NEURALWATT_API_KEY") == "genuine-shell-key"

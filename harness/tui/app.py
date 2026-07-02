@@ -60,6 +60,7 @@ from harness.tui.header import icon_markup, header_text_markup
 from harness import config as _config
 from harness import hooks as _hooks
 from harness.compress import auto_regen as _auto_regen  # noqa: F401 — import-time hook registration
+from harness.proxy_service import auto_install as _proxy_auto_install  # noqa: F401 — import-time hook registration
 from harness.compaction import resolve_ctx_window
 from harness.tui.fmt import ctx_bar, fmt_tokens_upper
 
@@ -133,9 +134,15 @@ class HarnessTui(App):
     def __init__(self, agent_cmd: list[str], cwd: str, model: str,
                  worker_model_id: str | None = None, version: str = "0.5.0",
                  yolo: bool = False, persona: str | None = None,
-                 debug: bool = False) -> None:
+                 debug: bool = False, shell_neuralwatt_key: str | None = None) -> None:
         super().__init__()
         self.agent_cmd = agent_cmd
+        # NEURALWATT_API_KEY as it genuinely existed in the shell BEFORE
+        # tui_main.py's load_env(cwd) could merge a project-local .env value into
+        # os.environ (see tui_main.py's _shell_neuralwatt_key capture). Used by
+        # _check_proxy_config_drift() so the drift check never reads a
+        # project-polluted os.environ. None if the shell did not export it.
+        self._shell_neuralwatt_key = shell_neuralwatt_key
         self._debug = debug                   # --debug: write runs/<ts>/trace.jsonl
         self._tracer = None                   # opened lazily in _connect (Task 4)
         self.cwd = cwd
@@ -427,8 +434,40 @@ class HarnessTui(App):
             if self._tracer is not None:
                 self._tracer.emit("dn", "cron.autostart.failed", error=str(e))
 
+        self._check_proxy_config_drift()
+
         _hooks.dispatch("session_start", tracer=self._tracer,
                         cwd=self.cwd, persona_id=self._current_persona())
+
+    def _check_proxy_config_drift(self) -> None:
+        """Warn (never auto-restart) when config.yaml has drifted from current
+        env — e.g. NEURALWATT_API_KEY changed since the last `dn proxy
+        install`/`upgrade`. "missing" is handled separately by the
+        auto_install session_start hook (harness/proxy_service/auto_install.py);
+        this only covers "drifted". Never raises past this method.
+
+        Builds the comparison env explicitly instead of relying on
+        config_drift()'s os.environ-derived default: by the time this runs,
+        tui_main.py's load_env(cwd) has already merged any project-local .env
+        NEURALWATT_API_KEY into os.environ (override=False), indistinguishable
+        from a genuine shell export. So we read the machine-global .env file
+        directly and only overlay NEURALWATT_API_KEY from
+        self._shell_neuralwatt_key — the pre-load_env snapshot captured in
+        tui_main.py — never from ambient os.environ."""
+        try:
+            from harness.proxy_service import config_gen as _proxy_config_gen
+            from harness import paths as _harness_paths
+            from dotenv import dotenv_values
+            machine_global = dict(dotenv_values(_harness_paths.config_dir() / ".env"))
+            if self._shell_neuralwatt_key is not None:
+                machine_global["NEURALWATT_API_KEY"] = self._shell_neuralwatt_key
+            if _proxy_config_gen.config_drift(env=machine_global) == "drifted":
+                self.log("proxy config stale — run `dn proxy upgrade` to pick up NEURALWATT_API_KEY changes")
+            # "missing" is intentionally silent here (no self.log) — auto_install's
+            # session_start hook owns that path, and logging it here would perturb
+            # the TUI snapshot-test baseline (tests/test_tui_snapshots.py).
+        except Exception as e:
+            self.log(f"proxy config drift check skipped: {e!r}")
 
     def _decide_cron_autostart(self, *, show_prompt) -> str:
         """Decide how to ensure cron runs. Returns the branch taken (testable).
