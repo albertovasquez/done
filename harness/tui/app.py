@@ -1612,6 +1612,19 @@ class HarnessTui(App):
             return
         if self._conn is not None and self._session_id is not None:
             self._cancel_posted = True
+            # Close the stream the instant cancel is posted — do not wait for
+            # prompt() to unwind. Every other turn-ending path (a new user turn
+            # via _add_user_message, an in-turn tool/thought boundary, the
+            # task_classified chip from PR #81) explicitly closes the painter;
+            # cancellation was the one path that didn't, leaving _stream_closed
+            # False and _streaming_md pointing at a mid-answer widget until
+            # _add_user_message ran on the NEXT turn — late enough that a
+            # straggler delta for the cancelled turn could race the next turn's
+            # boundary logic and misroute (see
+            # docs/superpowers/specs/2026-07-01-cancel-stream-misroute-design.md).
+            # end() (not reset()) keeps the widget reference, so a genuine
+            # straggler still extends THIS (now-closed) widget in place.
+            self._painter.end()
             if self._tracer is not None:
                 self._tracer.emit("dn", "tx.cancel", sid=self._session_id)
             # Immediate feedback: stop the spinner NOW rather than waiting for the
