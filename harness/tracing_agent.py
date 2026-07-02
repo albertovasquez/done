@@ -112,9 +112,12 @@ class TracingAgent(DefaultAgent):
         self._run_start = time.time()  # tracer-local clock; parent's _start_time is set in __init__
 
     def _render_template(self, template: str) -> str:
-        # Inject selected skills AFTER Jinja renders the base, so a skill body
-        # containing {{ }}/{% %} is literal text and cannot break StrictUndefined.
-        # Identity match: only the system template gets skills, never instance.
+        # Inject blocks AFTER Jinja renders the base, so a skill body containing
+        # {{ }}/{% %} is literal text and cannot break StrictUndefined.
+        # System gets the stable blocks (env LAST — least stable, #139).
+        # Router-picked skill bodies differ per turn, so they ride the INSTANCE
+        # message: putting them in the system message changes message[0] bytes
+        # turn-over-turn and cold-misses the whole prompt cache.
         out = super()._render_template(template)
         if template is self.config.system_template:
             if self._base_block:
@@ -123,10 +126,11 @@ class TracingAgent(DefaultAgent):
                 out += self._persona_block
             if self._memory_block:
                 out += self._memory_block
-            if self._skill_block:
-                out += self._skill_block
             if self._env_block:
                 out += self._env_block
+        elif template is self.config.instance_template and self._skill_block:
+            out = ("## Skills loaded for this task\n" + self._skill_block
+                   + "\n\n" + out)
         return out
 
     def _t(self) -> float:
