@@ -164,9 +164,6 @@ def _default_deps() -> Deps:
             persona_dir=workspace, project_cwd=workspace,
             global_dir=_paths.config_dir()).block
         base_block = _base_prompt.render_base_prompt(
-            model_id=(model_id or "mock"),
-            cwd=str(workspace),
-            system_line=platform.platform(),
             skills_menu=ctx.skills_menu,
             agents_block=_agents_block)
 

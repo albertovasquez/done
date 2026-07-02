@@ -205,11 +205,12 @@ def main(argv: list[str] | None = None) -> int:
         persona_dir=workspace_dir, project_cwd=args.cwd,
         global_dir=_paths.config_dir()).block
     base_block = base_prompt.render_base_prompt(
-        model_id=(worker_model_id or "mock"),
-        cwd=args.cwd,
-        system_line=platform.platform(),
         skills_menu=skills.compose_menu(_menu_metas),
         agents_block=_agents_block)
+    env_block = base_prompt.render_env_block(
+        model_id=(worker_model_id or "mock"),
+        cwd=args.cwd,
+        system_line=platform.platform())
 
     def run_agent(prompt, skill_block="", task_type=""):
         runner = MiniSweAgentRunner(model, env,
@@ -218,7 +219,8 @@ def main(argv: list[str] | None = None) -> int:
             for event in runner.run(prompt, skill_block=skill_block,
                                     persona_block=persona_block,
                                     memory_block=memory_block,
-                                    base_block=base_block):
+                                    base_block=base_block,
+                                    env_block=env_block):
                 emitter.write_renumbered(event)
         except KeyboardInterrupt:
             print("\ninterrupted", file=sys.stderr)
@@ -243,6 +245,7 @@ def main(argv: list[str] | None = None) -> int:
             make_chat_handler=lambda: ChatHandler(worker_model_id, catalog=router.catalog,
                                                   persona_block=persona_block + memory_block,
                                                   base_block=base_block,
+                                                  env_block=env_block,
                                                   skipped=_skipped_skills,
                                                   shadowed=_shadowed_skills),
             run_agent=run_agent, ask_user=input, echo=print,

@@ -239,8 +239,7 @@ def test_composed_system_message_is_done_native_not_upstream(tmp_path):
 
     cfg = done_agent_cfg(_agent_config(), "code_fix")
     emitter = Emitter(tmp_path / "events.jsonl", clock=lambda: 0.0, console=False)
-    base_block = base_prompt.render_base_prompt(
-        model_id="mock", cwd=str(tmp_path), system_line="TestOS")
+    base_block = base_prompt.render_base_prompt()
     agent = TracingAgent(_tc_model(_SUBMIT), LocalEnvironment(cwd=str(tmp_path)),
                          emitter=emitter, base_block=base_block, **cfg)
     system_msg = agent._render_template(agent.config.system_template)

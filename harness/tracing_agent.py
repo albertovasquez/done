@@ -81,7 +81,7 @@ def _usage_from_extra(extra: dict) -> dict:
 class TracingAgent(DefaultAgent):
     def __init__(self, model, env, *, emitter: Emitter, skill_block: str = "",
                  persona_block: str = "", memory_block: str = "",
-                 base_block: str = "", registry=None,
+                 base_block: str = "", env_block: str = "", registry=None,
                  cancel_flag: threading.Event | None = None,
                  goal_ctx=None, **kwargs):
         # C1: AgentConfig (Pydantic) silently drops unknown keys via extra="ignore",
@@ -103,6 +103,7 @@ class TracingAgent(DefaultAgent):
         self._persona_block = persona_block
         self._memory_block = memory_block
         self._base_block = base_block
+        self._env_block = env_block
         from harness.tools.registry import build_registry
         # registry None => default tools (mock model passes None; the AGENT still
         # needs tools to dispatch any tool_name action even when the model ignores them).
@@ -124,6 +125,8 @@ class TracingAgent(DefaultAgent):
                 out += self._memory_block
             if self._skill_block:
                 out += self._skill_block
+            if self._env_block:
+                out += self._env_block
         return out
 
     def _t(self) -> float:

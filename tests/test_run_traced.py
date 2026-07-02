@@ -354,9 +354,10 @@ def test_main_threads_persona_to_chat_path(tmp_path, monkeypatch):
 
     class FakeChatHandler:
         def __init__(self, worker_model_id, catalog=None, persona_block="",
-                     base_block="", skipped=None, shadowed=None):
+                     base_block="", env_block="", skipped=None, shadowed=None):
             captured["persona_block"] = persona_block
             captured["base_block"] = base_block
+            captured["env_block"] = env_block
             captured["skipped"] = skipped
             captured["shadowed"] = shadowed
 
