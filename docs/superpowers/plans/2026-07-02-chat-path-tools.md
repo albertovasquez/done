@@ -342,17 +342,12 @@ def test_chat_tool_intent_escalates_to_agent_path(tmp_path, monkeypatch):
     resp = _prompt_with_timeout(agent, sid, "what's my setup?")
     assert resp.stop_reason == "end_turn"
     assert entered["n"] == 1                      # agent path ran
-    # recorded exactly once as agent (no double-record from chat tail)
-    kinds = [r.get("kind") for r in agent._store.get(sid).history_records()]  # see note
+    # recorded exactly once as agent (no double-record from chat tail).
+    # SessionStore.record appends to state.history (plain list of turn dicts).
+    kinds = [r.get("kind") for r in agent._store.get(sid).history]
     assert kinds.count("agent") == 1
     assert "chat" not in kinds
 ```
-
-NOTE: if `SessionState` exposes recorded turns under a different accessor than
-`history_records()`, use the real one — grep `def record` / the store's read API
-in `harness/acp_session.py` and adjust this assertion to read the recorded
-`kind` values. The behavioral assertions (`entered["n"] == 1`, no `"chat"`
-record) are the load-bearing ones.
 
 - [ ] **Step 2: Run it to verify it fails**
 
