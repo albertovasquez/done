@@ -65,3 +65,20 @@ def _neutralize_cron_autostart(request, monkeypatch):
         monkeypatch.setattr("harness.jobs.supervisor._spawn_detached", lambda: None)
     except Exception:
         pass
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_proxy_drift(request, monkeypatch):
+    """No test may depend on THIS machine's real proxy config state: default
+    config_drift to "ok" suite-wide. Drift-specific tests monkeypatch their own
+    value and override this. (A drifted real config popped ProxyRefreshModal
+    inside vibeproxy-mode pilot tests, eating their keystrokes.)
+
+    SCOPE: skipped for tests/test_proxy_config_gen.py, which is the unit-test
+    module that EXERCISES the real config_drift() implementation directly —
+    stubbing it there would test the stub instead of the function under test.
+    """
+    if request.node.nodeid.startswith("tests/test_proxy_config_gen.py"):
+        return
+    from harness.proxy_service import config_gen
+    monkeypatch.setattr(config_gen, "config_drift", lambda env=None: "ok")
