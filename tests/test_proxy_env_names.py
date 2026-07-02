@@ -56,3 +56,14 @@ def test_api_key_falls_back_to_client_key_file(monkeypatch, tmp_path):
 def test_api_key_dummy_when_no_env_and_no_file(monkeypatch, tmp_path):
     _isolate_api_key(monkeypatch, tmp_path)
     assert vibeproxy.api_key() == "dummy-not-used"
+
+
+def test_api_key_sentinel_env_does_not_mask_client_key_file(monkeypatch, tmp_path):
+    # Pre-#300 .env files carry the placeholder; it must be treated as absent,
+    # not as an override, or every call 401s once the proxy enforces api-keys.
+    proxy_paths = _isolate_api_key(monkeypatch, tmp_path)
+    proxy_paths.client_key_path().write_text("file-key")
+    monkeypatch.setenv("VIBEPROXY_API_KEY", "dummy-not-used")
+    assert vibeproxy.api_key() == "file-key"
+    monkeypatch.setenv("PROXY_API_KEY", "dummy-not-used")
+    assert vibeproxy.api_key() == "file-key"
