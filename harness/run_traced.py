@@ -32,7 +32,6 @@ from harness.router import Router, complete  # noqa: E402
 from harness import skills  # noqa: E402
 from harness import persona as _persona  # noqa: E402
 from harness import memory as _memory  # noqa: E402
-from harness import base_prompt  # noqa: E402
 from harness.chat_handler import ChatHandler  # noqa: E402
 from harness import vibeproxy  # noqa: E402
 from harness.instance_templates import done_agent_cfg  # noqa: E402
@@ -184,35 +183,23 @@ def main(argv: list[str] | None = None) -> int:
     agent_cfg["output_path"] = str(run_dir / "traj.json")
     emitter = Emitter(run_dir / "events.jsonl", clock=lambda: 0.0, console=True)
     from datetime import date
-    from harness import paths as _paths
-    from harness import flows as _flows
-    from harness import persona_config as _persona_config
+    from harness import prompt as _prompt
     persona_block = _persona.resolve_persona(workspace_dir).block
     memory_block = _memory.resolve_memory(workspace_dir, today=date.today()).block
-    # Lazy skill discovery: the agent gets a flow-scoped MENU (names+descriptions)
-    # and pulls bodies on demand via load_skill. No flows on the persona => full
-    # catalog, no gating (no-op vs. before).
-    skills_roots = _paths.skills_dirs(project_cwd=args.cwd)   # project .agents/.claude skills too
-    _catalog_load = skills.load_catalog_with_skips(skills_roots, project_cwd=args.cwd)
-    _full_catalog = _catalog_load.skills
-    _skipped_skills = _catalog_load.skipped       # surfaced in the capability answer
-    _shadowed_skills = _catalog_load.shadowed     # name clashes across roots (later won)
-    _enabled_flows = _persona_config.read_flows(workspace_dir)
-    _menu_metas = (_flows.scope_catalog(_full_catalog, _enabled_flows)
-                   if _enabled_flows else _full_catalog)
-    # Three-tier AGENTS.md (persona > project > global), folded into base_block so
-    # both the agent runner and the chat handler inherit it. No-op when no files.
-    from harness import agents as _agents
-    _agents_block = _agents.resolve_agents(
-        persona_dir=workspace_dir, project_cwd=args.cwd,
-        global_dir=_paths.config_dir()).block
-    base_block = base_prompt.render_base_prompt(
-        skills_menu=skills.compose_menu(_menu_metas),
-        agents_block=_agents_block)
-    env_block = base_prompt.render_env_block(
-        model_id=(worker_model_id or "mock"),
-        cwd=args.cwd,
-        system_line=platform.platform())
+    # One composition seam (#245): roots → catalog → flow scoping → menu →
+    # AGENTS.md tiers → base_block + env_block, shared with acp_agent.prompt
+    # and jobs.executor. persona/memory resolve FRESH here (per invocation);
+    # the seam takes them as inputs.
+    composed = _prompt.compose_turn(
+        workspace_dir=workspace_dir, cwd=args.cwd,
+        model_id=worker_model_id, system_line=platform.platform(),
+        persona_block=persona_block, memory_block=memory_block)
+    skills_roots = composed.skill_roots
+    _skipped_skills = composed.catalog.skipped    # surfaced in the capability answer
+    _shadowed_skills = composed.catalog.shadowed  # name clashes across roots (later won)
+    _menu_metas = composed.menu_metas
+    base_block = composed.base_block
+    env_block = composed.env_block
 
     def run_agent(prompt, skill_block="", task_type="", skills=()):
         runner = MiniSweAgentRunner(model, env,
