@@ -302,3 +302,41 @@ cd /Users/alberto/Work/Quiubo/harness/.worktrees/fix-cancel-stream-misroute
 
 Expected: all tests green, including the new regression test and every
 pre-existing misroute/cancel test.
+
+---
+
+## Post-implementation addendum (actual outcome vs. this plan)
+
+Execution surfaced three rounds of escalation this plan didn't anticipate.
+Recorded here so the plan's Step 2/Step 3 "Expected: FAIL"/"Expected: PASS"
+claims are read alongside what actually happened, not in place of it:
+
+1. **Task 1's original test had a construction gap.** It drove turn 2's
+   prose with no `task_classified` chip first, so it failed one step
+   earlier than intended (turn 2 merging into turn 1 — the pre-existing
+   PR #81 invariant, unrelated to cancellation). Fixed by inserting the
+   chip (commit `5d2e176`).
+2. **Fixing that gap exposed a second, deeper, previously-unknown bug:**
+   `StreamPainter._boundary_after` has no per-turn identity, so a stale
+   turn's straggler delta arriving *after* the next turn's own chip can
+   consume that chip's boundary and misroute the next turn's real answer.
+   Out of scope for this fix (`action_cancel` doesn't touch `_boundary_after`
+   at all); deferred and tracked as
+   [issue #291](https://github.com/albertovasquez/done/issues/291), with
+   cross-references in the test's inline comment and a pointer comment next
+   to `_boundary_after` in `stream_painter.py` (commit `58058cb`).
+3. **The final whole-branch review found the test (as re-ordered to isolate
+   the simpler case) was not load-bearing:** it passed identically whether
+   or not `action_cancel`'s `self._painter.end()` fix was present, because
+   `_add_user_message("third")` unconditionally closes the painter before
+   the straggler-routing logic in the test's chosen ordering ever runs.
+   Verified empirically (fix neutralized → test still PASSED). Fixed by
+   adding a direct assertion on `app._painter.closed` in the window that is
+   uniquely the fix's — after `action_cancel()` and the footer mount, but
+   before the next turn's `_add_user_message` (commit `9f182b7`). Re-verified
+   both ways: fails when the fix is reverted, passes when it's present.
+
+Net effect on Step 3/Step 4 above: "Expected: PASS" and "Expected: all tests
+pass" are true for the **final** committed test (post `9f182b7`), not for
+the intermediate states described literally in Steps 1–2's `git diff`
+snippets.
