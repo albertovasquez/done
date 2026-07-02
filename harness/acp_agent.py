@@ -31,7 +31,7 @@ from harness.acp_env import AcpEnvironment
 from harness.acp_session import SessionStore
 from harness.output_filters.dispatch import filter_output
 from harness.router import Router, Classification
-from harness.chat_handler import ChatHandler
+from harness.chat_handler import ChatHandler, is_tools_question
 from harness.permcheck import PermissionRequest, decide_permission
 from harness.transcript import flatten_agent_messages
 from harness.instance_templates import done_agent_cfg
@@ -362,6 +362,16 @@ class HarnessAgent(acp.Agent):
         except KeyError:
             pass
 
+    def _has_elicitation(self) -> bool:
+        """True when the connected client can show a permission modal. False for
+        headless/cron/CLI (no elicitation) — the signal the permission gate uses
+        to fail closed, reused to decide whether a chat_question may escalate to
+        the tool-running agent path."""
+        return not (
+            self._client_caps is None
+            or getattr(self._client_caps, "elicitation", None) is None
+        )
+
     async def prompt(self, prompt, session_id, message_id=None, **kw):
         loop = asyncio.get_running_loop()
         try:
@@ -531,6 +541,42 @@ class HarnessAgent(acp.Agent):
             persona_dir=(str(ws.resolve()) if ws else None),
             skills_menu=_skills_menu,
             agents_block=_agents_block)
+
+        # Chat turns that want a tool escalate to the tool-running agent path.
+        # Gated tightly so this is ZERO-COST on every path that can't escalate —
+        # mock (no model_id), headless/cron (no elicitation, so the authorization
+        # surface for unattended runs is unchanged), and deterministic tools
+        # questions (answered from data in the chat block below). Only when ALL
+        # gates pass do we build the registry + probe. wants_tool is a throwaway
+        # boolean classifier — on True we reassign task_type so control falls
+        # through to the agent path (single record site, gate + engine reused).
+        if (cls.task_type == "chat_question" and model_id is not None
+                and self._has_elicitation() and not is_tools_question(text)):
+            if state.cancel_flag.is_set():
+                return _cancelled()
+            try:
+                # Build the registry lazily — the SAME one the agent path uses
+                # (this session's skill roots + persona memory) — only here, never
+                # on the common prose path.
+                from harness.tools.registry import build_registry as _build_registry
+                _chat_tool_schemas = [
+                    t.schema for t in _build_registry(
+                        skill_roots=_skill_roots,
+                        memory_root=(ws.resolve() if ws else None))]
+                _probe = ChatHandler(
+                    model_id, base_block=base_block,
+                    persona_block=(state.persona_block or "") + (state.memory_block or ""),
+                    tool_schemas=_chat_tool_schemas)
+                wants = await loop.run_in_executor(
+                    None, lambda: _probe.wants_tool(
+                        text, history=transcript, cancel_flag=state.cancel_flag))
+            except Exception:
+                # Fail-open: any error deciding escalation degrades to the prose
+                # chat path (today's behavior), never crashes the turn.
+                logger.exception("chat tool-probe failed; falling back to prose chat")
+                wants = False
+            if wants:
+                cls.task_type = "code_feature"   # route to the agent path below
 
         if cls.task_type == "chat_question":
             # hand the (project-aware) catalog so "what skills do we have?" is
@@ -744,10 +790,7 @@ class HarnessAgent(acp.Agent):
 
         def check_permission(req: PermissionRequest) -> bool:
             yolo = self._auto_allow()
-            has_elicitation = not (
-                self._client_caps is None
-                or getattr(self._client_caps, "elicitation", None) is None
-            )
+            has_elicitation = self._has_elicitation()
             verdict = decide_permission(req, yolo=yolo, has_elicitation=has_elicitation)
             if verdict == "allow":
                 return True

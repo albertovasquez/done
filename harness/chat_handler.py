@@ -14,12 +14,15 @@ it works in mock mode too).
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import threading
 from typing import Iterator
 
 from harness.interruptible import run_interruptible
+
+logger = logging.getLogger(__name__)
 
 # `litellm` is imported lazily inside answer_stream() — at module scope it costs
 # ~1s and this module is on the agent-startup path. Mock mode returns first.
@@ -154,7 +157,8 @@ class ChatHandler:
                  catalog: list[tuple[str, str]] | None = None,
                  persona_block: str = "", base_block: str = "",
                  skipped: "list[tuple[str, str]] | None" = None,
-                 shadowed: "list[tuple[str, str]] | None" = None):
+                 shadowed: "list[tuple[str, str]] | None" = None,
+                 *, tool_schemas: "list[dict] | None" = None):
         # None => mock mode (no chat-capable model available)
         self._model_id = worker_model_id
         # The skill catalog (name, description) — used to answer capability
@@ -173,6 +177,50 @@ class ChatHandler:
         # Combined with persona_block as a single system message (base first).
         # "" => no additional system content (preserves byte-identical no-op).
         self._base_block = base_block
+        # Tool schemas (OpenAI function-tool dicts) for the wants_tool probe. None
+        # => no probe possible (treated as "no tool"): keeps mock/CLI byte-identical.
+        self._tool_schemas = tool_schemas or []
+
+    def wants_tool(self, prompt: str,
+                   history: list[dict] | None = None,
+                   cancel_flag: threading.Event | None = None) -> bool:
+        """True iff a tools-enabled probe of this turn returns native tool_calls.
+
+        A THROWAWAY classifier: the response content is never reused (reusing it
+        could re-render a text-format <tool_call> leak — the very bug we fix). We
+        read only whether the model emitted structured tool_calls.
+
+        Mock mode (no model) or no tool_schemas => False, with NO litellm call
+        (hermetic; byte-identical mock behavior). Fail-open: any exception => False,
+        so a probe failure degrades to today's prose pump, never a crash."""
+        if self._model_id is None or not self._tool_schemas:
+            return False
+        try:
+            import litellm  # lazy: keep the ~1s import off startup
+            from harness import vibeproxy
+            system_content = self._base_block + self._persona_block
+            resp = run_interruptible(
+                lambda: litellm.completion(
+                    model=vibeproxy.model_id(self._model_id),
+                    **vibeproxy.completion_kwargs(),
+                    messages=(([{"role": "system", "content": system_content}]
+                               if system_content else [])
+                              + (history or []) + [{"role": "user", "content": prompt}]),
+                    tools=self._tool_schemas,
+                    tool_choice="auto",
+                    max_tokens=256,
+                    stream=False,
+                ),
+                cancel_flag,
+            )
+            msg = resp.choices[0].message
+            return bool(getattr(msg, "tool_calls", None))
+        except Exception:
+            # Fail-open, but log: a PERSISTENT probe failure (bad schema, proxy
+            # misconfig) would otherwise silently degrade every interactive chat
+            # turn to prose with no signal. logger is module-scoped below.
+            logger.debug("wants_tool probe failed; treating as no-tool", exc_info=True)
+            return False
 
     def answer_stream(self, prompt: str,
                       history: list[dict] | None = None,

@@ -169,6 +169,133 @@ def _prompt_with_timeout(agent, sid, text, timeout=10.0):
     return asyncio.run(go())
 
 
+def test_chat_tool_intent_escalates_to_agent_path(tmp_path, monkeypatch):
+    """Interactive chat turn whose probe returns tool intent must run the AGENT
+    path (not the chat pump) and record the turn exactly once as kind='agent'."""
+    conn = RecordingConn()
+    agent = build_harness_agent(
+        model_factory=lambda *a, **k: None, agent_cfg=_agent_cfg(),
+        skills_dir=__import__("pathlib").Path("skills"), router=_ChatRouter(),
+        worker_model_id="glm-5.2")
+    agent._conn = conn
+
+    class _Caps:
+        elicitation = object()
+    agent._client_caps = _Caps()          # interactive
+    sid = agent._store.new(cwd=str(tmp_path))
+
+    import harness.acp_agent as mod
+    monkeypatch.setattr(mod.ChatHandler, "wants_tool", lambda self, *a, **k: True)
+    entered = {"n": 0}
+
+    async def _fake_run_agent_turn(self, *a, **k):
+        entered["n"] += 1
+        return {"stop_reason": "end_turn", "assistant": "ran ls", "exit_status": "",
+                "streamed": ""}
+    monkeypatch.setattr(mod.HarnessAgent, "_run_agent_turn", _fake_run_agent_turn)
+
+    resp = _prompt_with_timeout(agent, sid, "what's my setup?")
+    assert resp.stop_reason == "end_turn"
+    assert entered["n"] == 1                       # agent path ran
+    # SessionStore.record appends to state.history (plain list of turn dicts).
+    kinds = [r.get("kind") for r in agent._store.get(sid).history]
+    assert kinds.count("agent") == 1              # recorded exactly once
+    assert "chat" not in kinds                    # no double-record from chat tail
+
+
+def test_chat_headless_never_escalates(tmp_path, monkeypatch):
+    """Headless (no elicitation): even with tool intent, the chat pump runs and
+    the agent path is never entered."""
+    conn = RecordingConn()
+    agent = build_harness_agent(
+        model_factory=lambda *a, **k: None, agent_cfg=_agent_cfg(),
+        skills_dir=__import__("pathlib").Path("skills"), router=_ChatRouter(),
+        worker_model_id="glm-5.2")
+    agent._conn = conn
+    agent._client_caps = None             # headless
+    sid = agent._store.new(cwd=str(tmp_path))
+
+    import harness.acp_agent as mod
+    monkeypatch.setattr(mod.ChatHandler, "wants_tool",
+                        lambda self, *a, **k: (_ for _ in ()).throw(
+                            AssertionError("probe must not run headless")))
+    entered = {"n": 0}
+
+    async def _fake_run_agent_turn(self, *a, **k):
+        entered["n"] += 1
+        return {"stop_reason": "end_turn", "assistant": "x", "exit_status": "", "streamed": ""}
+    monkeypatch.setattr(mod.HarnessAgent, "_run_agent_turn", _fake_run_agent_turn)
+
+    class _FakeHandler:
+        def __init__(self, *a, **k):
+            pass
+
+        def answer_stream(self, text, history=None, cancel_flag=None):
+            yield "hi there"
+    monkeypatch.setattr(mod, "ChatHandler", _FakeHandler)
+
+    resp = _prompt_with_timeout(agent, sid, "what's my setup?")
+    assert resp.stop_reason == "end_turn"
+    assert entered["n"] == 0               # agent path never entered
+
+
+def test_chat_prose_never_leaks_tool_call_text(tmp_path, monkeypatch):
+    """A prose chat turn (no tool intent) streams an answer with no <tool_call>
+    or <arg_value> residue."""
+    conn = RecordingConn()
+    agent = build_harness_agent(
+        model_factory=lambda *a, **k: None, agent_cfg=_agent_cfg(),
+        skills_dir=__import__("pathlib").Path("skills"), router=_ChatRouter(),
+        worker_model_id="glm-5.2")
+    agent._conn = conn
+
+    class _Caps:
+        elicitation = object()
+    agent._client_caps = _Caps()
+    sid = agent._store.new(cwd=str(tmp_path))
+
+    import harness.acp_agent as mod
+
+    class _FakeHandler:
+        def __init__(self, *a, **k):
+            pass
+
+        def wants_tool(self, *a, **k):
+            return False          # no escalation: exercise the prose pump
+
+        def answer_stream(self, text, history=None, cancel_flag=None):
+            yield "Doing well, Alberto."
+    # _FakeHandler stands in for BOTH the guard's probe (wants_tool -> False, so no
+    # escalation) and the chat pump (answer_stream -> prose).
+    monkeypatch.setattr(mod, "ChatHandler", _FakeHandler)
+
+    resp = _prompt_with_timeout(agent, sid, "how are you?")
+    assert resp.stop_reason == "end_turn"
+    joined = "".join(conn.message_texts())
+    assert "<tool_call>" not in joined and "arg_value" not in joined
+    assert "Doing well" in joined
+
+
+def test_has_elicitation_reflects_client_caps():
+    """_has_elicitation is True only when the client advertises elicitation."""
+    from pathlib import Path
+    agent = build_harness_agent(
+        model_factory=lambda *a, **k: None, agent_cfg=_agent_cfg(),
+        skills_dir=Path("skills"), router=_ChatRouter(),
+        worker_model_id=None)
+
+    class _Caps:
+        def __init__(self, elicit):
+            self.elicitation = elicit
+
+    agent._client_caps = None
+    assert agent._has_elicitation() is False
+    agent._client_caps = _Caps(None)
+    assert agent._has_elicitation() is False
+    agent._client_caps = _Caps(object())
+    assert agent._has_elicitation() is True
+
+
 def test_chat_path_prompt_returns(tmp_path):
     """A chat_question turn must RETURN a PromptResponse — if prompt() never
     resolves, the TUI's await blocks forever and 'Responding…' sticks with a
