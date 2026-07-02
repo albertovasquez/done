@@ -231,12 +231,18 @@ VIBEPROXY_API_KEY=dummy-not-used
 ```bash
 PROXY_BASE_URL=http://localhost:8317/v1
 PROXY_MODEL=gpt-4-turbo
-PROXY_API_KEY=dummy-not-used
+# PROXY_API_KEY: leave unset — `dn proxy install/upgrade` provisions a client
+# key (data dir `client-api-key`) and the harness reads it automatically.
 ```
 
 **Note:** Both `VIBEPROXY_*` and `PROXY_*` are honored for backward compatibility.
 If both are set, `PROXY_*` takes precedence. You may keep the old names for now,
 but updating to `PROXY_*` is recommended for clarity.
+
+**Stale-key warning:** the old placeholder `PROXY_API_KEY=dummy-not-used` /
+`VIBEPROXY_API_KEY=dummy-not-used` in a `.env` is ignored by the harness (it
+would otherwise mask the provisioned key and fail auth with 401 now that the
+proxy enforces `api-keys`). Delete the line from old `.env` files.
 
 ### Step 4: Add custom upstreams (optional)
 

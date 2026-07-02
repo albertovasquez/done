@@ -46,7 +46,10 @@ def base_url() -> str:
 
 def api_key() -> str:
     v = os.getenv("PROXY_API_KEY") or os.getenv("VIBEPROXY_API_KEY")
-    if v:
+    # The historical placeholder is "absent", not an override: pre-PR-#300
+    # .env files (and .env.example copies) carry it, and letting it mask the
+    # provisioned key 401s every call once the proxy enforces api-keys.
+    if v and v != _DEFAULT_API_KEY:
         return v
     # Fall back to the key install()/upgrade() provisioned into the proxy's
     # config.yaml. Sending it matters even though the bind is localhost:
