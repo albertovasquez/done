@@ -462,12 +462,36 @@ class HarnessTui(App):
             if self._shell_neuralwatt_key:   # "" = no real export; must not mask the file key
                 machine_global["NEURALWATT_API_KEY"] = self._shell_neuralwatt_key
             if _proxy_config_gen.config_drift(env=machine_global) == "drifted":
-                self.log("proxy config stale — run `dn proxy upgrade` to pick up NEURALWATT_API_KEY changes")
+                self._show_proxy_refresh_prompt()
             # "missing" is intentionally silent here (no self.log) — auto_install's
             # session_start hook owns that path, and logging it here would perturb
             # the TUI snapshot-test baseline (tests/test_tui_snapshots.py).
         except Exception as e:
             self.log(f"proxy config drift check skipped: {e!r}")
+
+    def _show_proxy_refresh_prompt(self) -> None:
+        """One-keypress consent for a drifted proxy config (spec B). Accept →
+        regenerate + restart via lifecycle.refresh_config in a worker thread;
+        decline/esc → the #292 log line, unchanged. on_mount runs once, so this
+        prompts at most once per TUI session."""
+        from harness.tui.widgets.proxy_refresh_modal import ProxyRefreshModal
+
+        def _on_choice(accepted) -> None:
+            if accepted:
+                self.run_worker(self._do_proxy_refresh(), thread=False)
+            else:
+                self.log("proxy config stale — run `dn proxy upgrade` to pick up "
+                         "NEURALWATT_API_KEY changes")
+
+        self.push_screen(ProxyRefreshModal(), callback=_on_choice)
+
+    async def _do_proxy_refresh(self) -> None:
+        import asyncio
+        from harness.proxy_service import lifecycle
+        result = await asyncio.get_running_loop().run_in_executor(
+            None, lifecycle.refresh_config)
+        for line in result.splitlines():
+            self.log(line)
 
     def _decide_cron_autostart(self, *, show_prompt) -> str:
         """Decide how to ensure cron runs. Returns the branch taken (testable).

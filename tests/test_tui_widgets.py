@@ -422,9 +422,12 @@ def test_check_proxy_config_drift_logs_when_drifted(monkeypatch):
         "harness.proxy_service.config_gen.config_drift", lambda env=None: "drifted"
     )
     stub = _DriftStub()
+    prompted = []
+    stub._show_proxy_refresh_prompt = lambda: prompted.append(True)
 
     app_mod.HarnessTui._check_proxy_config_drift(stub)
-    assert any("proxy config stale" in m.lower() for m in stub.logged)
+    assert prompted == [True]
+    assert stub.logged == []
 
 
 def test_check_proxy_config_drift_silent_when_ok(monkeypatch):
@@ -536,3 +539,45 @@ def test_check_proxy_config_drift_empty_shell_key_does_not_mask(monkeypatch, tmp
     stub = _DriftStub(shell_neuralwatt_key="")
     app_mod.HarnessTui._check_proxy_config_drift(stub)
     assert seen_envs and seen_envs[0].get("NEURALWATT_API_KEY") == "sk-real-key"
+
+
+def test_refresh_prompt_decline_falls_back_to_log(monkeypatch):
+    from harness.tui import app as app_mod
+
+    logged = []
+    pushed = []
+
+    class Stub:
+        log = staticmethod(lambda msg: logged.append(msg))
+        run_worker = staticmethod(lambda *a, **k: pushed.append(("worker", a)))
+
+        def push_screen(self, modal, callback):
+            pushed.append(("screen", type(modal).__name__))
+            callback(False)              # user declines
+
+    app_mod.HarnessTui._show_proxy_refresh_prompt(Stub())
+    assert ("screen", "ProxyRefreshModal") in pushed
+    assert any("proxy config stale" in m for m in logged)
+    assert not any(p[0] == "worker" for p in pushed)
+
+
+def test_refresh_prompt_accept_runs_refresh_worker(monkeypatch):
+    from harness.tui import app as app_mod
+
+    workers = []
+
+    class Stub:
+        log = staticmethod(lambda msg: None)
+
+        async def _do_proxy_refresh(self):
+            pass                          # never actually awaited in this unit test
+
+        def run_worker(self, coro, thread=False):
+            coro.close()                 # don't actually run it in this unit test
+            workers.append(True)
+
+        def push_screen(self, modal, callback):
+            callback(True)               # user accepts
+
+    app_mod.HarnessTui._show_proxy_refresh_prompt(Stub())
+    assert workers == [True]
