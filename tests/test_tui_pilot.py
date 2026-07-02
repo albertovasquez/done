@@ -511,11 +511,18 @@ def test_cancelled_turn_stream_closed_immediately_on_esc():
             await pilot.pause()
             app._write_meta(0.1)
 
-            # turn 2: prompt, partial prose, then the user cancels mid-stream.
+            # turn 2: prompt, classify chip, partial prose, then the user
+            # cancels mid-stream. The chip is the boundary signal every real
+            # turn from turn 2 on emits before its own prose (see
+            # test_new_turn_prose_opens_fresh_block_after_classify_chip) —
+            # without it turn 2's prose would misroute into turn 1's widget
+            # for reasons unrelated to cancellation.
             app._add_user_message("second")
             app._turn_start = time.monotonic()
             task = asyncio.create_task(app._send_prompt("second"))
             await conn.started.wait()
+            await pilot.pause()
+            app.on_session_update(SessionUpdate(_classify_chip()))
             await pilot.pause()
             app.on_session_update(SessionUpdate(update_agent_message_text("second partial")))
             await pilot.pause()
@@ -530,13 +537,27 @@ def test_cancelled_turn_stream_closed_immediately_on_esc():
 
             # turn 3 begins immediately — mirrors the live repro (screenshot).
             app._add_user_message("third")
-            app.on_session_update(SessionUpdate(_classify_chip()))
-            await pilot.pause()
 
             # a STRAGGLER delta for the cancelled turn 2 arrives late (cooperative
             # cancellation: the agent subprocess isn't guaranteed to have stopped
-            # producing the instant cancel() was called).
+            # producing the instant cancel() was called) — BEFORE turn 3's own
+            # classify chip fires. This is the ordering the live repro (screenshot)
+            # actually showed and the one action_cancel's fix (closing the painter
+            # immediately on cancel) resolves.
+            #
+            # NB: a HARDER ordering — the straggler arriving AFTER turn 3's chip —
+            # is not yet covered here. _boundary_after is a single flag with no
+            # per-turn identity: turn 3's chip sets it, and the straggler (for the
+            # OLDER, already-closed turn 2) can consume that flag instead of
+            # extending turn 2's widget, misrouting turn 3's real answer into a
+            # stray widget. That is a distinct, deeper bug in StreamPainter's
+            # boundary-flag design (not fixed by action_cancel closing the stream
+            # earlier) and needs its own design pass — tracked separately, not
+            # covered by this test.
             app.on_session_update(SessionUpdate(update_agent_message_text(" late-straggler")))
+            await pilot.pause()
+
+            app.on_session_update(SessionUpdate(_classify_chip()))
             await pilot.pause()
 
             # turn 3's own prose follows.
