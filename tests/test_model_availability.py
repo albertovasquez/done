@@ -58,3 +58,31 @@ def test_resolve_or_warn_matches_dated_proxy_id_no_warning():
     model, warning = av.resolve_or_warn("claude-opus-4-8", out)
     assert model == "claude-opus-4-8"
     assert warning is None
+
+
+def test_reconcile_carries_catalog_model_id():
+    out = av.reconcile(_CATALOG, proxy_ids=[], keys_present={"neuralwatt": False, "anthropic": False})
+    assert all(s.model_id is not None for s in out)
+    assert any(s.model_id == "glm-5.2" for s in out)
+
+
+def test_warning_names_login_needed_reason():
+    out = av.reconcile(_CATALOG, proxy_ids=[], keys_present={"neuralwatt": False, "anthropic": False})
+    model, warning = av.resolve_or_warn("glm-5.2", out)
+    assert model == "glm-5.2"                        # NEVER substituted
+    assert "login" in warning.lower() or "key" in warning.lower()
+    assert "neuralwatt" in warning
+
+
+def test_warning_names_stale_config_reason():
+    out = av.reconcile(_CATALOG, proxy_ids=[], keys_present={"neuralwatt": True, "anthropic": False})
+    model, warning = av.resolve_or_warn("glm-5.2", out)
+    assert model == "glm-5.2"
+    assert "stale" in warning.lower()
+    assert "dn proxy" in warning
+
+
+def test_warning_generic_for_unknown_model():
+    out = av.reconcile(_CATALOG, proxy_ids=[], keys_present={"neuralwatt": False, "anthropic": False})
+    model, warning = av.resolve_or_warn("made-up-model", out)
+    assert model == "made-up-model" and warning
