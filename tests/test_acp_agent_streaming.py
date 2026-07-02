@@ -190,9 +190,52 @@ def test_chat_path_prompt_returns(tmp_path):
     assert resp.stop_reason == "end_turn", f"chat prompt() did not end cleanly: {resp}"
 
 
+def test_chat_path_coalesces_and_delivers_full_answer(tmp_path, monkeypatch):
+    """The chat pump must buffer pieces and deliver the full answer (coalesced),
+    and the turn must resolve."""
+    conn = RecordingConn()
+    agent = build_harness_agent(
+        model_factory=lambda *a, **k: None,
+        agent_cfg=_agent_cfg(),
+        skills_dir=__import__("pathlib").Path("skills"),
+        router=_ChatRouter(),
+        worker_model_id=None,
+    )
+    agent._conn = conn
+    agent._client_caps = None
+    sid = agent._store.new(cwd=str(tmp_path))
+
+    # Force a multi-piece answer stream regardless of model: patch ChatHandler.
+    import harness.acp_agent as mod
+    pieces = ["Hello", ", ", "world", "."]
+
+    class _FakeHandler:
+        def __init__(self, *a, **k): pass
+        def answer_stream(self, text, history=None):
+            yield from pieces
+    monkeypatch.setattr(mod, "ChatHandler", _FakeHandler)
+
+    resp = _prompt_with_timeout(agent, sid, "hi")
+    assert resp.stop_reason == "end_turn"
+    texts = conn.message_texts()
+    assert "Hello, world." in "".join(texts)
+    # Prove COALESCING, not just delivery: the fake handler yields 4 pieces
+    # synchronously inside pump() on the worker thread, so the 80ms
+    # _chat_flush_loop timer never gets a chance to drain the buffer mid-stream
+    # — the whole answer is only flushed once, by the final `await
+    # _chat_flush()` in the `finally`. Per-piece (uncoalesced) delivery would
+    # produce 4 separate message_texts entries ("Hello", ", ", "world", ".");
+    # coalesced delivery produces exactly one entry equal to the full answer.
+    assert texts == ["Hello, world."], (
+        f"expected the answer delivered as a single coalesced chunk, got {texts!r}"
+    )
+
+
 def test_agent_path_streams_deltas_as_message_chunks(tmp_path):
-    """The agent-path turn must marshal each prose delta to the connection as a
-    message_chunk, in order, preceded by exactly one step-boundary signal."""
+    """The agent-path turn must deliver all prose to the connection as message
+    chunks, in order, preceded by exactly one step-boundary signal. After
+    coalescing, deltas may be merged into fewer/larger chunks — so we assert the
+    CONCATENATION and ORDER, not a 1:1 delta→chunk mapping."""
     deltas = ["Look", "ing ", "into ", "it."]
     conn = RecordingConn()
     model = _StreamingSubmitModel(deltas)
@@ -202,17 +245,13 @@ def test_agent_path_streams_deltas_as_message_chunks(tmp_path):
     resp = _prompt(agent, sid, "fix the bug")
     assert resp.stop_reason == "end_turn", f"unexpected stop_reason: {resp.stop_reason}"
 
-    # The deltas appear, in order, among the non-empty message texts. Other
-    # non-empty texts (the submit echo's tool output) may follow, so assert the
-    # deltas are a contiguous in-order prefix-or-subsequence.
-    texts = conn.message_texts()
-    assert deltas == [t for t in texts if t in deltas], (
-        f"deltas not streamed in order: streamed texts = {texts!r}"
+    # The submit echo's tool output also appears as a non-empty text; isolate the
+    # prose stream by reassembling and checking the joined deltas are a contiguous,
+    # in-order substring of the concatenated message texts.
+    full = "".join(conn.message_texts())
+    assert "".join(deltas) in full, (
+        f"prose not delivered intact/in order: texts = {conn.message_texts()!r}"
     )
-    # streamed-on-screen content equals the joined deltas
-    streamed_concat = "".join(t for t in texts if t in deltas)
-    assert streamed_concat == "".join(deltas)
-
     # exactly one step boundary (one model call → one new n_calls value)
     assert conn.reset_flags() == [True], (
         f"expected exactly one stream_reset boundary, got {conn.reset_flags()!r}"
@@ -299,3 +338,139 @@ def test_failure_records_streamed_buffer_not_prior_turn(tmp_path, caplog):
     assert any(m["content"] == "OLD ANSWER" for m in transcript), (
         "prior transcript must be preserved, not overwritten"
     )
+
+
+class _StreamThenCancelModel(DeterministicToolcallModel):
+    """Streams 'before', trips the cancel flag, then streams 'after' — the second
+    on_delta call raises UserInterruption inside emit_delta. Used to assert clean
+    teardown: 'before' is delivered, the turn resolves, nothing lands afterward."""
+
+    def __init__(self, cancel_flag):
+        super().__init__(outputs=[make_toolcall_output("", [], [])], cost_per_call=0.0)
+        self.on_delta = None
+        self._cancel_flag = cancel_flag
+
+    def query(self, messages, **kw):
+        if self.on_delta:
+            self.on_delta("before")
+        self._cancel_flag.set()
+        if self.on_delta:
+            self.on_delta("after")   # raises UserInterruption inside emit_delta
+        return super().query(messages, **kw)
+
+
+def test_cancel_mid_stream_delivers_buffered_prose_and_stops(tmp_path):
+    """ESC mid-stream: prose buffered before the cancel is delivered by the final
+    flush; the turn resolves; no 'after' prose is delivered."""
+    conn = RecordingConn()
+    agent = _build(_StreamingSubmitModel([]), conn)   # placeholder, replaced below
+    sid = agent._store.new(cwd=str(tmp_path))
+    state = agent._store.get(sid)
+    model = _StreamThenCancelModel(state.cancel_flag)
+    agent._model_factory = lambda *a, **k: model
+
+    resp = _prompt(agent, sid, "do a thing")
+    # cancelled turns resolve (never hang). The post-engine check in
+    # _run_agent_turn (state.cancel_flag.is_set() → "cancelled") overrides
+    # whatever run_engine itself returned, so this is the one real value.
+    assert resp.stop_reason == "cancelled", f"unexpected stop_reason: {resp.stop_reason}"
+
+    texts = "".join(conn.message_texts())
+    assert "before" in texts, "pre-cancel prose was not delivered"
+    assert "after" not in texts, "post-cancel prose leaked"
+
+
+class _TwoStepStreamingModel(DeterministicToolcallModel):
+    """Two real model outputs → two query() calls → two real n_calls increments
+    (TracingAgent.query() bumps n_calls BEFORE model.query() fires on_delta — see
+    tracing_agent.py query(): `self.n_calls += 1` precedes `self.model.query(...)`).
+    Step 1 streams 'A' then returns a non-submit echo so the loop continues; step 2
+    streams 'B' then returns the submit echo so the loop exits. This gives a real
+    step boundary between 'A' and 'B', exercised the same way the production loop
+    advances n_calls per step — no hand-mutated counters."""
+
+    def __init__(self):
+        out1 = make_toolcall_output(
+            "A",
+            [{"id": "call_0", "type": "function",
+              "function": {"name": "bash",
+                           "arguments": '{"command": "echo step1"}'}}],
+            [{"command": "echo step1", "tool_call_id": "call_0"}],
+        )
+        out1["extra"]["cost"] = 0.0
+        out2 = make_toolcall_output(
+            "B",
+            [{"id": "call_1", "type": "function",
+              "function": {"name": "bash",
+                           "arguments": '{"command": "' + _SUBMIT + '"}'}}],
+            [{"command": _SUBMIT, "tool_call_id": "call_1"}],
+        )
+        out2["extra"]["cost"] = 0.0
+        super().__init__(outputs=[out1, out2], cost_per_call=0.0)
+        self._deltas = ["A", "B"]
+        self.on_delta = None
+
+    def query(self, messages, **kw):
+        # current_index is -1 before the first call → this call's step's prose.
+        idx = self.current_index + 1
+        if self.on_delta and idx < len(self._deltas):
+            self.on_delta(self._deltas[idx])
+        return super().query(messages, **kw)
+
+
+def test_prose_flushed_before_step_boundary(tmp_path):
+    """A step boundary must never overtake prose buffered before it: on the wire,
+    'A' (step-1 prose) precedes the stream_reset boundary, which precedes 'B'
+    (step-2 prose)."""
+    conn = RecordingConn()
+    model = _TwoStepStreamingModel()
+    agent = _build(model, conn)
+    sid = agent._store.new(cwd=str(tmp_path))
+
+    resp = _prompt(agent, sid, "fix the bug")
+    assert resp.stop_reason == "end_turn", f"unexpected stop_reason: {resp.stop_reason}"
+
+    # Build the ordered event stream: each update is either prose text or a boundary.
+    seq = []
+    for u in conn.updates:
+        txt = getattr(getattr(u, "content", None), "text", "") or ""
+        meta = getattr(u, "field_meta", None) or {}
+        harness = meta.get("harness", {}) if isinstance(meta, dict) else {}
+        is_boundary = isinstance(harness, dict) and harness.get("stream_reset")
+        if is_boundary:
+            seq.append("<RESET>")
+        elif txt:
+            seq.append(txt)
+
+    a_idx = next(i for i, s in enumerate(seq) if s != "<RESET>" and "A" in s)
+    b_idx = next(i for i, s in enumerate(seq) if s != "<RESET>" and "B" in s)
+    reset_idxs = [i for i, s in enumerate(seq) if s == "<RESET>"]
+    assert reset_idxs, f"expected at least one stream_reset boundary, got seq = {seq!r}"
+    assert a_idx < reset_idxs[-1] < b_idx, (
+        f"boundary reordered relative to prose: seq = {seq!r}"
+    )
+
+
+def test_no_leftover_flush_across_turns(tmp_path):
+    """A flush timer from turn N must not fire into turn N+1. Run two turns; each
+    turn's prose appears only within that turn's updates."""
+    conn = RecordingConn()
+    agent = _build(_StreamingSubmitModel(["one"]), conn)
+    sid = agent._store.new(cwd=str(tmp_path))
+
+    r1 = _prompt(agent, sid, "first")
+    assert r1.stop_reason == "end_turn"
+    after_turn1 = len(conn.updates)
+    assert "one" in "".join(conn.message_texts())
+
+    # swap in a model that streams different prose for turn 2
+    agent._model_factory = lambda *a, **k: _StreamingSubmitModel(["two"])
+    r2 = _prompt(agent, sid, "second")
+    assert r2.stop_reason == "end_turn"
+
+    turn2_texts = "".join(
+        (getattr(getattr(u, "content", None), "text", "") or "")
+        for u in conn.updates[after_turn1:]
+    )
+    assert "two" in turn2_texts
+    assert "one" not in turn2_texts, "turn-1 prose leaked into turn 2 (leftover timer)"

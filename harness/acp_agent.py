@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import platform
+import threading
 import time
 from pathlib import Path
 
@@ -542,21 +543,41 @@ class HarnessAgent(acp.Agent):
                                   skipped=_catalog_load.skipped,
                                   shadowed=_catalog_load.shadowed)
             pieces: list[str] = []
+            chat_prose = {"buf": ""}
+            chat_lock = threading.Lock()
+
+            async def _chat_flush() -> None:
+                with chat_lock:
+                    text_out, chat_prose["buf"] = chat_prose["buf"], ""
+                if text_out:
+                    await self._conn.session_update(session_id, message_chunk(text_out))
 
             def pump() -> None:
                 # answer_stream is a blocking generator (litellm); run it on the
-                # worker thread and marshal each piece back to the loop as its own
-                # message_chunk — same idiom as the tool-call path above. Accumulate
-                # the pieces so the full answer can be written to the transcript.
+                # worker thread. transcript source (pieces) stays per-piece; delivery
+                # is buffered and drained by the timer + the final flush below.
                 # cancel_flag: ESC aborts a stalled/streaming chat answer (raises
                 # UserInterruption from answer_stream, caught below).
                 for piece in handler.answer_stream(text, history=transcript,
                                                    cancel_flag=state.cancel_flag):
                     pieces.append(piece)
-                    asyncio.run_coroutine_threadsafe(
-                        self._conn.session_update(session_id, message_chunk(piece)),
-                        loop).result()
+                    with chat_lock:
+                        chat_prose["buf"] += piece
 
+            async def _chat_flush_loop() -> None:
+                while True:
+                    try:
+                        await asyncio.sleep(0.08)
+                        await _chat_flush()
+                    except asyncio.CancelledError:
+                        return
+                    except Exception:
+                        # transient session_update failure must not permanently
+                        # stop mid-turn delivery; the turn-end flush still runs
+                        # so no data is lost — just keep ticking.
+                        logger.exception("stream flush loop error (turn-end flush still delivers)")
+
+            chat_flush_task = loop.create_task(_chat_flush_loop())
             try:
                 await loop.run_in_executor(None, pump)
             except UserInterruption:
@@ -564,6 +585,9 @@ class HarnessAgent(acp.Agent):
                 # disconnect). Persist nothing partial; the TUI clears on turn-end.
                 await self._trace(session_id, "chat.cancelled", sid=session_id)
                 return acp.PromptResponse(stop_reason="cancelled")
+            finally:
+                await _chat_flush()          # deliver the tail
+                chat_flush_task.cancel()     # no leftover timer into the next turn
             answer = "".join(pieces)
             self._store.record(session_id, {"prompt": text, "stop_reason": "end_turn",
                                             "kind": "chat"})
@@ -620,7 +644,32 @@ class HarnessAgent(acp.Agent):
         last_step = {"n": -1}
         compacted = {"event": None}     # set if context.compacted fired this turn
 
+        # Delivery-only prose buffer (distinct from streamed["buf"], the
+        # failure-case transcript). Prose accumulates here on the worker thread and
+        # is drained to the wire at ~80ms (matching the TUI's 12Hz render), so we
+        # stop blocking the worker thread on a per-token RPC round-trip. Ordering
+        # vs. boundaries/tool/plan events is preserved because emit_step_boundary,
+        # on_command, and on_plan all flush this buffer first (see
+        # _flush_prose_sync calls below), plus a final flush at turn end.
+        prose = {"buf": ""}
+        prose_lock = threading.Lock()
+
+        async def _flush_prose() -> None:
+            # loop-side: atomically take the pending prose and send it as one chunk.
+            with prose_lock:
+                chunk, prose["buf"] = prose["buf"], ""
+            if chunk:
+                await self._conn.session_update(session_id, message_chunk(chunk))
+
+        def _flush_prose_sync() -> None:
+            # worker-thread-callable: marshal the flush to the loop and block, the
+            # same idiom the boundary/tool/plan callbacks already use.
+            asyncio.run_coroutine_threadsafe(_flush_prose(), loop).result()
+
         def emit_step_boundary() -> None:
+            # Drain pending prose FIRST so this boundary lands after the prose that
+            # preceded it on the wire (ordering invariant). Then emit the boundary.
+            _flush_prose_sync()
             # tell the TUI: a NEW prose block begins (close any open one).
             upd = with_meta(message_chunk(""), {"stream_reset": True})
             asyncio.run_coroutine_threadsafe(
@@ -644,12 +693,18 @@ class HarnessAgent(acp.Agent):
             if n != last_step["n"]:
                 last_step["n"] = n
                 emit_step_boundary()
+            # transcript source — UNCHANGED, synchronous, per-piece.
             streamed["buf"] += piece
-            asyncio.run_coroutine_threadsafe(
-                self._conn.session_update(session_id, message_chunk(piece)), loop).result()
+            # delivery — buffer, do not block. The ~80ms timer + turn-end flush
+            # drain it. No .result() per token.
+            with prose_lock:
+                prose["buf"] += piece
 
         def on_command(phase: str, command: str, out: dict | None) -> None:
-            # runs on the worker thread → marshal to the loop and block until sent
+            # runs on the worker thread → marshal to the loop and block until sent.
+            # Flush pending prose FIRST so a tool-call event never overtakes the
+            # prose that preceded it.
+            _flush_prose_sync()
             if phase == "start":
                 tc["n"] += 1
                 tc["id"] = f"tc{tc['n']}"
@@ -666,7 +721,9 @@ class HarnessAgent(acp.Agent):
 
         def on_plan(entries: list[tuple[str, str]]) -> None:
             # runs on the worker thread → marshal the ACP plan update to the loop.
-            # Full-snapshot replace: the agent re-emits the whole list each time.
+            # Flush pending prose FIRST (ordering invariant). Full-snapshot replace:
+            # the agent re-emits the whole list each time.
+            _flush_prose_sync()
             asyncio.run_coroutine_threadsafe(
                 self._conn.session_update(session_id, plan_update(entries)), loop).result()
 
@@ -781,6 +838,12 @@ class HarnessAgent(acp.Agent):
                     meta["trace"] = {"type": ev["type"],
                                      "data": {"sid": session_id, **data}}
                 if meta:
+                    # Intentionally NOT flushed-before: this chunk's text is always
+                    # "" (nothing to paint) and its payload (usage/trace) is
+                    # order-independent relative to prose — _maybe_update_tokens
+                    # just sets self._tokens regardless of arrival order. So
+                    # usage-vs-prose is commutative; flushing here would only add
+                    # RPC round-trips with no visible benefit.
                     upd = with_meta(message_chunk(""), meta)
                     asyncio.run_coroutine_threadsafe(
                         self._conn.session_update(session_id, upd), loop).result()
@@ -836,6 +899,11 @@ class HarnessAgent(acp.Agent):
                     # never marshal a delta to a dead loop after the turn ends.
                     if hasattr(model, "on_delta"):
                         model.on_delta = None
+                    # final flush: deliver any prose still buffered (the last <80ms
+                    # that never hit a timer tick). Runs on success, failure, AND
+                    # cancellation (this finally covers all three). Flush BEFORE the
+                    # timer is cancelled (Task 3) so the tail is never skipped.
+                    _flush_prose_sync()
                     # unbind cancel_flag so a later abandoned worker can't observe
                     # a flag that now belongs to the next turn.
                     if hasattr(model, "cancel_flag"):
@@ -860,7 +928,29 @@ class HarnessAgent(acp.Agent):
 
         if state.cancel_flag.is_set():
             return {"stop_reason": "cancelled", "exit_status": "cancelled", "assistant": ""}
-        engine = await loop.run_in_executor(None, run_engine)
+        async def _flush_loop() -> None:
+            # ~80ms cadence matches the TUI's 12Hz render; finer delivery is
+            # invisible (the TUI buffers and paints on its own timer).
+            while True:
+                try:
+                    await asyncio.sleep(0.08)
+                    await _flush_prose()
+                except asyncio.CancelledError:
+                    return
+                except Exception:
+                    # transient session_update failure must not permanently
+                    # stop mid-turn delivery; the turn-end flush still runs
+                    # so no data is lost — just keep ticking.
+                    logger.exception("stream flush loop error (turn-end flush still delivers)")
+
+        flush_task = loop.create_task(_flush_loop())
+        try:
+            engine = await loop.run_in_executor(None, run_engine)
+        finally:
+            # stop the periodic flusher so it can never fire into a later turn.
+            # run_engine's own finally already did the FINAL prose flush, so no
+            # tail is lost by cancelling here.
+            flush_task.cancel()
         if state.cancel_flag.is_set():
             return {"stop_reason": "cancelled", "exit_status": "cancelled", "assistant": ""}
         # Surface context compaction to the TUI via the with_meta channel so the
