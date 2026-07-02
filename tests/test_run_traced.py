@@ -136,8 +136,63 @@ def test_9_event_seq_contiguous_with_classified_first(tmp_path):
         worker_model_id="gpt-5.4")
     em.close()
     rec = [_json.loads(l) for l in (tmp_path / "events.jsonl").read_text().splitlines()]
-    assert rec[0]["type"] == "task.classified" and rec[0]["seq"] == 0
+    # The trace opens with classification: router.classified (its latency) then
+    # task.classified (its result), both before any run/skill events (#306).
+    assert rec[0]["type"] == "router.classified" and rec[0]["seq"] == 0
+    assert rec[1]["type"] == "task.classified"
     assert [r["seq"] for r in rec] == list(range(len(rec)))   # strictly contiguous
+
+
+class _SlowRouter:
+    """Router stub whose classify() sleeps a known duration, so the emitted
+    router.classified.duration_s can be asserted against real wall-clock."""
+    def __init__(self, classification, *, sleep_s):
+        self._cls = classification
+        self._sleep_s = sleep_s
+    def classify(self, prompt):
+        import time
+        time.sleep(self._sleep_s)
+        return self._cls
+
+
+def test_router_classify_latency_is_emitted(tmp_path):
+    """#306: router.classify() latency is invisible in the trace (it runs before
+    the runner installs its real clock, so task.classified is frozen at t=0.0).
+    route_and_dispatch must emit a router.classified event carrying the measured
+    wall-clock duration_s, independent of the emitter's frozen clock."""
+    em = _emitter(tmp_path)
+    route_and_dispatch(
+        "fix it",
+        router=_SlowRouter(_cls("code_fix", confidence=0.9), sleep_s=0.05),
+        emitter=em, make_chat_handler=lambda: None, run_agent=_spy_agent(),
+        ask_user=lambda q: "", echo=lambda t: None, worker_model_id="gpt-5.4")
+    em.close()
+    rec = [_json.loads(l) for l in (tmp_path / "events.jsonl").read_text().splitlines()]
+    timed = [r for r in rec if r["type"] == "router.classified"]
+    assert len(timed) == 1, f"expected one router.classified; got {[r['type'] for r in rec]}"
+    assert timed[0]["data"]["duration_s"] >= 0.05, \
+        f"duration_s must reflect real wall-clock; got {timed[0]['data']}"
+
+
+def test_router_classify_latency_emitted_after_reclassification(tmp_path):
+    """The re-classify after a clarification must ALSO be timed — that's the
+    classification the run actually dispatched on."""
+    em = _emitter(tmp_path)
+    route_and_dispatch(
+        "do the thing",
+        router=_FixedRouter(
+            _cls("ambiguous", confidence=0.2, needs_clarification=True,
+                 clarifying_question="what?"),
+            _cls("code_fix", confidence=0.9)),
+        emitter=em, make_chat_handler=lambda: None, run_agent=_spy_agent(),
+        ask_user=lambda q: "the login form", echo=lambda t: None,
+        worker_model_id="gpt-5.4")
+    em.close()
+    rec = [_json.loads(l) for l in (tmp_path / "events.jsonl").read_text().splitlines()]
+    timed = [r for r in rec if r["type"] == "router.classified"]
+    assert len(timed) == 2, \
+        f"both the initial and post-clarification classify must be timed; got {[r['type'] for r in rec]}"
+    assert all("duration_s" in r["data"] for r in timed)
 
 
 class _BoomRouter:
@@ -207,10 +262,12 @@ def test_4_thin_client_mock_red_green(tmp_path, monkeypatch):
     events_path = rt.REPO_ROOT / "harness" / "runs" / "pytest-thin-client" / "events.jsonl"
     rec = [json.loads(l) for l in events_path.read_text().splitlines()]
     assert [r["seq"] for r in rec] == list(range(len(rec)))
-    # task.classified first (seq 0); skill.load next; run.started follows; run.finished last.
-    assert rec[0]["type"] == "task.classified"
-    assert rec[1]["type"] == "skill.load"
-    assert rec[2]["type"] == "run.started" and rec[-1]["type"] == "run.finished"
+    # router.classified (latency) + task.classified (result) open the trace; then
+    # skill.load; then the runner's run.started ... run.finished bookends.
+    assert rec[0]["type"] == "router.classified"
+    assert rec[1]["type"] == "task.classified"
+    assert rec[2]["type"] == "skill.load"
+    assert rec[3]["type"] == "run.started" and rec[-1]["type"] == "run.finished"
 
 
 def test_4b_client_uses_runner_not_agent_directly():
