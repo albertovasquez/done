@@ -262,17 +262,84 @@ def test_create_persona_rejects_existing_file_collision(isolated_config):
 
 
 # ---------------------------------------------------------------------------
-# seed_default_workspace refactor tests (Task 1)
+# seed_default_workspace backfill tests (#192)
+#
+# The seed backfills Bob only when the default workspace has NO meaningful
+# persona content (fresh dir OR inert-template-only dir). A workspace with any
+# meaningful content is left 100% untouched — never a mixed "your soul + Bob".
 # ---------------------------------------------------------------------------
 
-def test_seed_default_noop_when_exists_does_not_backfill(isolated_config):
+def test_seed_default_noop_when_meaningful_content_present(isolated_config):
     dest = paths.default_workspace_dir()
     dest.mkdir(parents=True, exist_ok=True)
-    (dest / "SOUL.md").write_text("user content")   # only one file present
+    (dest / "SOUL.md").write_text("user content")   # meaningful -> not blank
     persona.seed_default_workspace()
-    # existing dir => no-op: missing trio files are NOT backfilled
+    # meaningful content present => no-op: SOUL untouched, no stray IDENTITY.md
     assert (dest / "SOUL.md").read_text() == "user content"
     assert not (dest / "IDENTITY.md").exists()
+
+
+def test_seed_default_backfills_bob_into_inert_template_dir(isolated_config):
+    # THE #192 REGRESSION: a dir created before the Bob soul shipped holds only
+    # the comment-only templates (all _meaningful == False) -> Bob is backfilled.
+    dest = paths.default_workspace_dir()
+    dest.mkdir(parents=True, exist_ok=True)
+    src = paths.bundled_persona_templates_dir()
+    for name in persona.PERSONA_FILES:
+        (dest / name).write_bytes((src / name).read_bytes())
+    persona.seed_default_workspace()
+    block = compose_persona(dest).block
+    assert "You're Bob." in block        # soul body reaches the model
+    assert "Name: Bob." in block         # IDENTITY display name
+    assert persona_config.read_name(dest) == "Bob"
+
+
+def test_seed_default_backfills_when_dir_exists_but_empty(isolated_config):
+    # a bare existing dir (no files at all) is also "blank" -> backfill Bob
+    dest = paths.default_workspace_dir()
+    dest.mkdir(parents=True, exist_ok=True)
+    persona.seed_default_workspace()
+    assert "You're Bob." in compose_persona(dest).block
+
+
+def test_seed_default_preserves_existing_persona_toml(isolated_config):
+    # a pre-existing persona.toml (with skills/flows) survives byte-for-byte:
+    # backfill writes `name` ONLY when persona.toml is absent (no whole-file rewrite).
+    dest = paths.default_workspace_dir()
+    dest.mkdir(parents=True, exist_ok=True)
+    src = paths.bundled_persona_templates_dir()
+    for name in persona.PERSONA_FILES:                       # inert -> blank -> triggers backfill
+        (dest / name).write_bytes((src / name).read_bytes())
+    toml = 'skills = ["a", "b"]\nflows = ["review"]\n'
+    (dest / "persona.toml").write_text(toml, encoding="utf-8")
+    persona.seed_default_workspace()
+    # the user's persona.toml is untouched: skills/flows survive, name NOT clobbered
+    assert (dest / "persona.toml").read_text(encoding="utf-8") == toml
+    assert persona_config.read_skills(dest) == [Path("a"), Path("b")]
+    assert persona_config.read_flows(dest) == ["review"]
+    # SOUL/IDENTITY still get backfilled (the blank trio is what triggered it)
+    assert "You're Bob." in compose_persona(dest).block
+
+
+def test_seed_default_is_idempotent(isolated_config):
+    # backfill once, then run again: second run finds meaningful Bob content -> no-op
+    persona.seed_default_workspace()
+    dest = paths.default_workspace_dir()
+    first = {n: (dest / n).read_bytes() for n in persona.PERSONA_FILES}
+    first_toml = (dest / "persona.toml").read_bytes()
+    persona.seed_default_workspace()                          # second run
+    for n in persona.PERSONA_FILES:
+        assert (dest / n).read_bytes() == first[n], n
+    assert (dest / "persona.toml").read_bytes() == first_toml
+
+
+def test_seed_default_backfill_never_raises_on_oserror(isolated_config, monkeypatch):
+    # backfill path (existing blank dir) must stay best-effort: OSError is swallowed
+    dest = paths.default_workspace_dir()
+    dest.mkdir(parents=True, exist_ok=True)                   # blank dir -> would backfill
+    monkeypatch.setattr(persona, "_copy_persona_templates",
+                        lambda d: (_ for _ in ()).throw(OSError("read-only")))
+    persona.seed_default_workspace()                          # must NOT raise
 
 
 def test_seed_default_seeds_bob_soul_on_first_run(isolated_config):
